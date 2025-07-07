@@ -2,7 +2,7 @@ import adalflow as adal
 from adalflow.core.types import Document, List
 from adalflow.components.data_process import TextSplitter, ToEmbeddings
 import os
-from typing import List, Optional, Callable, Any, TypeVar
+from typing import List, Optional, Callable, Any, TypeVar, Tuple
 from adalflow.core.component import Component
 import logging
 import glob
@@ -17,6 +17,116 @@ MAX_EMBEDDING_LENGTH = 1000000
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
+    """
+    Safely read a file with multiple encoding attempts and binary file detection.
+    
+    Args:
+        file_path: Path to the file to read
+        
+    Returns:
+        Tuple of (content, status_message):
+        - content: File content as string if successful, None if failed
+        - status_message: Description of what happened
+    """
+    
+    # Check if file is likely binary by examining first few bytes
+    try:
+        with open(file_path, 'rb') as f:
+            # Read first 8192 bytes to check for binary content
+            chunk = f.read(8192)
+            if not chunk:
+                return None, "empty_file"
+            
+            # Check for common binary file signatures
+            binary_signatures = [
+                b'\x00',  # NULL byte (common in binary files)
+                b'\xFF\xD8\xFF',  # JPEG
+                b'\x89PNG',  # PNG
+                b'GIF8',  # GIF
+                b'%PDF',  # PDF
+                b'\x50\x4B',  # ZIP/JAR/etc
+                b'\x7FELF',  # ELF executable
+                b'MZ',  # DOS/Windows executable
+            ]
+            
+            # If file contains NULL bytes or binary signatures, skip it
+            if b'\x00' in chunk:
+                return None, "binary_file_null_bytes"
+            
+            for sig in binary_signatures:
+                if chunk.startswith(sig):
+                    return None, f"binary_file_signature_{sig.hex()}"
+            
+            # Check if chunk has too many non-printable characters
+            printable_chars = sum(1 for byte in chunk if 32 <= byte <= 126 or byte in [9, 10, 13])
+            if len(chunk) > 0 and printable_chars / len(chunk) < 0.7:
+                return None, "binary_file_non_printable"
+    
+    except (IOError, OSError) as e:
+        return None, f"file_access_error: {e}"
+    
+    # Try different encodings in order of preference
+    encodings_to_try = [
+        'utf-8',
+        'utf-8-sig',  # UTF-8 with BOM
+        'latin1',     # Common fallback
+        'cp1252',     # Windows encoding
+        'iso-8859-1', # Another common encoding
+        'ascii',      # Basic ASCII
+    ]
+    
+    # Try to detect encoding if chardet is available
+    try:
+        import chardet
+        try:
+            with open(file_path, 'rb') as f:
+                raw_data = f.read()
+                detected = chardet.detect(raw_data)
+                if detected['encoding'] and detected['confidence'] > 0.7:
+                    detected_encoding = detected['encoding'].lower()
+                    # Add detected encoding to the front of the list if not already there
+                    if detected_encoding not in [enc.lower() for enc in encodings_to_try]:
+                        encodings_to_try.insert(0, detected['encoding'])
+        except Exception:
+            pass  # Continue with default encodings if detection fails
+    except ImportError:
+        pass  # chardet not available, use default encodings
+    
+    # Try each encoding
+    for encoding in encodings_to_try:
+        try:
+            with open(file_path, 'r', encoding=encoding, errors='strict') as f:
+                content = f.read()
+                
+                # Additional validation for the content
+                if not content.strip():
+                    return None, "empty_content"
+                
+                # Check if content seems reasonable (not too many weird characters)
+                if encoding != 'utf-8':
+                    logger.debug(f"Successfully read {file_path} with {encoding} encoding")
+                
+                return content, f"success_{encoding}"
+                
+        except UnicodeDecodeError as e:
+            logger.debug(f"Failed to read {file_path} with {encoding}: {e}")
+            continue
+        except (IOError, OSError) as e:
+            return None, f"file_error: {e}"
+    
+    # If all encodings failed, try one more time with errors='replace'
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+            if content.strip():
+                logger.warning(f"Read {file_path} with character replacement (some characters may be corrupted)")
+                return content, "success_utf8_with_replacement"
+    except Exception as e:
+        logger.debug(f"Final fallback failed for {file_path}: {e}")
+    
+    return None, "all_encodings_failed"
 
 def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
                       included_dirs: List[str] = None, included_files: List[str] = None):
@@ -39,9 +149,52 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
     """
     documents = []
     # File extensions to look for, prioritizing code files
-    code_extensions = [".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp", ".go", ".rs",
-                       ".jsx", ".tsx", ".html", ".css", ".php", ".swift", ".cs", ".sol"]
-    doc_extensions = [".md", ".txt", ".rst", ".json", ".yaml", ".yml"]
+    code_extensions = [
+        # Popular languages
+        ".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp", ".go", ".rs",
+        ".jsx", ".tsx", ".html", ".css", ".php", ".swift", ".cs", ".sol",
+        # Functional languages
+        ".ml", ".mli",  # OCaml
+        ".hs", ".lhs",  # Haskell
+        ".fs", ".fsi", ".fsx",  # F#
+        ".erl", ".hrl",  # Erlang
+        ".ex", ".exs",  # Elixir
+        ".clj", ".cljs", ".cljc",  # Clojure
+        ".scm", ".ss",  # Scheme
+        ".lisp", ".lsp",  # Lisp
+        ".elm",  # Elm
+        # Other languages
+        ".rb", ".pl", ".pm",  # Ruby, Perl
+        ".scala", ".sc",  # Scala
+        ".kt", ".kts",  # Kotlin
+        ".dart",  # Dart
+        ".lua",  # Lua
+        ".r", ".R",  # R
+        ".m",  # MATLAB/Objective-C
+        ".jl",  # Julia
+        ".nim",  # Nim
+        ".cr",  # Crystal
+        ".zig",  # Zig
+        ".v", ".sv",  # Verilog/SystemVerilog
+        ".vhd", ".vhdl",  # VHDL
+        # Assembly and low-level
+        ".s", ".S", ".asm",  # Assembly
+        # Shell scripts
+        ".sh", ".bash", ".zsh", ".fish",  # Shell scripts
+        ".ps1", ".psm1",  # PowerShell
+        ".bat", ".cmd",  # Batch files
+        # Configuration and data
+        ".toml", ".ini", ".cfg", ".conf",  # Config files
+        ".xml", ".xaml",  # XML
+        ".proto",  # Protocol Buffers
+        ".graphql", ".gql",  # GraphQL
+        ".sql",  # SQL
+        # Build files
+        ".mk", ".cmake",  # Make, CMake
+        ".gradle", ".sbt",  # Gradle, SBT
+        ".bazel", ".bzl",  # Bazel
+    ]
+    doc_extensions = [".md", ".txt", ".rst", ".json", ".yaml", ".yml", ".adoc", ".org", ".tex"]
 
     # Determine filtering mode: inclusion or exclusion
     use_inclusion_mode = (included_dirs is not None and len(included_dirs) > 0) or (included_files is not None and len(included_files) > 0)
@@ -169,37 +322,52 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
             if not should_process_file(file_path, use_inclusion_mode, included_dirs, included_files, excluded_dirs, excluded_files):
                 continue
 
+            # Safely read file with encoding detection
+            content, status = safe_read_file(file_path)
+            
+            if content is None:
+                # Log specific reasons for skipping files
+                relative_path = os.path.relpath(file_path, path)
+                if status.startswith("binary_file"):
+                    logger.debug(f"Skipping binary file {relative_path}: {status}")
+                elif status == "empty_file" or status == "empty_content":
+                    logger.debug(f"Skipping empty file {relative_path}")
+                elif status == "all_encodings_failed":
+                    logger.warning(f"Skipping file {relative_path}: Unable to decode with any encoding")
+                else:
+                    logger.warning(f"Skipping file {relative_path}: {status}")
+                continue
+            
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    relative_path = os.path.relpath(file_path, path)
+                relative_path = os.path.relpath(file_path, path)
 
-                    # Determine if this is an implementation file
-                    is_implementation = (
-                        not relative_path.startswith("test_")
-                        and not relative_path.startswith("app_")
-                        and not relative_path.startswith("build")
-                        and "test" not in relative_path.lower()
-                    )
+                # Determine if this is an implementation file
+                is_implementation = (
+                    not relative_path.startswith("test_")
+                    and not relative_path.startswith("app_")
+                    and not relative_path.startswith("build")
+                    and "test" not in relative_path.lower()
+                )
 
-                    # Check token count
-                    if len(content) > MAX_EMBEDDING_LENGTH:
-                        logger.warning(f"Skipping large file {relative_path}: Token count ({len(content)}) exceeds limit")
-                        continue
+                # Check token count
+                if len(content) > MAX_EMBEDDING_LENGTH:
+                    logger.warning(f"Skipping large file {relative_path}: Token count ({len(content)}) exceeds limit")
+                    continue
 
-                    doc = Document(
-                        text=content,
-                        meta_data={
-                            "file_path": relative_path,
-                            "type": ext[1:],
-                            "is_code": True,
-                            "is_implementation": is_implementation,
-                            "title": relative_path,
-                        },
-                    )
-                    documents.append(doc)
+                doc = Document(
+                    text=content,
+                    meta_data={
+                        "file_path": relative_path,
+                        "type": ext[1:],
+                        "is_code": True,
+                        "is_implementation": is_implementation,
+                        "title": relative_path,
+                        "encoding_status": status,  # Track how file was read
+                    },
+                )
+                documents.append(doc)
             except Exception as e:
-                logger.error(f"Error reading {file_path}: {e}")
+                logger.error(f"Error processing {file_path}: {e}")
 
     # Then process documentation files
     for ext in doc_extensions:
@@ -209,62 +377,96 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
             if not should_process_file(file_path, use_inclusion_mode, included_dirs, included_files, excluded_dirs, excluded_files):
                 continue
 
+            # Safely read file with encoding detection
+            content, status = safe_read_file(file_path)
+            
+            if content is None:
+                # Log specific reasons for skipping files
+                relative_path = os.path.relpath(file_path, path)
+                if status.startswith("binary_file"):
+                    logger.debug(f"Skipping binary file {relative_path}: {status}")
+                elif status == "empty_file" or status == "empty_content":
+                    logger.debug(f"Skipping empty file {relative_path}")
+                elif status == "all_encodings_failed":
+                    logger.warning(f"Skipping file {relative_path}: Unable to decode with any encoding")
+                else:
+                    logger.warning(f"Skipping file {relative_path}: {status}")
+                continue
+            
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    relative_path = os.path.relpath(file_path, path)
+                relative_path = os.path.relpath(file_path, path)
 
-                    # Check token count
-                    if len(content) > MAX_EMBEDDING_LENGTH:
-                        logger.warning(f"Skipping large file {relative_path}: Token count ({len(content)}) exceeds limit")
-                        continue
+                # Check token count
+                if len(content) > MAX_EMBEDDING_LENGTH:
+                    logger.warning(f"Skipping large file {relative_path}: Token count ({len(content)}) exceeds limit")
+                    continue
 
-                    doc = Document(
-                        text=content,
-                        meta_data={
-                            "file_path": relative_path,
-                            "type": ext[1:],
-                            "is_code": False,
-                            "is_implementation": False,
-                            "title": relative_path,
-                        },
-                    )
-                    documents.append(doc)
+                doc = Document(
+                    text=content,
+                    meta_data={
+                        "file_path": relative_path,
+                        "type": ext[1:],
+                        "is_code": False,
+                        "is_implementation": False,
+                        "title": relative_path,
+                        "encoding_status": status,  # Track how file was read
+                    },
+                )
+                documents.append(doc)
             except Exception as e:
-                logger.error(f"Error reading {file_path}: {e}")
+                logger.error(f"Error processing {file_path}: {e}")
 
     logger.info(f"Found {len(documents)} documents")
     return documents
 
-def prepare_data_pipeline(is_huggingface_embedder: bool = False, force_recreate_db: bool = False):
+def prepare_data_pipeline(is_huggingface_embedder: bool = False, force_recreate_db: bool = False, repo_name: str = "default"):
     """
     Creates and returns the data transformation pipeline.
 
     Args:
         is_huggingface_embedder (bool, optional): Whether to use HuggingFace for embedding.
         force_recreate_db (bool, optional): Whether to force recreate the database.
+        repo_name (str, optional): Repository name for cache file naming. Defaults to "default".
 
     Returns:
         adal.Sequential: The data transformation pipeline
     """
     from api.config import get_embedder_config
     from api.huggingface_embedder_client import HuggingfaceClientToEmbeddings, HuggingfaceClientBatchEmbedder
+    from api.dashscope_client import DashScopeToEmbeddings
 
     splitter = TextSplitter(**configs["text_splitter"])
     embedder_config = get_embedder_config()
-
     embedder = get_embedder(is_huggingface_embedder)
-
+    
+    # Set appropriate batch size based on embedder type
+    config_batch_size = embedder_config.get("batch_size", 100)
+    
     if is_huggingface_embedder:
-        # Use Huggingface document processor for single-document processing
-        batch_size = embedder_config.get("batch_size", 500)
-        embedder_transformer = HuggingfaceClientToEmbeddings(embedder=embedder, force_recreate_db=force_recreate_db)
-    else:
-        # Use batch processing for other embedders
-        batch_size = embedder_config.get("batch_size", 500)
-        embedder_transformer = ToEmbeddings(
-            embedder=embedder, batch_size=batch_size
+        # HuggingFace can use larger batch sizes
+        batch_size = config_batch_size
+        embedder_transformer = HuggingfaceClientToEmbeddings(
+            embedder=embedder, 
+            force_recreate_db=force_recreate_db,
+            batch_size=batch_size,
+            repo_name=repo_name
         )
+        logger.info(f"Using HuggingFace embedder with batch size: {batch_size}, repo: {repo_name}")
+    else:
+        # DashScope API limits batch size to maximum of 10
+        if config_batch_size > 10:
+            logger.warning(f"DashScope batch_size {config_batch_size} exceeds limit, adjusting to 10")
+            batch_size = 10
+        else:
+            batch_size = config_batch_size
+            
+        embedder_transformer = DashScopeToEmbeddings(
+            embedder=embedder, 
+            batch_size=batch_size,
+            force_recreate_db=force_recreate_db,
+            repo_name=repo_name
+        )
+        logger.info(f"Using DashScope specialized embedder with batch size: {batch_size}, repo: {repo_name} (API limit: ≤10)")
 
     data_transformer = adal.Sequential(
         splitter, embedder_transformer
@@ -321,7 +523,7 @@ def prepare_data_pipeline(is_huggingface_embedder: bool = False, force_recreate_
 #         return key_to_use
 
 def transform_documents_and_save_to_db(
-    documents: List[Document], db_path: str, is_huggingface_embedder: bool = False, force_recreate: bool = False
+    documents: List[Document], db_path: str, is_huggingface_embedder: bool = False, force_recreate: bool = False, repo_name: str = "default"
 ) -> LocalDB:
     """
     Transforms a list of documents and saves them to a local database.
@@ -329,10 +531,11 @@ def transform_documents_and_save_to_db(
     Args:
         documents (list): A list of `Document` objects.
         db_path (str): The path to the local database file.
+        repo_name (str): Repository name for cache file naming.
     """
     # Get the data transformer
     # E.g., if is_huggingface_embedder is True, the data transformer will be HuggingfaceClientToEmbeddings defined in api/huggingface_embedder_client.py
-    data_transformer = prepare_data_pipeline(is_huggingface_embedder, force_recreate_db=force_recreate)
+    data_transformer = prepare_data_pipeline(is_huggingface_embedder, force_recreate_db=force_recreate, repo_name=repo_name)
 
     # Save the documents to a local database
     db = LocalDB()
@@ -458,9 +661,12 @@ class DatabaseManager:
             included_files=included_files,
         )
 
+        # Extract repository name from path
+        repo_name = os.path.basename(self.repo_url_or_path.rstrip('/'))
+        
         self.db = transform_documents_and_save_to_db(
             documents, self.repo_paths["save_db_file"], is_huggingface_embedder=is_huggingface_embedder,
-            force_recreate=force_recreate
+            force_recreate=force_recreate, repo_name=repo_name
         )
         logger.info(f"Total documents: {len(documents)}")
         transformed_docs = self.db.get_transformed_data(key="split_and_embed")

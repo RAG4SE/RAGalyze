@@ -8,6 +8,10 @@ import sys
 import os
 import logging
 import asyncio
+import signal
+import subprocess
+import time
+import threading
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 import uvicorn
@@ -37,6 +41,178 @@ rag_cache: Dict[str, RAG] = {}
 
 # Global storage for query results (for web interface)
 query_results_cache: List[Dict[str, Any]] = []
+
+class ServerManager:
+    """Manages the uvicorn server process with proper signal handling"""
+    
+    def __init__(self):
+        self.server_process = None
+        self.shutdown_event = threading.Event()
+        self.is_subprocess_mode = False
+        
+    def signal_handler(self, sig, frame):
+        """Handle termination signals"""
+        print(f"\n🛑 Received signal {sig}. Shutting down server...")
+        self.shutdown_event.set()
+        
+        if self.server_process and self.is_subprocess_mode:
+            try:
+                # Send SIGTERM to the server process
+                print("📋 Terminating server process...")
+                self.server_process.terminate()
+                
+                # Wait up to 5 seconds for graceful shutdown
+                try:
+                    self.server_process.wait(timeout=5)
+                    print("✅ Server terminated gracefully")
+                except subprocess.TimeoutExpired:
+                    print("⚠️ Server didn't terminate gracefully, forcing kill...")
+                    self.server_process.kill()
+                    self.server_process.wait()
+                    print("✅ Server killed")
+                    
+            except Exception as e:
+                print(f"❌ Error during shutdown: {e}")
+        else:
+            # For direct uvicorn mode, just exit
+            print("🛑 Shutting down server...")
+            os._exit(0)
+        
+        print("🛑 Server manager exiting")
+        sys.exit(0)
+    
+    def run_server_subprocess(self, host="localhost", port=8000, reload=False, log_level="info"):
+        """Run the server using subprocess for better process management"""
+        
+        # Register signal handlers
+        signal.signal(signal.SIGINT, self.signal_handler)   # Ctrl+C
+        signal.signal(signal.SIGTERM, self.signal_handler)  # Termination
+        
+        self.is_subprocess_mode = True
+        
+        print("🚀 Starting RAGalyze Server with advanced process management")
+        print(f"📍 Server will be available at: http://{host}:{port}")
+        print(f"📚 API documentation: http://{host}:{port}/docs")
+        print(f"🌐 Web interface: http://{host}:{port}/web")
+        print(f"💡 Press Ctrl+C to stop the server")
+        print("-" * 50)
+        
+        # Build uvicorn command
+        cmd = [
+            sys.executable, "-m", "uvicorn",
+            "server:app",
+            "--host", host,
+            "--port", str(port),
+            "--log-level", log_level,
+            "--access-log"
+        ]
+        
+        if reload:
+            cmd.append("--reload")
+            print("🔄 Auto-reload enabled for development")
+        
+        try:
+            # Start server process
+            print(f"🚀 Starting server: {' '.join(cmd)}")
+            self.server_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1
+            )
+            
+            print(f"📋 Server process started with PID: {self.server_process.pid}")
+            
+            # Stream server output in a separate thread
+            def stream_output():
+                try:
+                    for line in iter(self.server_process.stdout.readline, ''):
+                        if line.strip():
+                            print(f"[SERVER] {line.strip()}")
+                        if self.shutdown_event.is_set():
+                            break
+                except Exception as e:
+                    if not self.shutdown_event.is_set():
+                        print(f"❌ Error streaming output: {e}")
+            
+            output_thread = threading.Thread(target=stream_output, daemon=True)
+            output_thread.start()
+            
+            # Wait for process to complete or shutdown signal
+            while not self.shutdown_event.is_set():
+                try:
+                    # Check if process is still running
+                    exit_code = self.server_process.poll()
+                    if exit_code is not None:
+                        print(f"🛑 Server process exited with code: {exit_code}")
+                        break
+                    
+                    # Sleep briefly to avoid busy waiting
+                    time.sleep(0.1)
+                    
+                except KeyboardInterrupt:
+                    # This should be caught by signal handler, but just in case
+                    print("\n🛑 Keyboard interrupt received")
+                    self.shutdown_event.set()
+                    break
+            
+            # Final cleanup
+            if self.server_process and self.server_process.poll() is None:
+                print("🧹 Final cleanup...")
+                self.server_process.terminate()
+                try:
+                    self.server_process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.server_process.kill()
+                    self.server_process.wait()
+            
+            print("✅ Server shutdown complete")
+            
+        except Exception as e:
+            print(f"❌ Error starting server: {e}")
+            return 1
+        
+        return 0
+    
+    def run_server_direct(self, host="localhost", port=8000, reload=False, log_level="info"):
+        """Run the server directly using uvicorn.Server for simpler mode"""
+        
+        # Register signal handlers
+        signal.signal(signal.SIGINT, self.signal_handler)   # Ctrl+C
+        signal.signal(signal.SIGTERM, self.signal_handler)  # Termination
+        
+        self.is_subprocess_mode = False
+        
+        print("🚀 Starting RAGalyze Server (direct mode)")
+        print(f"📍 Server will be available at: http://{host}:{port}")
+        print(f"📚 API documentation: http://{host}:{port}/docs")
+        print(f"🌐 Web interface: http://{host}:{port}/web")
+        print(f"💡 Press Ctrl+C to stop the server")
+        print("-" * 50)
+        
+        try:
+            # Create uvicorn server config
+            config = uvicorn.Config(
+                "server:app",
+                host=host,
+                port=port,
+                reload=reload,
+                log_level=log_level,
+                access_log=True,
+                use_colors=True,
+            )
+            server = uvicorn.Server(config)
+            server.run()
+            
+        except KeyboardInterrupt:
+            print("\n🛑 Server stopped by user (Ctrl+C)")
+            return 0
+        except Exception as e:
+            print(f"\n❌ Server error: {e}")
+            return 1
+        
+        return 0
 
 # FastAPI app
 app = FastAPI(
@@ -114,7 +290,19 @@ def analyze_repository_sync(repo_path: str, **kwargs) -> RAG:
     
     try:
         logger.info("🔍 Building RAG system...")
-        rag = RAG(is_huggingface_embedder=True)
+        # 自动检测是否使用 HuggingFace 嵌入器
+        from api.config import should_use_huggingface_embedder
+        is_huggingface = should_use_huggingface_embedder()
+        logger.info(f"Using {'HuggingFace' if is_huggingface else 'API-based'} embedder based on configuration")
+        
+        # Get default provider and model from configuration
+        default_provider = configs.get("default_provider", "dashscope")
+        default_model = None
+        if "providers" in configs and default_provider in configs["providers"]:
+            default_model = configs["providers"][default_provider].get("default_model")
+        
+        logger.info(f"Using provider: {default_provider}, model: {default_model}")
+        rag = RAG(provider=default_provider, model=default_model, is_huggingface_embedder=is_huggingface)
         
         # Extract parameters
         excluded_dirs = kwargs.get('excluded_dirs', configs["file_filters"]["excluded_dirs"])
@@ -129,8 +317,8 @@ def analyze_repository_sync(repo_path: str, **kwargs) -> RAG:
             excluded_files=excluded_files,
             included_files=included_files,
             included_dirs=included_dirs,
-            force_recreate_db=force_recreate_db,
-            is_huggingface_embedder=True
+            force_recreate_db=force_recreate_db,  # 使用请求中的force_recreate参数
+            is_huggingface_embedder=is_huggingface
         )
         
         logger.info(f"✅ RAG system build completed, loaded {len(rag.transformed_docs)} documents")
@@ -186,10 +374,27 @@ def query_rag_sync(rag: RAG, question: str) -> Dict[str, Any]:
                     }
                     relevant_docs.append(doc_info)
                 
+                # Handle generator response (now returns raw string by design)
+                if isinstance(rag_answer, str):
+                    # Raw string response (normal case)
+                    answer_text = rag_answer.strip()
+                    rationale_text = ""
+                    logger.info("✅ Generator returned markdown-formatted answer")
+                elif hasattr(rag_answer, 'answer') and hasattr(rag_answer, 'rationale'):
+                    # Structured RAGAnswer object (legacy case)
+                    answer_text = rag_answer.answer
+                    rationale_text = rag_answer.rationale
+                    logger.info("✅ Generator returned structured RAGAnswer object")
+                else:
+                    # Unknown format, try to convert to string
+                    answer_text = str(rag_answer)
+                    rationale_text = ""
+                    logger.warning(f"🔧 Generator returned unexpected format: {type(rag_answer)}")
+                
                 return {
                     "success": True,
-                    "answer": rag_answer.answer,
-                    "rationale": getattr(rag_answer, 'rationale', ''),
+                    "answer": answer_text,
+                    "rationale": rationale_text,
                     "relevant_documents": relevant_docs
                 }
             else:
@@ -394,7 +599,19 @@ async def clear_all_cache():
     rag_cache.clear()
     return {"message": f"Cleared {count} cached repositories"}
 
-if __name__ == "__main__":
+@app.on_event("startup")
+async def startup_event():
+    """Setup signal handlers after uvicorn starts"""
+    logger.info("🚀 Server starting up...")
+    
+@app.on_event("shutdown") 
+async def shutdown_event():
+    """Cleanup on server shutdown"""
+    logger.info("🛑 Server shutting down...")
+    rag_cache.clear()
+
+def main():
+    """Main entry point for the server"""
     import argparse
     
     parser = argparse.ArgumentParser(description="RAGalyze Code Analysis Server")
@@ -402,18 +619,30 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
     parser.add_argument("--log-level", default="info", help="Log level")
+    parser.add_argument("--mode", choices=["subprocess", "direct"], default="subprocess", 
+                       help="Server execution mode: subprocess (better process management) or direct (simpler)")
     
     args = parser.parse_args()
     
-    print("🚀 Starting RAGalyze Code Analysis Server")
-    print(f"📍 Server will be available at: http://{args.host}:{args.port}")
-    print(f"📚 API documentation: http://{args.host}:{args.port}/docs")
-    print("-" * 50)
+    # Create and run server manager
+    server_manager = ServerManager()
     
-    uvicorn.run(
-        "server:app",
-        host=args.host,
-        port=args.port,
-        reload=args.reload,
-        log_level=args.log_level
-    ) 
+    if args.mode == "subprocess":
+        exit_code = server_manager.run_server_subprocess(
+            host=args.host,
+            port=args.port,
+            reload=args.reload,
+            log_level=args.log_level
+        )
+    else:
+        exit_code = server_manager.run_server_direct(
+            host=args.host,
+            port=args.port,
+            reload=args.reload,
+            log_level=args.log_level
+        )
+    
+    sys.exit(exit_code)
+
+if __name__ == "__main__":
+    main() 

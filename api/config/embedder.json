@@ -1,20 +1,19 @@
 {
   "embedder": {
-    "client_class": "HuggingfaceClient",
-    "batch_size": 500,
+    "client_class": "DashscopeClient",
+    "batch_size": 10,
     "model_kwargs": {
-      "model": "intfloat/multilingual-e5-large-instruct",
+      "model": "text-embedding-v4",
       "dimensions": 256,
-      "encoding_format": "float",
-      "device": "cuda"
+      "encoding_format": "float"
     }
   },
   "retriever": {
-    "top_k": 50
+    "top_k": 20
   },
   "text_splitter": {
     "split_by": "word",
-    "chunk_size": 350,
-    "chunk_overlap": 100
+    "chunk_size": 100,
+    "chunk_overlap": 20
   }
 } 

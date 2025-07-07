@@ -191,7 +191,7 @@ class SiliconFlowClient(ModelClient):
             }
             return api_kwargs
             
-        elif model_type == ModelType.EMBEDDING:
+        elif model_type == ModelType.EMBEDDER:
             api_kwargs = {
                 "input": input,
                 **final_model_kwargs
@@ -220,7 +220,7 @@ class SiliconFlowClient(ModelClient):
             else:
                 completion = self.sync_client.chat.completions.create(**api_kwargs)
                 return self.parse_chat_completion(completion)
-        elif model_type == ModelType.EMBEDDING:
+        elif model_type == ModelType.EMBEDDER:
             response = self.sync_client.embeddings.create(**api_kwargs)
             return self.parse_embedding_response(response)
         else:
@@ -251,7 +251,7 @@ class SiliconFlowClient(ModelClient):
             else:
                 completion = await self.async_client.chat.completions.create(**api_kwargs)
                 return self.parse_chat_completion(completion)
-        elif model_type == ModelType.EMBEDDING:
+        elif model_type == ModelType.EMBEDDER:
             response = await self.async_client.embeddings.create(**api_kwargs)
             return self.parse_embedding_response(response)
         else:

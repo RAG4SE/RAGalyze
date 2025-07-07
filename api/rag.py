@@ -209,16 +209,27 @@ class RAG(adal.Component):
     """RAG with one repo.
     If you want to load a new repos, call prepare_retriever(repo_url_or_path) first."""
 
-    def __init__(self, provider="google", model=None, is_huggingface_embedder: bool = False):  # noqa: F841 - use_s3 is kept for compatibility
+    def __init__(self, provider=None, model=None, is_huggingface_embedder: bool = False):  # noqa: F841 - use_s3 is kept for compatibility
         """
         Initialize the RAG component.
 
         Args:
-            provider: Model provider to use (google, openai, dashscope, siliconflow, deepseek)
-            model: Model name to use with the provider
+            provider: Model provider to use (google, openai, dashscope, siliconflow, deepseek). If None, uses default from config.
+            model: Model name to use with the provider. If None, uses default from config.
             use_s3: Whether to use S3 for database storage (default: False)
         """
         super().__init__()
+
+        # Import configs to get defaults
+        from api.config import configs
+        
+        # Use provided provider or fall back to config default
+        if provider is None:
+            provider = configs.get("default_provider", "dashscope")
+        
+        # Use provided model or fall back to config default for the provider
+        if model is None and "providers" in configs and provider in configs["providers"]:
+            model = configs["providers"][provider].get("default_model")
 
         self.provider = provider
         self.model = model
@@ -232,28 +243,23 @@ class RAG(adal.Component):
 
         self.initialize_db_manager()
 
-        # Set up the output parser
-        data_parser = adal.DataClassParser(data_class=RAGAnswer, return_data_class=True)
-
-        # Format instructions to ensure proper output structure
-        format_instructions = data_parser.get_output_format_str() + """
+        # Format instructions for natural language output (no structured parsing)
+        format_instructions = """
+Please provide a comprehensive answer to the user's question based on the provided context.
 
 IMPORTANT FORMATTING RULES:
-1. DO NOT include your thinking or reasoning process in the output
-2. Provide only the final, polished answer
-3. DO NOT include ```markdown fences at the beginning or end of your answer
-4. DO NOT wrap your response in any kind of fences
-5. Start your response directly with the content
-6. The content will already be rendered as markdown
-7. Do not use backslashes before special characters like [ ] { } in your answer
-8. When listing tags or similar items, write them as plain text without escape characters
-9. For pipe characters (|) in text, write them directly without escaping them"""
+1. Respond in the same language as the user's question
+2. Format your response using markdown for better readability
+3. Use code blocks, bullet points, headings, and other markdown features as appropriate
+4. Be clear, concise, and helpful
+5. If you use code examples, make sure they are properly formatted with language-specific syntax highlighting
+6. Structure your answer logically with clear sections if the question is complex"""
 
         # Get model configuration based on provider and model
         from api.config import get_model_config
         generator_config = get_model_config(self.provider, self.model)
 
-        # Set up the main generator
+        # Set up the main generator (no output processors to avoid JSON parsing issues)
         self.generator = adal.Generator(
             template=RAG_TEMPLATE,
             prompt_kwargs={
@@ -264,7 +270,6 @@ IMPORTANT FORMATTING RULES:
             },
             model_client=generator_config["model_client"](),
             model_kwargs=generator_config["model_kwargs"],
-            output_processors=data_parser,
         )
 
 

@@ -60,7 +60,7 @@ class HuggingfaceClient(ModelClient):
             device: Device to run the model on ("cuda" or "cpu")
         """
         super().__init__()
-        self.device = device if torch.cuda.is_available() and device == "cuda" else "cpu"
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = None
         self.model_name = None
         
@@ -198,7 +198,7 @@ class HuggingfaceClient(ModelClient):
             EmbedderOutput with embeddings
         """
         if model_type != ModelType.EMBEDDER:
-            raise ValueError(f"😭Model type {model_type} is not supported. Only EMBEDDER is supported.")
+            raise ValueError(f"😭 Model type {model_type} is not supported. Only EMBEDDER is supported.")
         
         # Extract model name and texts from api_kwargs
         model_name = api_kwargs.get("model", "intfloat/multilingual-e5-large-instruct")
@@ -464,12 +464,14 @@ class HuggingfaceClientBatchEmbedder(DataComponent):
     Args:
         embedder (HuggingfaceEmbedder): The embedder to use for batching.
         batch_size (int, optional): The batch size to use for batching. Defaults to 100.
+        repo_name (str, optional): Repository name for cache file naming. Defaults to "default".
     """
 
-    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500) -> None:
+    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500, repo_name: str = "default") -> None:
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
+        self.repo_name = repo_name
 
     def call(
         self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}, force_recreate: bool = False
@@ -485,9 +487,12 @@ class HuggingfaceClientBatchEmbedder(DataComponent):
             BatchEmbedderOutputType: The output from the embedder.
         """
 
-        if not force_recreate and os.path.exists('./cache/embeddings.pkl'):
-            with open('./cache/embeddings.pkl', 'rb') as f:
+        # Generate repository-specific cache file name
+        cache_file = f'./cache/{self.repo_name}_embeddings.pkl'
+        if not force_recreate and os.path.exists(cache_file):
+            with open(cache_file, 'rb') as f:
                 embeddings = pickle.load(f)
+                log.info(f"Loaded cached embeddings from: {cache_file}")
             return embeddings
 
         if isinstance(input, str):
@@ -505,8 +510,9 @@ class HuggingfaceClientBatchEmbedder(DataComponent):
             embeddings.append(batch_output)
         if not os.path.exists('./cache'):
             os.makedirs('./cache')
-        with open('./cache/embeddings.pkl', 'wb') as f:
+        with open(cache_file, 'wb') as f:
             pickle.dump(embeddings, f)
+            log.info(f"Saved embeddings cache to: {cache_file}")
         return embeddings
 
 
@@ -516,11 +522,11 @@ class HuggingfaceClientToEmbeddings(DataComponent):
     It operates on a copy of the input data, and does not modify the input data.
     """
 
-    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500, force_recreate_db: bool = False) -> None:
+    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500, force_recreate_db: bool = False, repo_name: str = "default") -> None:
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
-        self.batch_embedder = HuggingfaceClientBatchEmbedder(embedder=embedder, batch_size=batch_size)
+        self.batch_embedder = HuggingfaceClientBatchEmbedder(embedder=embedder, batch_size=batch_size, repo_name=repo_name)
         self.force_recreate_db = force_recreate_db
 
     def __call__(self, input: ToEmbeddingsInputType) -> ToEmbeddingsOutputType:

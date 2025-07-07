@@ -191,7 +191,7 @@ class DeepSeekClient(ModelClient):
             }
             return api_kwargs
             
-        elif model_type == ModelType.EMBEDDING:
+        elif model_type == ModelType.EMBEDDER:
             api_kwargs = {
                 "input": input,
                 **final_model_kwargs
@@ -220,9 +220,7 @@ class DeepSeekClient(ModelClient):
             else:
                 completion = self.sync_client.chat.completions.create(**api_kwargs)
                 return self.parse_chat_completion(completion)
-        elif model_type == ModelType.EMBEDDING:
-            response = self.sync_client.embeddings.create(**api_kwargs)
-            return self.parse_embedding_response(response)
+        # Cannot use embedder for now
         else:
             raise ValueError(f"model_type {model_type} is not supported")
 
@@ -251,9 +249,7 @@ class DeepSeekClient(ModelClient):
             else:
                 completion = await self.async_client.chat.completions.create(**api_kwargs)
                 return self.parse_chat_completion(completion)
-        elif model_type == ModelType.EMBEDDING:
-            response = await self.async_client.embeddings.create(**api_kwargs)
-            return self.parse_embedding_response(response)
+ 
         else:
             raise ValueError(f"model_type {model_type} is not supported")
 

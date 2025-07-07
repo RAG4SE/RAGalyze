@@ -170,6 +170,33 @@ def get_embedder_config():
     """
     return configs.get("embedder", {})
 
+def should_use_huggingface_embedder():
+    """
+    自动判断是否应该使用 HuggingFace 嵌入器
+    基于配置文件中的 client_class 来决定
+    
+    Returns:
+        bool: True 如果应该使用 HuggingFace 嵌入器，False 如果使用其他客户端
+    """
+    embedder_config = get_embedder_config()
+    client_class = embedder_config.get("client_class", "")
+    
+    # HuggingFace 相关的客户端类名
+    huggingface_clients = ["HuggingfaceClient", "HuggingFaceClient", "huggingface", "HuggingFace"]
+    
+    # 如果是 HuggingFace 客户端，使用 HuggingFace 嵌入器
+    if client_class in huggingface_clients:
+        return True
+    
+    # DashScope、OpenAI、DeepSeek、SiliconFlow 等使用标准嵌入器
+    dashscope_clients = ["DashscopeClient", "OpenAIClient", "DeepSeekClient", "SiliconFlowClient"]
+    if client_class in dashscope_clients:
+        return False
+    
+    # 强制返回 False，确保使用配置文件中指定的客户端类
+    # （之前的逻辑根据模型名自动选择 HuggingFace 可能导致配置被覆盖）
+    return False
+
 # Load repository and file filters configuration
 def load_repo_config():
     return load_json_config("repo.json")
@@ -243,17 +270,21 @@ if repo_config:
 
 
 
-def get_model_config(provider="google", model=None):
+def get_model_config(provider=None, model=None):
     """
     Get configuration for the specified provider and model
 
     Parameters:
-        provider (str): Model provider ('google', 'openai', 'dashscope', 'siliconflow', 'deepseek')
+        provider (str): Model provider ('google', 'openai', 'dashscope', 'siliconflow', 'deepseek'). If None, uses default from config.
         model (str): Model name, or None to use default model
 
     Returns:
         dict: Configuration containing model_client, model and other parameters
     """
+    # Use default provider if not specified
+    if provider is None:
+        provider = configs.get("default_provider", "dashscope")
+    
     # Get provider configuration
     if "providers" not in configs:
         raise ValueError("Provider configuration not loaded")
