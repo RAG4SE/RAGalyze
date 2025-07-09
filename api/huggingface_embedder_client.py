@@ -30,8 +30,8 @@ import adalflow.core.functional as F
 # Configure logging
 from api.logging_config import setup_logging
 
-# Disable tqdm progress bars
-os.environ["TQDM_DISABLE"] = "1"
+# # Disable tqdm progress bars
+# os.environ["TQDM_DISABLE"] = "1"
 
 setup_logging()
 log = logging.getLogger(__name__)
@@ -488,7 +488,7 @@ class HuggingfaceClientBatchEmbedder(DataComponent):
         """
 
         # Generate repository-specific cache file name
-        cache_file = f'./cache/{self.repo_name}_embeddings.pkl'
+        cache_file = f'./cache/{self.repo_name}_{self.embedder.__class__.__name__}_embeddings.pkl'
         if not force_recreate and os.path.exists(cache_file):
             with open(cache_file, 'rb') as f:
                 embeddings = pickle.load(f)

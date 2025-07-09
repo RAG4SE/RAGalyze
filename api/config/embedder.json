@@ -1,9 +1,9 @@
 {
   "embedder": {
-    "client_class": "DashscopeClient",
-    "batch_size": 10,
+    "client_class": "HuggingfaceClient",
+    "batch_size": 500,
     "model_kwargs": {
-      "model": "text-embedding-v4",
+      "model": "intfloat/multilingual-e5-large-instruct",
       "dimensions": 256,
       "encoding_format": "float"
     }
@@ -13,7 +13,7 @@
   },
   "text_splitter": {
     "split_by": "word",
-    "chunk_size": 100,
+    "chunk_size": 500,
     "chunk_overlap": 20
   }
 } 

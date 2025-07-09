@@ -59,8 +59,25 @@ log = logging.getLogger(__name__)
 
 def get_first_message_content(completion: ChatCompletion) -> str:
     """When we only need the content of the first message."""
+    log.info(f"🔍 get_first_message_content called with: {type(completion)}")
     log.debug(f"raw completion: {completion}")
-    return completion.choices[0].message.content
+    
+    try:
+        if hasattr(completion, 'choices') and len(completion.choices) > 0:
+            choice = completion.choices[0]
+            if hasattr(choice, 'message') and hasattr(choice.message, 'content'):
+                content = choice.message.content
+                log.info(f"✅ Successfully extracted content: {type(content)}, length: {len(content) if content else 0}")
+                return content
+            else:
+                log.error("❌ Choice doesn't have message.content")
+                return str(completion)
+        else:
+            log.error("❌ Completion doesn't have choices")
+            return str(completion)
+    except Exception as e:
+        log.error(f"❌ Error in get_first_message_content: {e}")
+        return str(completion)
 
 
 def parse_stream_response(completion: ChatCompletionChunk) -> str:
@@ -112,9 +129,9 @@ class DashscopeClient(ModelClient):
         self.base_url = base_url or os.getenv(self._env_base_url_name, "https://dashscope.aliyuncs.com/compatible-mode/v1")
         self.sync_client = self.init_sync_client()
         self.async_client = None
-        self.chat_completion_parser = (
-            chat_completion_parser or get_first_message_content
-        )
+        
+        # Force use of get_first_message_content to ensure string output
+        self.chat_completion_parser = get_first_message_content
         self._input_type = input_type
         self._api_kwargs = {}
 
@@ -182,8 +199,29 @@ class DashscopeClient(ModelClient):
             
             # Check if it's a ChatCompletion object (non-streaming response)
             if hasattr(completion, 'choices') and hasattr(completion, 'usage'):
+                # ALWAYS extract the string content directly
+                try:
+                    # Direct extraction of message content
+                    if (hasattr(completion, 'choices') and 
+                        len(completion.choices) > 0 and 
+                        hasattr(completion.choices[0], 'message') and 
+                        hasattr(completion.choices[0].message, 'content')):
+                        
+                        content = completion.choices[0].message.content
+                        if isinstance(content, str):
+                            parsed_data = content
+                        else:
+                            parsed_data = str(content)
+                    else:
+                        # Fallback: convert entire completion to string
+                        parsed_data = str(completion)
+                        
+                except Exception as e:
+                    # Ultimate fallback
+                    parsed_data = str(completion)
+                
                 return GeneratorOutput(
-                    data=self.chat_completion_parser(completion),
+                    data=parsed_data,
                     usage=CompletionUsage(
                         completion_tokens=completion.usage.completion_tokens,
                         prompt_tokens=completion.usage.prompt_tokens,
@@ -585,7 +623,7 @@ class DashScopeBatchEmbedder(DataComponent):
             Batch embedding output
         """
         # Check cache first
-        cache_file = f'./cache/{self.repo_name}_dashscope_embeddings.pkl'
+        cache_file = f'./cache/{self.repo_name}_{self.embedder.__class__.__name__}_dashscope_embeddings.pkl'
         if not force_recreate and os.path.exists(cache_file):
             try:
                 with open(cache_file, 'rb') as f:
@@ -606,7 +644,7 @@ class DashScopeBatchEmbedder(DataComponent):
         for i in tqdm(
             range(0, n, self.batch_size),
             desc="DashScope batch embedding",
-            disable=False
+            disable=False,
         ):
             batch_input = input[i : min(i + self.batch_size, n)]
             

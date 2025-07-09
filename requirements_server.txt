@@ -8,3 +8,4 @@ python-multipart>=0.0.5
 adalflow
 faiss-cpu
 chardet>=5.0.0
+tqdm>=4.66.1

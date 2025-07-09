@@ -6,6 +6,7 @@ RAGalyze Client - Simple API for code repository analysis
 import requests
 import logging
 from typing import Dict, Any, List, Optional
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -241,7 +242,29 @@ if __name__ == "__main__":
         # Ask question
         print(f"\n❓ Question: {question}")
         answer_result = ask_question(repo_path, question)
-        print(f"\n💡 Answer: {answer_result['answer']}")
+        
+        # Format the answer - handle ChatCompletion objects
+        answer_text = answer_result['answer']
+        if 'ChatCompletion' in str(answer_text) and 'choices' in str(answer_text):
+            # Try to extract content from ChatCompletion object string
+            try:
+                # Look for content pattern in the string representation
+                content_match = re.search(r"content='([^']*)'", str(answer_text))
+                if content_match:
+                    answer_text = content_match.group(1)
+                    # Unescape common escape sequences
+                    answer_text = answer_text.replace('\\n', '\n').replace('\\"', '"').replace("\\'", "'")
+                else:
+                    # Fallback: try to find content in a different format
+                    content_match = re.search(r'content="([^"]*)"', str(answer_text))
+                    if content_match:
+                        answer_text = content_match.group(1)
+                        answer_text = answer_text.replace('\\n', '\n').replace('\\"', '"')
+            except Exception as e:
+                print(f"⚠️ Warning: Could not extract content from response: {e}")
+                # Keep original answer as fallback
+        
+        print(f"\n💡 Answer: {answer_text}")
         
         if answer_result.get('relevant_documents'):
             print(f"\n📚 Relevant files:")

@@ -127,11 +127,29 @@ class ServerManager:
             # Stream server output in a separate thread
             def stream_output():
                 try:
+                    current_line = ""
                     for line in iter(self.server_process.stdout.readline, ''):
-                        if line.strip():
-                            print(f"[SERVER] {line.strip()}")
                         if self.shutdown_event.is_set():
                             break
+                        
+                        # Check if this is a tqdm progress bar line (contains % and |)
+                        stripped_line = line.strip()
+                        if stripped_line and ('|' in stripped_line and '%' in stripped_line):
+                            # This looks like a progress bar - print without [SERVER] prefix and with carriage return
+                            print(f"\r[SERVER] {stripped_line}", end='', flush=True)
+                        elif stripped_line:
+                            # Regular log line - print normally with newline
+                            if current_line:  # If we had a progress bar, add newline first
+                                print()
+                                current_line = ""
+                            print(f"[SERVER] {stripped_line}")
+                        
+                        # Keep track if we just printed a progress bar
+                        if '|' in stripped_line and '%' in stripped_line:
+                            current_line = stripped_line
+                        else:
+                            current_line = ""
+                            
                 except Exception as e:
                     if not self.shutdown_event.is_set():
                         print(f"❌ Error streaming output: {e}")
@@ -363,7 +381,20 @@ def query_rag_sync(rag: RAG, question: str) -> Dict[str, Any]:
             )
             
             if generator_result and hasattr(generator_result, 'data'):
+                logger.info(f"🔍 Generator result: {type(generator_result)}")
+                logger.info(f"🔍 Generator result has data: {hasattr(generator_result, 'data')}")
+                logger.info(f"🔍 Generator result.data type: {type(generator_result.data)}")
+                
+                # Check if we have raw_response as fallback
+                if hasattr(generator_result, 'raw_response'):
+                    logger.info(f"🔍 Generator result.raw_response type: {type(generator_result.raw_response)}")
+                
                 rag_answer = generator_result.data
+                
+                # If data is None or empty, try raw_response as fallback
+                if rag_answer is None and hasattr(generator_result, 'raw_response'):
+                    logger.info("🔄 Generator data is None, trying raw_response")
+                    rag_answer = generator_result.raw_response
                 
                 # Format relevant document information
                 relevant_docs = []
@@ -374,22 +405,61 @@ def query_rag_sync(rag: RAG, question: str) -> Dict[str, Any]:
                     }
                     relevant_docs.append(doc_info)
                 
-                # Handle generator response (now returns raw string by design)
+                # Handle generator response - ensure it's always string formatted
+                logger.info(f"🔍 Generator result type: {type(rag_answer)}")
+                
+                # First, try to extract string content from various possible formats
+                answer_text = ""
+                rationale_text = ""
+                
                 if isinstance(rag_answer, str):
-                    # Raw string response (normal case)
+                    # Raw string response (ideal case)
                     answer_text = rag_answer.strip()
-                    rationale_text = ""
-                    logger.info("✅ Generator returned markdown-formatted answer")
+                    logger.info("✅ Generator returned string answer")
+                elif hasattr(rag_answer, 'choices') and len(rag_answer.choices) > 0 and hasattr(rag_answer.choices[0], 'message'):
+                    # ChatCompletion object - extract the actual message content
+                    try:
+                        answer_text = rag_answer.choices[0].message.content
+                        logger.info("✅ Generator returned ChatCompletion object, extracted message content")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to extract content from ChatCompletion: {e}")
+                        answer_text = str(rag_answer)
+                elif 'ChatCompletion' in str(type(rag_answer)):
+                    # Alternative check for ChatCompletion objects
+                    try:
+                        answer_text = rag_answer.choices[0].message.content
+                        logger.info("✅ Generator returned ChatCompletion (type check), extracted message content")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to extract content from ChatCompletion (type check): {e}")
+                        answer_text = str(rag_answer)
                 elif hasattr(rag_answer, 'answer') and hasattr(rag_answer, 'rationale'):
                     # Structured RAGAnswer object (legacy case)
-                    answer_text = rag_answer.answer
-                    rationale_text = rag_answer.rationale
+                    answer_text = str(rag_answer.answer) if rag_answer.answer else ""
+                    rationale_text = str(rag_answer.rationale) if rag_answer.rationale else ""
                     logger.info("✅ Generator returned structured RAGAnswer object")
+                elif hasattr(rag_answer, 'content'):
+                    # Some response objects have a content field
+                    answer_text = str(rag_answer.content)
+                    logger.info("✅ Generator returned object with content field")
+                elif hasattr(rag_answer, 'text'):
+                    # Some response objects have a text field
+                    answer_text = str(rag_answer.text)
+                    logger.info("✅ Generator returned object with text field")
                 else:
-                    # Unknown format, try to convert to string
+                    # Fallback: convert whatever we got to string
                     answer_text = str(rag_answer)
-                    rationale_text = ""
-                    logger.warning(f"🔧 Generator returned unexpected format: {type(rag_answer)}")
+                    logger.warning(f"🔧 Generator returned unexpected format: {type(rag_answer)}, converted to string")
+                
+                # Clean and validate the answer text
+                answer_text = answer_text.strip()
+                if not answer_text:
+                    logger.error("❌ Empty answer after processing")
+                    return {
+                        "success": False,
+                        "error_message": "生成的答案为空"
+                    }
+                
+                logger.info(f"✅ Final answer length: {len(answer_text)} characters")
                 
                 return {
                     "success": True,

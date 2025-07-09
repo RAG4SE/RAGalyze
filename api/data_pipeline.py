@@ -473,55 +473,6 @@ def prepare_data_pipeline(is_huggingface_embedder: bool = False, force_recreate_
     )  # sequential will chain together splitter and embedder
     return data_transformer
 
-# T = TypeVar("T")  # Allow any type as items
-
-# class CustomDB(LocalDB):
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         self.data_transformer = None
-    
-#     def transform(
-#         self,
-#         *,
-#         force_recreate: bool = False,
-#         transformer: Optional[Component] = None,
-#         key: Optional[str] = None,
-#         map_fn: Optional[Callable[[T], Any]] = None,
-#     ) -> str:
-#         """The main method to apply the transformer to the data in two ways:
-#         1. Apply the transformer by key to the data using ``transform(key="test")``.
-#         2. Register and apply the transformer to the data using ``transform(transformer, key="test")``.
-
-#         Args:
-#             transformer (Optional[Component], optional): The transformer to use. Defaults to None.
-#             key (Optional[str], optional): The key to use for the transformer. Defaults to None.
-#             map_fn (Optional[Callable[[T], Any]], optional): The map function to use. Defaults to None.
-
-#         Returns:
-#             str: The key used for the transformation, from which the transformed data can be accessed.
-#         """
-#         key_to_use = key
-#         if transformer:
-#             key = self.register_transformer(transformer, key, map_fn)
-#             key_to_use = key
-#         if key_to_use is None:
-#             raise ValueError("Key must be provided.")
-
-#         if map_fn is not None:
-#             items_to_use = [map_fn(item) for item in self.items]
-#         else:
-#             items_to_use = self.items.copy()
-
-#         transformer_to_use = self.transformer_setups[key_to_use]
-#         assert hasattr(transformer_to_use, '__call__'), "The transformer must have a __call__ method"
-#         import inspect
-#         sig = inspect.signature(transformer_to_use.__call__)
-#         if 'force_recreate' in sig.parameters:
-#             self.transformed_items[key_to_use] = transformer_to_use(items_to_use, force_recreate=force_recreate)
-#         else:
-#             self.transformed_items[key_to_use] = transformer_to_use(items_to_use)
-#         return key_to_use
-
 def transform_documents_and_save_to_db(
     documents: List[Document], db_path: str, is_huggingface_embedder: bool = False, force_recreate: bool = False, repo_name: str = "default"
 ) -> LocalDB:
