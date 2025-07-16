@@ -1,0 +1,42 @@
+{
+  "default_provider": "dashscope",
+  "providers": {
+    "dashscope": {
+      "client_class": "DashscopeClient",
+      "default_model": "qwen3-8b",
+      "supportsCustomModel": true,
+      "models": {
+        "qwen-max": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "max_tokens": 2048
+        },
+        "qwen-plus": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "max_tokens": 2048
+        },
+        "qwen-turbo": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "max_tokens": 2048
+        },
+        "deepseek-r1-0528": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "max_tokens": 2048
+        },
+        "qwen3-14b": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "max_tokens": 2048
+        },
+        "qwen3-8b": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "max_tokens": 2048
+        }
+      }
+    }
+  }
+} 

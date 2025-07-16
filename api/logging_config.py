@@ -2,6 +2,33 @@ import logging
 import os
 from pathlib import Path
 
+RED = "\033[31m"
+GREEN = "\033[32m"
+BLUE = "\033[34m"
+ORANGE = "\033[38;5;208m"
+RESET = "\033[0m"
+
+class ColorFormatter(logging.Formatter):
+    grey = "\x1b[90m"
+    green = "\x1b[92m"
+    yellow = "\x1b[93m"
+    red = "\x1b[91m"
+    reset = "\x1b[0m"
+    format = "[RAGalyze][%(levelname_title)s] %(message)s"
+
+    FORMATS = {
+        logging.DEBUG: grey + format + reset,
+        logging.INFO: green + format + reset,
+        logging.WARNING: yellow + format + reset,
+        logging.ERROR: red + format + reset,
+        logging.CRITICAL: red + format + reset,
+    }
+
+    def format(self, record):
+        record.levelname_title = record.levelname.title()
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt)
+        return formatter.format(record)
 
 def setup_logging(format: str = None):
     """
@@ -31,16 +58,31 @@ def setup_logging(format: str = None):
     # Ensure parent dirs exist for the log file
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Configure logging handlers and format
-    logging.basicConfig(
-        level=log_level,
-        format = format or "%(asctime)s - %(levelname)s - %(name)s - %(filename)s:%(lineno)d - %(message)s",
-        handlers=[
-            logging.FileHandler(resolved_path),
-            logging.StreamHandler()
-        ],
-        force=True
-    )
+    # File log (plain format)
+    file_handler = logging.FileHandler(resolved_path)
+    file_handler.setFormatter(logging.Formatter(
+        format or "%(asctime)s - %(levelname)s - %(name)s - %(filename)s:%(lineno)d - %(message)s"
+    ))
+
+    # Console log (plain format, for root logger)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(logging.Formatter(
+        format or "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+    ))
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(log_level)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(stream_handler)
+
+    # Add color handler to your project logger (e.g., api, RAGalyze) and prevent propagation to root logger
+    project_logger = logging.getLogger("api")
+    project_logger.handlers.clear()  # Prevent duplicate handlers
+    color_handler = logging.StreamHandler()
+    color_handler.setFormatter(ColorFormatter())
+    project_logger.addHandler(color_handler)
+    project_logger.propagate = False  # Prevent propagation to root logger to avoid duplicate output
 
     # Initial debug message to confirm configuration
     logger = logging.getLogger(__name__)

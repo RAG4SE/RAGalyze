@@ -46,16 +46,24 @@ from adalflow.core.types import (
     GeneratorOutput,
     Document,
     Embedding,
+    EmbedderOutputType,
+    EmbedderInputType,
 )
 from adalflow.core.component import DataComponent
 from adalflow.core.embedder import (
     BatchEmbedderOutputType,
     BatchEmbedderInputType,
 )
+import adalflow.core.functional as F
 from adalflow.components.model_client.utils import parse_embedding_response
 
-log = logging.getLogger(__name__)
+from api.logging_config import setup_logging
 
+# # Disable tqdm progress bars
+# os.environ["TQDM_DISABLE"] = "1"
+
+setup_logging()
+log = logging.getLogger(__name__)
 
 def get_first_message_content(completion: ChatCompletion) -> str:
     """When we only need the content of the first message."""
@@ -384,11 +392,18 @@ class DashscopeClient(ModelClient):
     def call(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED):
         """Call the Dashscope API."""
         if model_type == ModelType.LLM:
+            if not api_kwargs.get("stream", False):
+                # For non-streaming, enable_thinking must be false.
+                # Pass it via extra_body to avoid TypeError from openai client validation.
+                extra_body = api_kwargs.get("extra_body", {})
+                extra_body["enable_thinking"] = False
+                api_kwargs["extra_body"] = extra_body
+
+            completion = self.sync_client.chat.completions.create(**api_kwargs)
+            
             if api_kwargs.get("stream", False):
-                completion = self.sync_client.chat.completions.create(**api_kwargs)
                 return handle_streaming_response(completion)
             else:
-                completion = self.sync_client.chat.completions.create(**api_kwargs)
                 return self.parse_chat_completion(completion)
         elif model_type == ModelType.EMBEDDER:
             # Extract input texts from api_kwargs
@@ -491,11 +506,17 @@ class DashscopeClient(ModelClient):
             self.async_client = self.init_async_client()
 
         if model_type == ModelType.LLM:
+            if not api_kwargs.get("stream", False):
+                # For non-streaming, enable_thinking must be false.
+                extra_body = api_kwargs.get("extra_body", {})
+                extra_body["enable_thinking"] = False
+                api_kwargs["extra_body"] = extra_body
+
+            completion = await self.async_client.chat.completions.create(**api_kwargs)
+
             if api_kwargs.get("stream", False):
-                completion = await self.async_client.chat.completions.create(**api_kwargs)
                 return handle_streaming_response(completion)
             else:
-                completion = await self.async_client.chat.completions.create(**api_kwargs)
                 return self.parse_chat_completion(completion)
         elif model_type == ModelType.EMBEDDER:
             # Extract input texts from api_kwargs
@@ -593,20 +614,126 @@ class DashscopeClient(ModelClient):
             "input_type": self._input_type,
         }
 
+    def __getstate__(self):
+        """
+        Customize serialization to exclude non-picklable client objects.
+        This method is called by pickle when saving the object's state.
+        """
+        state = self.__dict__.copy()
+        # Remove the unpicklable client instances
+        if 'sync_client' in state:
+            del state['sync_client']
+        if 'async_client' in state:
+            del state['async_client']
+        return state
+
+    def __setstate__(self, state):
+        """
+        Customize deserialization to re-create the client objects.
+        This method is called by pickle when loading the object's state.
+        """
+        self.__dict__.update(state)
+        # Re-initialize the clients after unpickling
+        self.sync_client = self.init_sync_client()
+        self.async_client = None  # It will be lazily initialized when acall is used
+
+
+class DashScopeEmbedder(DataComponent):
+    r"""
+    A user-facing component that orchestrates an embedder model via the DashScope model client and output processors.
+
+    Args:
+        model_client (ModelClient): The DashScope model client to use for the embedder.
+        model_kwargs (Dict[str, Any], optional): The model kwargs to pass to the model client. Defaults to {}.
+        output_processors (Optional[Component], optional): The output processors after model call. Defaults to None.
+    """
+
+    model_type: ModelType = ModelType.EMBEDDER
+    model_client: ModelClient
+    output_processors: Optional[DataComponent]
+
+    def __init__(
+        self,
+        *,
+        model_client: ModelClient,
+        model_kwargs: Dict[str, Any] = {},
+        output_processors: Optional[DataComponent] = None,
+    ) -> None:
+
+        super().__init__(model_kwargs=model_kwargs)
+        if not isinstance(model_kwargs, Dict):
+            raise TypeError(
+                f"{type(self).__name__} requires a dictionary for model_kwargs, not a string"
+            )
+        self.model_kwargs = model_kwargs.copy()
+
+        if not isinstance(model_client, ModelClient):
+            raise TypeError(
+                f"{type(self).__name__} requires a ModelClient instance for model_client."
+            )
+        self.model_client = model_client
+        self.output_processors = output_processors
+
+    def call(
+        self,
+        input: EmbedderInputType,
+        model_kwargs: Optional[Dict] = {},
+    ) -> EmbedderOutputType:
+        log.debug(f"Calling {self.__class__.__name__} with input: {input}")
+        api_kwargs = self.model_client.convert_inputs_to_api_kwargs(
+            input=input,
+            model_kwargs=self._compose_model_kwargs(**model_kwargs),
+            model_type=self.model_type,
+        )
+        try:
+            output = self.model_client.call(
+                api_kwargs=api_kwargs, model_type=self.model_type
+            )
+        except Exception as e:
+            log.error(f"🤡 Error calling the DashScope model: {e}")
+            output = EmbedderOutput(error=str(e))
+        return output
+
+    async def acall(
+        self,
+        input: EmbedderInputType,
+        model_kwargs: Optional[Dict] = {},
+    ) -> EmbedderOutputType:
+        log.debug(f"Calling {self.__class__.__name__} with input: {input}")
+        api_kwargs = self.model_client.convert_inputs_to_api_kwargs(
+            input=input,
+            model_kwargs=self._compose_model_kwargs(**model_kwargs),
+            model_type=self.model_type,
+        )
+        output: EmbedderOutputType = None
+        try:
+            response = await self.model_client.acall(
+                api_kwargs=api_kwargs, model_type=self.model_type
+            )
+            output = self.model_client.parse_embedding_response(response)
+        except Exception as e:
+            log.error(f"Error calling the DashScope model: {e}")
+            output = EmbedderOutput(error=str(e))
+
+        output.input = [input] if isinstance(input, str) else input
+        log.debug(f"Output from {self.__class__.__name__}: {output}")
+        return output
+
+    def _compose_model_kwargs(self, **model_kwargs) -> Dict[str, object]:
+        return F.compose_model_kwargs(self.model_kwargs, model_kwargs)
 
 # Batch Embedding Components for DashScope
 class DashScopeBatchEmbedder(DataComponent):
     """Batch embedder specifically designed for DashScope API"""
 
-    def __init__(self, embedder, batch_size: int = 100, repo_name: str = "default") -> None:
+    def __init__(self, embedder, batch_size: int = 100, embedding_cache_file_name: str = "default") -> None:
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
-        self.repo_name = repo_name
         if self.batch_size > 10:
             log.warning(f"DashScope batch embedder initialization, batch size: {batch_size}, note that DashScope batch embedding size cannot exceed 10, automatically set to 10")
             self.batch_size = 10
-        log.info(f"DashScope batch embedder initialized with batch size: {batch_size}, repo: {repo_name}")
+        self.cache_path = f'./embedding_cache/{embedding_cache_file_name}_{self.embedder.__class__.__name__}_dashscope_embeddings.pkl'
 
     def call(
         self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}, force_recreate: bool = False
@@ -623,15 +750,15 @@ class DashScopeBatchEmbedder(DataComponent):
             Batch embedding output
         """
         # Check cache first
-        cache_file = f'./cache/{self.repo_name}_{self.embedder.__class__.__name__}_dashscope_embeddings.pkl'
-        if not force_recreate and os.path.exists(cache_file):
+        
+        if not force_recreate and os.path.exists(self.cache_path):
             try:
-                with open(cache_file, 'rb') as f:
+                with open(self.cache_path, 'rb') as f:
                     embeddings = pickle.load(f)
-                    log.info(f"Loaded cached DashScope embeddings from: {cache_file}")
+                    log.info(f"Loaded cached DashScope embeddings from: {self.cache_path}")
                 return embeddings
             except Exception as e:
-                log.warning(f"Failed to load cache file {cache_file}: {e}, proceeding with fresh embedding")
+                log.warning(f"Failed to load cache file {self.cache_path}: {e}, proceeding with fresh embedding")
         
         if isinstance(input, str):
             input = [input]
@@ -677,13 +804,13 @@ class DashScopeBatchEmbedder(DataComponent):
         
         # Save to cache
         try:
-            if not os.path.exists('./cache'):
-                os.makedirs('./cache')
-            with open(cache_file, 'wb') as f:
+            if not os.path.exists('./embedding_cache'):
+                os.makedirs('./embedding_cache')
+            with open(self.cache_path, 'wb') as f:
                 pickle.dump(embeddings, f)
-                log.info(f"Saved DashScope embeddings cache to: {cache_file}")
+                log.info(f"Saved DashScope embeddings cache to: {self.cache_path}")
         except Exception as e:
-            log.warning(f"Failed to save cache to {cache_file}: {e}")
+            log.warning(f"Failed to save cache to {self.cache_path}: {e}")
         
         return embeddings
     
@@ -697,13 +824,12 @@ class DashScopeBatchEmbedder(DataComponent):
 class DashScopeToEmbeddings(DataComponent):
     """Component that converts document sequences to embedding vector sequences, specifically optimized for DashScope API"""
 
-    def __init__(self, embedder, batch_size: int = 100, force_recreate_db: bool = False, repo_name: str = "default") -> None:
+    def __init__(self, embedder, batch_size: int = 100, force_recreate_db: bool = False, embedding_cache_file_name: str = "default") -> None:
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
-        self.batch_embedder = DashScopeBatchEmbedder(embedder=embedder, batch_size=batch_size, repo_name=repo_name)
+        self.batch_embedder = DashScopeBatchEmbedder(embedder=embedder, batch_size=batch_size, embedding_cache_file_name=embedding_cache_file_name)
         self.force_recreate_db = force_recreate_db
-        log.info(f"DashScope document embedder initialized with batch size: {batch_size}, repo: {repo_name}")
 
     def __call__(self, input: List[Document]) -> List[Document]:
         """

@@ -11,7 +11,6 @@ import logging
 # Add api directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'api'))
 
-from api.data_pipeline import read_all_documents, prepare_data_pipeline, transform_documents_and_save_to_db
 from api.rag import RAG
 from api.config import configs
 from adalflow.core.db import LocalDB

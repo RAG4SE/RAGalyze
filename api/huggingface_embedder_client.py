@@ -77,10 +77,8 @@ class HuggingfaceClient(ModelClient):
         """
         if self.model is None or self.model_name != model_name:
             try:
-                log.info(f"Loading HuggingFace model: {model_name} on {self.device}")
                 self.model = SentenceTransformer(model_name, device=self.device)
                 self.model_name = model_name
-                log.info(f"Successfully loaded model: {model_name}")
             except Exception as e:
                 log.error(f"Error loading model {model_name}: {e}")
                 raise
@@ -217,7 +215,6 @@ class HuggingfaceClient(ModelClient):
                 valid_indices.append(i)
             else:
                 log.warning(f"Skipping empty or invalid text at index {i}: type={type(text)}, length={len(text) if hasattr(text, '__len__') else 'N/A'}, repr={repr(text)[:100]}")
-        
         if not valid_texts:
             log.error("No valid texts found after filtering")
             return EmbedderOutput(data=[], error="No valid texts found after filtering", raw_response=None)
@@ -235,7 +232,6 @@ class HuggingfaceClient(ModelClient):
                 embeddings = self.model.encode(valid_texts, convert_to_numpy=True, show_progress_bar=False)
             # Parse the response
             result = self.parse_embedding_response(embeddings)
-
             # If we filtered texts, we need to create embeddings for the original indices
             if len(valid_texts) != len(texts):
                 log.info(f"Creating embeddings for {len(texts)} original positions")
@@ -263,7 +259,7 @@ class HuggingfaceClient(ModelClient):
                             index=i
                         ))
                         final_raw_response.append(np.zeros(embedding_dim))
-                # np.save('./cache/embeddings.npy', embeddings)
+                # np.save('./embedding_cache/embeddings.npy', embeddings)
                 result = EmbedderOutput(
                     data=final_data,
                     error=None,
@@ -464,14 +460,14 @@ class HuggingfaceClientBatchEmbedder(DataComponent):
     Args:
         embedder (HuggingfaceEmbedder): The embedder to use for batching.
         batch_size (int, optional): The batch size to use for batching. Defaults to 100.
-        repo_name (str, optional): Repository name for cache file naming. Defaults to "default".
+        embedding_cache_file_name (str, optional): Cache file naming. Defaults to "default".
     """
 
-    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500, repo_name: str = "default") -> None:
+    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500, embedding_cache_file_name: str = "default") -> None:
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
-        self.repo_name = repo_name
+        self.cache_path = f'./embedding_cache/{embedding_cache_file_name}_{self.embedder.__class__.__name__}_embeddings.pkl'
 
     def call(
         self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}, force_recreate: bool = False
@@ -488,11 +484,10 @@ class HuggingfaceClientBatchEmbedder(DataComponent):
         """
 
         # Generate repository-specific cache file name
-        cache_file = f'./cache/{self.repo_name}_{self.embedder.__class__.__name__}_embeddings.pkl'
-        if not force_recreate and os.path.exists(cache_file):
-            with open(cache_file, 'rb') as f:
+        if not force_recreate and os.path.exists(self.cache_path):
+            with open(self.cache_path, 'rb') as f:
                 embeddings = pickle.load(f)
-                log.info(f"Loaded cached embeddings from: {cache_file}")
+                log.info(f"Loaded cached embeddings from: {self.cache_path}")
             return embeddings
 
         if isinstance(input, str):
@@ -508,11 +503,11 @@ class HuggingfaceClientBatchEmbedder(DataComponent):
                 input=batch_input, model_kwargs=model_kwargs
             )
             embeddings.append(batch_output)
-        if not os.path.exists('./cache'):
-            os.makedirs('./cache')
-        with open(cache_file, 'wb') as f:
+        if not os.path.exists('./embedding_cache'):
+            os.makedirs('./embedding_cache')
+        with open(self.cache_path, 'wb') as f:
             pickle.dump(embeddings, f)
-            log.info(f"Saved embeddings cache to: {cache_file}")
+            log.info(f"Saved embeddings cache to: {self.cache_path}")
         return embeddings
 
 
@@ -522,12 +517,13 @@ class HuggingfaceClientToEmbeddings(DataComponent):
     It operates on a copy of the input data, and does not modify the input data.
     """
 
-    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500, force_recreate_db: bool = False, repo_name: str = "default") -> None:
+    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500, force_recreate_db: bool = False, embedding_cache_file_name: str = "default") -> None:
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
-        self.batch_embedder = HuggingfaceClientBatchEmbedder(embedder=embedder, batch_size=batch_size, repo_name=repo_name)
+        self.batch_embedder = HuggingfaceClientBatchEmbedder(embedder=embedder, batch_size=batch_size, embedding_cache_file_name=embedding_cache_file_name)
         self.force_recreate_db = force_recreate_db
+        self.cache_path = self.batch_embedder.cache_path
 
     def __call__(self, input: ToEmbeddingsInputType) -> ToEmbeddingsOutputType:
         output = deepcopy(input)

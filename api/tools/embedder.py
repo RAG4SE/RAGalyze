@@ -19,9 +19,10 @@ def get_embedder(is_huggingface_embedder: bool = False) -> adal.Embedder:
             model_kwargs=embedder_config["model_kwargs"],
         )
         return embedder
-
-    embedder = adal.Embedder(
-        model_client=model_client,
-        model_kwargs=embedder_config["model_kwargs"],
-    )
-    return embedder
+    else:
+        from api.dashscope_client import DashScopeEmbedder
+        embedder = DashScopeEmbedder(
+            model_client=model_client,
+            model_kwargs=embedder_config["model_kwargs"],
+        )
+        return embedder

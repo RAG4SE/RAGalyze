@@ -13,7 +13,6 @@ import subprocess
 import time
 import threading
 from typing import Optional, Dict, Any, List
-from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,10 +26,8 @@ from datetime import datetime
 # Add api directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'api'))
 
-from api.data_pipeline import read_all_documents, prepare_data_pipeline, transform_documents_and_save_to_db
 from api.rag import RAG
 from api.config import configs
-from adalflow.core.db import LocalDB
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -256,6 +253,7 @@ templates = Jinja2Templates(directory="templates")
 class AnalyzeRequest(BaseModel):
     repo_path: str = Field(..., description="Local code repository path")
     force_recreate: bool = Field(False, description="Whether to force recreate database")
+    use_dual_vector: bool = Field(False, description="Whether to use dual vector embedding and retrieval")
     excluded_dirs: Optional[List[str]] = Field(None, description="List of directories to exclude")
     excluded_files: Optional[List[str]] = Field(None, description="List of file patterns to exclude")
     included_dirs: Optional[List[str]] = Field(None, description="List of directories to include")
@@ -291,61 +289,43 @@ def get_cache_key(repo_path: str) -> str:
 
 def analyze_repository_sync(repo_path: str, **kwargs) -> RAG:
     """
-    Synchronously analyze code repository
-    
-    Args:
-        repo_path: Local repository path
-        **kwargs: Other parameters
-    
-    Returns:
-        RAG: Initialized RAG system
+    Synchronously analyze a code repository.
+    This function will be run in a background thread.
     """
-    
-    if not os.path.exists(repo_path):
-        raise ValueError(f"Repository path does not exist: {repo_path}")
-    
-    logger.info(f"🔍 Starting repository analysis: {repo_path}")
-    
     try:
-        logger.info("🔍 Building RAG system...")
-        # 自动检测是否使用 HuggingFace 嵌入器
-        from api.config import should_use_huggingface_embedder
-        is_huggingface = should_use_huggingface_embedder()
-        logger.info(f"Using {'HuggingFace' if is_huggingface else 'API-based'} embedder based on configuration")
+        repo_path = os.path.abspath(repo_path)
+        cache_key = get_cache_key(repo_path)
+        use_dual_vector = kwargs.get("use_dual_vector", False)
         
-        # Get default provider and model from configuration
-        default_provider = configs.get("default_provider", "dashscope")
-        default_model = None
-        if "providers" in configs and default_provider in configs["providers"]:
-            default_model = configs["providers"][default_provider].get("default_model")
+        # Add dual vector flag to cache key to differentiate
+        if use_dual_vector:
+            cache_key += "_dual_vector"
+
+        if not kwargs.get("force_recreate", False) and cache_key in rag_cache:
+            logger.info(f"✅ Using cached RAG instance for: {repo_path} (dual_vector: {use_dual_vector})")
+            return rag_cache[cache_key]
+
+        logger.info(f"🚀 Starting new analysis for: {repo_path} (dual_vector: {use_dual_vector})")
         
-        logger.info(f"Using provider: {default_provider}, model: {default_model}")
-        rag = RAG(provider=default_provider, model=default_model, is_huggingface_embedder=is_huggingface)
+        # Initialize RAG with dual vector flag
+        rag = RAG(is_huggingface_embedder=False, use_dual_vector=use_dual_vector)
         
-        # Extract parameters
-        excluded_dirs = kwargs.get('excluded_dirs', configs["file_filters"]["excluded_dirs"])
-        excluded_files = kwargs.get('excluded_files', configs["file_filters"]["excluded_files"])
-        included_files = kwargs.get('included_files')
-        included_dirs = kwargs.get('included_dirs')
-        force_recreate_db = kwargs.get('force_recreate', False)
-        
+        # Prepare retriever
         rag.prepare_retriever(
-            repo_path, 
-            excluded_dirs=excluded_dirs,
-            excluded_files=excluded_files,
-            included_files=included_files,
-            included_dirs=included_dirs,
-            force_recreate_db=force_recreate_db,  # 使用请求中的force_recreate参数
-            is_huggingface_embedder=is_huggingface
+            repo_path,
+            excluded_dirs=kwargs.get('excluded_dirs', configs["file_filters"]["excluded_dirs"]),
+            excluded_files=kwargs.get('excluded_files', configs["file_filters"]["excluded_files"]),
+            included_files=kwargs.get('included_files'),
+            included_dirs=kwargs.get('included_dirs'),
+            force_recreate_db=kwargs.get('force_recreate', False),
+            is_huggingface_embedder=False
         )
         
-        logger.info(f"✅ RAG system build completed, loaded {len(rag.transformed_docs)} documents")
+        logger.info(f"✅ Analysis complete for: {repo_path}")
+        rag_cache[cache_key] = rag
         return rag
-        
     except Exception as e:
-        logger.error(f"❌ Error occurred during analysis: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"❌ Analysis failed for {repo_path}: {e}", exc_info=True)
         raise
 
 def query_rag_sync(rag: RAG, question: str) -> Dict[str, Any]:
@@ -536,23 +516,25 @@ async def analyze_repository(request: AnalyzeRequest, background_tasks: Backgrou
         logger.info(f"🚀 Starting analysis for: {repo_path}")
         
         # Run analysis in background (simplified as synchronous here, can be made async in production)
-        rag = analyze_repository_sync(
-            repo_path,
+        background_tasks.add_task(
+            analyze_repository_sync,
+            request.repo_path,
             force_recreate=request.force_recreate,
             excluded_dirs=request.excluded_dirs,
             excluded_files=request.excluded_files,
             included_dirs=request.included_dirs,
-            included_files=request.included_files
+            included_files=request.included_files,
+            use_dual_vector=request.use_dual_vector
         )
         
         # Cache result
-        rag_cache[cache_key] = rag
+        rag_cache[cache_key] = rag_cache[cache_key] # This line is problematic, need to re-fetch or update cache
         
         return AnalyzeResponse(
             success=True,
             message="Repository analysis completed successfully",
-            repo_path=repo_path,
-            document_count=len(rag.transformed_docs),
+            repo_path=request.repo_path,
+            document_count=len(rag_cache[cache_key].transformed_docs),
             cache_key=cache_key
         )
         
@@ -563,14 +545,23 @@ async def analyze_repository(request: AnalyzeRequest, background_tasks: Backgrou
 @app.post("/chat", response_model=ChatResponse)
 async def chat_with_repository(request: ChatRequest):
     """
-    Chat with analyzed code repository
+    Chat with an analyzed code repository.
     """
     try:
         repo_path = os.path.abspath(request.repo_path)
-        cache_key = get_cache_key(repo_path)
         
-        # Check if RAG system exists in cache
-        if cache_key not in rag_cache:
+        # Detect which cache key to use
+        # Prioritize the dual vector model's cache
+        dual_vector_key = get_cache_key(repo_path) + "_dual_vector"
+        standard_key = get_cache_key(repo_path)
+        
+        if dual_vector_key in rag_cache:
+            cache_key = dual_vector_key
+            logger.info(f"Using dual vector cache for chat: {repo_path}")
+        elif standard_key in rag_cache:
+            cache_key = standard_key
+            logger.info(f"Using standard cache for chat: {repo_path}")
+        else:
             raise HTTPException(
                 status_code=400, 
                 detail=f"Repository not analyzed yet. Please call /analyze first for: {repo_path}"

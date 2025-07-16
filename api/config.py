@@ -18,10 +18,6 @@ from adalflow import GoogleGenAIClient
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
-AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
-AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
-AWS_REGION = os.environ.get('AWS_REGION')
-AWS_ROLE_ARN = os.environ.get('AWS_ROLE_ARN')
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 DASHSCOPE_API_KEY = os.environ.get('DASHSCOPE_API_KEY')
 DASHSCOPE_WORKSPACE_ID = os.environ.get('DASHSCOPE_WORKSPACE_ID')
@@ -34,14 +30,7 @@ if GOOGLE_API_KEY:
     os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 if OPENROUTER_API_KEY:
     os.environ["OPENROUTER_API_KEY"] = OPENROUTER_API_KEY
-if AWS_ACCESS_KEY_ID:
-    os.environ["AWS_ACCESS_KEY_ID"] = AWS_ACCESS_KEY_ID
-if AWS_SECRET_ACCESS_KEY:
-    os.environ["AWS_SECRET_ACCESS_KEY"] = AWS_SECRET_ACCESS_KEY
-if AWS_REGION:
-    os.environ["AWS_REGION"] = AWS_REGION
-if AWS_ROLE_ARN:
-    os.environ["AWS_ROLE_ARN"] = AWS_ROLE_ARN
+
 if DEEPSEEK_API_KEY:
     os.environ["DEEPSEEK_API_KEY"] = DEEPSEEK_API_KEY
 if DASHSCOPE_API_KEY:
@@ -170,36 +159,14 @@ def get_embedder_config():
     """
     return configs.get("embedder", {})
 
-def should_use_huggingface_embedder():
-    """
-    自动判断是否应该使用 HuggingFace 嵌入器
-    基于配置文件中的 client_class 来决定
-    
-    Returns:
-        bool: True 如果应该使用 HuggingFace 嵌入器，False 如果使用其他客户端
-    """
-    embedder_config = get_embedder_config()
-    client_class = embedder_config.get("client_class", "")
-    
-    # HuggingFace 相关的客户端类名
-    huggingface_clients = ["HuggingfaceClient", "HuggingFaceClient", "huggingface", "HuggingFace"]
-    
-    # 如果是 HuggingFace 客户端，使用 HuggingFace 嵌入器
-    if client_class in huggingface_clients:
-        return True
-    
-    # DashScope、OpenAI、DeepSeek、SiliconFlow 等使用标准嵌入器
-    dashscope_clients = ["DashscopeClient", "OpenAIClient", "DeepSeekClient", "SiliconFlowClient"]
-    if client_class in dashscope_clients:
-        return False
-    
-    # 强制返回 False，确保使用配置文件中指定的客户端类
-    # （之前的逻辑根据模型名自动选择 HuggingFace 可能导致配置被覆盖）
-    return False
-
 # Load repository and file filters configuration
 def load_repo_config():
     return load_json_config("repo.json")
+
+# Load code understanding configuration
+def load_code_understanding_config():
+    """Load code understanding specific configuration"""
+    return load_json_config("code_understanding.json")
 
 
 # Default excluded directories and files
@@ -250,6 +217,7 @@ configs = {}
 generator_config = load_generator_config()
 embedder_config = load_embedder_config()
 repo_config = load_repo_config()
+code_understanding_config = load_code_understanding_config()
 
 # Update configuration
 if generator_config:
@@ -267,6 +235,10 @@ if repo_config:
     for key in ["file_filters", "repository"]:
         if key in repo_config:
             configs[key] = repo_config[key]
+
+# Update code understanding configuration
+if code_understanding_config:
+    configs["code_understanding"] = code_understanding_config
 
 
 
@@ -318,5 +290,70 @@ def get_model_config(provider=None, model=None):
 
     # Provider-specific adjustments
     result["model_kwargs"] = {"model": model, **model_params}
+
+    return result
+
+
+def get_code_understanding_config(provider=None, model=None):
+    """
+    Get configuration for code understanding with the specified provider and model
+
+    Parameters:
+        provider (str): Model provider ('dashscope'). If None, uses default from config.
+        model (str): Model name, or None to use default model
+
+    Returns:
+        dict: Configuration containing model_client, model and other parameters
+    """
+    # Get code understanding configuration
+    code_understanding_config = configs.get("code_understanding", {})
+    if not code_understanding_config:
+        raise ValueError("Code understanding configuration not found")
+
+    # Use default provider if not specified
+    if provider is None:
+        provider = code_understanding_config.get("default_provider", "dashscope")
+    
+    # Get provider configuration
+    providers_config = code_understanding_config.get("providers", {})
+    if provider not in providers_config:
+        available_providers = list(providers_config.keys())
+        raise ValueError(f"Provider '{provider}' not found in code understanding configuration. Available providers: {available_providers}")
+
+    provider_config = providers_config[provider]
+
+    # Get client class
+    client_class = provider_config.get("client_class")
+    if not client_class:
+        raise ValueError(f"Client class not specified for provider '{provider}' in code understanding configuration")
+
+    # Map client class to actual class
+    model_client = CLIENT_CLASSES.get(client_class)
+    if not model_client:
+        raise ValueError(f"Unknown client class: {client_class}")
+
+    # If model not provided, use default model for the provider
+    if not model:
+        model = provider_config.get("default_model")
+        if not model:
+            raise ValueError(f"No default model specified for provider '{provider}' in code understanding configuration")
+
+    # Get model parameters
+    models_config = provider_config.get("models", {})
+    if model not in models_config:
+        available_models = list(models_config.keys())
+        raise ValueError(f"Model '{model}' not found for provider '{provider}' in code understanding configuration. Available models: {available_models}")
+
+    model_params = models_config[model]
+
+    # Prepare result
+    result = {
+        "provider": provider,
+        "model_client": model_client,
+        "model": model,
+        "model_kwargs": {"model": model, **model_params},
+        "provider_config": provider_config,
+        "model_config": model_params
+    }
 
     return result

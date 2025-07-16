@@ -42,13 +42,30 @@ cd RAGalyze-open
 pip install -r requirements_server.txt
 ```
 
-### 2. **LLM Provider Setup**
+### 2. **API Keys Required**
+
+RAGalyze requires API keys from LLM providers. Choose one or more providers and set up the corresponding API keys:
+
+| Provider | Required Environment Variables | How to Get API Key |
+|----------|-------------------------------|-------------------|
+| **Google Gemini** | `GOOGLE_API_KEY` | [Get API Key](https://aistudio.google.com/app/apikey) |
+| **OpenAI** | `OPENAI_API_KEY` | [Get API Key](https://platform.openai.com/api-keys) |
+| **DeepSeek** | `DEEPSEEK_API_KEY` | [Get API Key](https://platform.deepseek.com/api_keys) |
+| **Dashscope (Qwen)** | `DASHSCOPE_API_KEY`, `DASHSCOPE_WORKSPACE_ID` (optional) | [Get API Key and WorkSpace](https://bailian.console.aliyun.com/?spm=a2c4g.11186623.0.0.6ebe48238qeoit&tab=api#/api)  |
+| **SiliconFlow** | `SILICONFLOW_API_KEY` | [Get API Key](https://cloud.siliconflow.cn/i/api-keys) |
+
+**Note**: 
+- For **code understanding features**, you need at least one Dashscope API key since we only support dashscope for this task.
+- For **general RAG queries**, you can use any supported provider
+- Dashscope workspace ID is optional but required when you use Dashscope's embedding model, e.g., `text-embedding-v4` provided by Qwen Lab
+
+### 3. **LLM Provider Setup**
 
 ```bash
 cd api/config
 ```
 
-Modify `generator.json` to select your favorate LLM, and export the corresponding API
+Modify `generator.json` to select your favorite LLM, and export the corresponding API keys:
 
 ```bash
 # Google Gemini
@@ -60,14 +77,15 @@ export OPENAI_API_KEY="your_api_key"
 # DeepSeek
 export DEEPSEEK_API_KEY="your_api_key"
 
-# Dashscope (Qwen)
+# Dashscope (Qwen) - Required for code understanding
 export DASHSCOPE_API_KEY="your_api_key"
+export DASHSCOPE_WORKSPACE_ID="your_workspace_id"  # Optional
 
 # SiliconFlow
 export SILICONFLOW_API_KEY="your_api_key"
 ```
 
-### 3. **Simple Usage (Standalone)**
+### 4. **Simple Usage (Standalone)**
 
 ```python
 from client import analyze_repository, ask_question
@@ -81,7 +99,7 @@ answer = ask_question("/path/to/your/repo", "What does this project do?")
 print(answer['answer'])
 ```
 
-### 4. **Command Line Usage**
+### 5. **Command Line Usage**
 
 ```bash
 # Analyze a repository and ask a question
@@ -91,7 +109,7 @@ python client.py /path/to/repo "What is the main functionality?"
 python analyze_solidity_repo.py /path/to/solidity/repo
 ```
 
-### 5. **Web Server Mode with Browser Interface**
+### 6. **Web Server Mode with Browser Interface**
 
 ```bash
 # Start the server
