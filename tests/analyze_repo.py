@@ -11,8 +11,8 @@ import logging
 # Add api directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'api'))
 
-from api.rag import RAG
-from api.config import configs
+from server.rag import RAG
+from server.config import configs
 from adalflow.core.db import LocalDB
 
 # Configure logging

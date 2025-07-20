@@ -22,12 +22,10 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 import json
 from datetime import datetime
+from contextlib import asynccontextmanager
 
-# Add api directory to Python path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'api'))
-
-from api.rag import RAG
-from api.config import configs
+from server.rag import RAG
+from server.config import configs
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -97,7 +95,7 @@ class ServerManager:
         # Build uvicorn command
         cmd = [
             sys.executable, "-m", "uvicorn",
-            "server:app",
+            "server.main:app",
             "--host", host,
             "--port", str(port),
             "--log-level", log_level,
@@ -209,7 +207,7 @@ class ServerManager:
         try:
             # Create uvicorn server config
             config = uvicorn.Config(
-                "server:app",
+                "server.main:app",
                 host=host,
                 port=port,
                 reload=reload,
@@ -229,11 +227,22 @@ class ServerManager:
         
         return 0
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Setup and cleanup for the application lifespan"""
+    # Startup code
+    logger.info("🚀 Server starting up...")
+    yield
+    # Shutdown code
+    logger.info("🛑 Server shutting down...")
+    rag_cache.clear()
+
 # FastAPI app
 app = FastAPI(
     title="RAGalyze Code Analysis Server",
     description="Code repository analysis service based on HuggingFace embedding models",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Add CORS middleware
@@ -660,14 +669,13 @@ async def clear_all_cache():
     rag_cache.clear()
     return {"message": f"Cleared {count} cached repositories"}
 
-@app.on_event("startup")
-async def startup_event():
-    """Setup signal handlers after uvicorn starts"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Setup and cleanup for the application lifespan"""
+    # Startup code
     logger.info("🚀 Server starting up...")
-    
-@app.on_event("shutdown") 
-async def shutdown_event():
-    """Cleanup on server shutdown"""
+    yield
+    # Shutdown code
     logger.info("🛑 Server shutting down...")
     rag_cache.clear()
 
@@ -706,4 +714,4 @@ def main():
     sys.exit(exit_code)
 
 if __name__ == "__main__":
-    main() 
+    main()

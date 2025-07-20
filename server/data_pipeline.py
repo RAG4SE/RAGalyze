@@ -8,10 +8,10 @@ import logging
 import glob
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
-from api.config import configs, DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES
-from api.dual_vector_pipeline import DualVectorDocument
+from server.config import configs, DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES
+from server.dual_vector_pipeline import DualVectorDocument
 
-from api.tools.embedder import get_embedder
+from server.tools.embedder import get_embedder
 
 # The setting is from the observation that the maximum length of Solidity compiler's files is 919974
 MAX_EMBEDDING_LENGTH = 1000000
@@ -440,10 +440,10 @@ def prepare_data_pipeline(
     Returns:
         Tuple[adal.Sequential, str]: The data transformation pipeline and the cache file name as the key of the transformer.
     """
-    from api.config import get_embedder_config
-    from api.huggingface_embedder_client import HuggingfaceClientToEmbeddings
-    from api.dashscope_client import DashScopeToEmbeddings
-    from api.dual_vector_pipeline import DualVectorToEmbeddings
+    from server.config import get_embedder_config
+    from server.huggingface_embedder_client import HuggingfaceClientToEmbeddings
+    from server.dashscope_client import DashScopeToEmbeddings
+    from server.dual_vector_pipeline import DualVectorToEmbeddings
 
     splitter = TextSplitter(**configs["text_splitter"])
     embedder_config = get_embedder_config()

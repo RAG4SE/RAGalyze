@@ -7,7 +7,6 @@ class DualVectorDocument:
     Data structure to store the code, its summary, and the corresponding dual vector embeddings.
     """
     original_doc: Document = None
-    code_text: str = ""
     code_embedding: List[float] = field(default_factory=list)
     understanding_text: str = ""
     understanding_embedding: List[float] = field(default_factory=list)

@@ -28,7 +28,7 @@ from adalflow.core.types import (
 import adalflow.core.functional as F
 
 # Configure logging
-from api.logging_config import setup_logging
+from server.logging_config import setup_logging
 
 # # Disable tqdm progress bars
 # os.environ["TQDM_DISABLE"] = "1"

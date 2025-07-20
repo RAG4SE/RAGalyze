@@ -57,7 +57,7 @@ from adalflow.core.embedder import (
 import adalflow.core.functional as F
 from adalflow.components.model_client.utils import parse_embedding_response
 
-from api.logging_config import setup_logging
+from server.logging_config import setup_logging
 
 # # Disable tqdm progress bars
 # os.environ["TQDM_DISABLE"] = "1"
@@ -143,7 +143,16 @@ class DashscopeClient(ModelClient):
         self._input_type = input_type
         self._api_kwargs = {}
 
-    def init_sync_client(self):
+    def _prepare_client_config(self):
+        """
+        Private helper method to prepare client configuration.
+        
+        Returns:
+            tuple: (api_key, workspace_id, base_url) for client initialization
+        
+        Raises:
+            ValueError: If API key is not provided
+        """
         api_key = self._api_key or os.getenv(self._env_api_key_name)
         workspace_id = self._workspace_id or os.getenv(self._env_workspace_id_name)
         
@@ -160,6 +169,11 @@ class DashscopeClient(ModelClient):
         if workspace_id:
             # Add workspace ID to headers or URL as required by Dashscope
             base_url = f"{self.base_url.rstrip('/')}"
+        
+        return api_key, workspace_id, base_url
+
+    def init_sync_client(self):
+        api_key, workspace_id, base_url = self._prepare_client_config()
         
         client = OpenAI(api_key=api_key, base_url=base_url)
         
@@ -170,22 +184,7 @@ class DashscopeClient(ModelClient):
         return client
 
     def init_async_client(self):
-        api_key = self._api_key or os.getenv(self._env_api_key_name)
-        workspace_id = self._workspace_id or os.getenv(self._env_workspace_id_name)
-        
-        if not api_key:
-            raise ValueError(
-                f"Environment variable {self._env_api_key_name} must be set"
-            )
-        
-        if not workspace_id:
-            log.warning(f"Environment variable {self._env_workspace_id_name} not set. Some features may not work properly.")
-        
-        # For Dashscope, we need to include the workspace ID in the base URL if provided
-        base_url = self.base_url
-        if workspace_id:
-            # Add workspace ID to headers or URL as required by Dashscope
-            base_url = f"{self.base_url.rstrip('/')}"
+        api_key, workspace_id, base_url = self._prepare_client_config()
         
         client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         
@@ -451,12 +450,10 @@ class DashscopeClient(ModelClient):
                     log.info(f"🔍 Creating embeddings for {len(texts)} original positions")
                     
                     # Get the correct embedding dimension from the first valid embedding
-                    embedding_dim = 256  # Default fallback based on config
+                    embedding_dim = None  # Must be determined from a successful response
                     if result.data and len(result.data) > 0 and hasattr(result.data[0], 'embedding'):
                         embedding_dim = len(result.data[0].embedding)
                         log.info(f"🔍 Using embedding dimension: {embedding_dim}")
-                    
-                    from adalflow.core.types import Embedding
                     
                     final_data = []
                     valid_idx = 0
@@ -568,8 +565,6 @@ class DashscopeClient(ModelClient):
                     if result.data and len(result.data) > 0 and hasattr(result.data[0], 'embedding'):
                         embedding_dim = len(result.data[0].embedding)
                         log.info(f"🔍 Using embedding dimension: {embedding_dim}")
-                    
-                    from adalflow.core.types import Embedding
                     
                     final_data = []
                     valid_idx = 0
@@ -730,9 +725,9 @@ class DashScopeBatchEmbedder(DataComponent):
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
-        if self.batch_size > 10:
-            log.warning(f"DashScope batch embedder initialization, batch size: {batch_size}, note that DashScope batch embedding size cannot exceed 10, automatically set to 10")
-            self.batch_size = 10
+        if self.batch_size > 25:
+            log.warning(f"DashScope batch embedder initialization, batch size: {self.batch_size}, note that DashScope batch embedding size cannot exceed 25, automatically set to 25")
+            self.batch_size = 25
         self.cache_path = f'./embedding_cache/{embedding_cache_file_name}_{self.embedder.__class__.__name__}_dashscope_embeddings.pkl'
 
     def call(

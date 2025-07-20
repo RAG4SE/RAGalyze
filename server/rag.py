@@ -5,8 +5,8 @@ from uuid import uuid4
 import adalflow as adal
 from adalflow.core.types import RetrieverOutput, RetrieverOutputType
 from adalflow.core.types import Document
-from api.tools.embedder import get_embedder
-from api.dual_vector_pipeline import DualVectorRetriever
+from server.tools.embedder import get_embedder
+from server.dual_vector_pipeline import DualVectorRetriever
 
 # Create our own implementation of the conversation classes
 @dataclass
@@ -37,9 +37,9 @@ class CustomConversation:
 
 # Import other adalflow components
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever, FAISSRetrieverQueriesType
-from api.config import configs
-from api.data_pipeline import DatabaseManager
-from api.dual_vector import DualVectorDocument
+from server.config import configs
+from server.data_pipeline import DatabaseManager
+from server.dual_vector import DualVectorDocument
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -140,7 +140,7 @@ class Memory(adal.core.component.DataComponent):
                 return False
 
 system_prompt = r"""
-You are a code assistant which answers user questions on a Github Repo.
+You are a code assistant which answers user questions on a Github Repo or a local repo.
 You will receive user query, relevant context, and past conversation history.
 
 LANGUAGE DETECTION AND RESPONSE:
@@ -260,7 +260,7 @@ class RAG(adal.Component):
         super().__init__()
 
         # Import configs to get defaults
-        from api.config import configs
+        from server.config import configs
         
         # Use provided provider or fall back to config default
         if provider is None:
@@ -290,7 +290,7 @@ IMPORTANT FORMATTING RULES:
 6. Structure your answer logically with clear sections if the question is complex"""
 
         # Get model configuration based on provider and model
-        from api.config import get_model_config
+        from server.config import get_model_config
         generator_config = get_model_config(self.provider, self.model)
 
         # Set up the main generator (no output processors to avoid JSON parsing issues)
@@ -298,7 +298,7 @@ IMPORTANT FORMATTING RULES:
             template=RAG_TEMPLATE,
             prompt_kwargs={
                 "output_format_str": format_instructions,
-                "conversation_history": self.memory(),
+                "conversation_history": None, # No conversation history
                 "system_prompt": system_prompt,
                 "contexts": None,
             },
@@ -426,12 +426,13 @@ IMPORTANT FORMATTING RULES:
                 logger.error("No valid embeddings found in any documents")
                 return []
             target_code_embedding_size = max(code_embedding_sizes.keys(), key=lambda k: code_embedding_sizes[k])
-            target_understanding_embedding_size = max(understanding_embedding_sizes.keys(), key=lambda k: understanding_embedding_sizes[k])
+            # Some understanding text is "" and its embedding size is 0. We need to remove them when calculating the primary embedding size
+            target_understanding_embedding_size = max({k: v for k, v in understanding_embedding_sizes.items() if k > 0}.keys(), key=lambda k: understanding_embedding_sizes[k])
             logger.info(f"Target code embedding size: {target_code_embedding_size} (found in {code_embedding_sizes[target_code_embedding_size]} documents)")
             logger.info(f"Target understanding embedding size: {target_understanding_embedding_size} (found in {understanding_embedding_sizes[target_understanding_embedding_size]} documents)")
             for i, doc in enumerate(documents):
                 assert isinstance(doc, DualVectorDocument)
-                if len(doc.code_embedding) != target_code_embedding_size or len(doc.understanding_embedding) != target_understanding_embedding_size:
+                if len(doc.code_embedding) != target_code_embedding_size or len(doc.understanding_embedding) != target_understanding_embedding_size and len(doc.understanding_embedding) > 0:
                     logger.warning(f"Filtering out document '{doc.file_path}' due to embedding size mismatch: {len(doc.code_embedding)} != {target_code_embedding_size} or {len(doc.understanding_embedding)} != {target_understanding_embedding_size}")
                 else:
                     valid_documents.append(doc)
@@ -491,7 +492,7 @@ IMPORTANT FORMATTING RULES:
             logger.error(f"❌ Failed to create retriever: {e}")
             raise
 
-    def call(self, query: str) -> List:
+    def call(self, query: str) -> List[RetrieverOutput]:
         """
         Query the RAG system.
         """

@@ -7,11 +7,11 @@ from typing import List, Union, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-from api.openai_client import OpenAIClient
-from api.huggingface_embedder_client import HuggingfaceClient
-from api.deepseek_client import DeepSeekClient
-from api.dashscope_client import DashscopeClient
-from api.siliconflow_client import SiliconFlowClient
+from server.openai_client import OpenAIClient
+from server.huggingface_embedder_client import HuggingfaceClient
+from server.deepseek_client import DeepSeekClient
+from server.dashscope_client import DashscopeClient
+from server.siliconflow_client import SiliconFlowClient
 from adalflow import GoogleGenAIClient
 
 # Get API keys from environment variables

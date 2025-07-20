@@ -13,8 +13,8 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from adalflow.core.types import Document
-from api.dual_vector_pipeline import CodeUnderstandingGenerator
-from api.rag import RAG
+from server.dual_vector_pipeline import CodeUnderstandingGenerator
+from server.rag import RAG
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -63,22 +63,24 @@ def test_rag_with_dual_vector():
         
         # Use the current directory as the test repository
         current_dir = os.getcwd()
+        # haoyang
+        current_dir = '/home/lyr/test_RAGalyze'
         print(f"Using directory: {current_dir}")
         
         # Prepare retriever (only including Python files)
         rag.prepare_retriever(
             repo_path=current_dir,
-            included_dirs=["api"],
+            included_dirs=None,
             included_files=None,  # No file type restrictions, let the system discover automatically
             excluded_dirs=[".git", "__pycache__", ".pytest_cache", "venv", "env", "cache", ".adalflow"],
             excluded_files=["*.pyc", "*.pyo", "*.egg-info", "*.dist-info"],
             force_recreate_db=True,
             is_huggingface_embedder=True,
-            file_count_upperlimit=1
+            file_count_upperlimit=2
         )
         
         # Test query
-        test_query = "What are these files about?"
+        test_query = "What is Quick Start?"
         
         results = rag.call(test_query)
         print('>>>', results)

@@ -1,13 +1,13 @@
 import os
 import logging
 from typing import List, Optional, Union
-from api.dual_vector import DualVectorDocument
+from server.dual_vector import DualVectorDocument
 
 from adalflow.core.types import Document, ModelType, RetrieverOutput, RetrieverOutputType
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
-from api.dashscope_client import DashscopeClient
-from api.config import configs, get_code_understanding_config
-from api.data_pipeline import get_embedder
+from server.dashscope_client import DashscopeClient
+from server.config import configs, get_code_understanding_config
+from server.data_pipeline import get_embedder
 from adalflow.core.component import DataComponent
 
 logger = logging.getLogger(__name__)
@@ -139,21 +139,27 @@ class DualVectorToEmbeddings(DataComponent):
         logger.info("Generating dual-vector embeddings for %s documents", len(documents))
         
         dual_docs = []
+
         from tqdm import tqdm
         for doc in tqdm(documents, desc="Generating dual-vector embeddings"):
-            understanding_text = self.code_generator.generate_code_understanding(
-                doc.text, doc.meta_data.get('file_path')
-            )
-            
             code_embedding_result = self.embedder.call(doc.text)
-            summary_embedding_result = self.embedder.call(understanding_text)
-            
             code_vector = code_embedding_result.data[0].embedding if not code_embedding_result.error else []
-            summary_vector = summary_embedding_result.data[0].embedding if not summary_embedding_result.error else []
+            assert 'is_code' in doc.meta_data, f'No `is_code` key in meta_data: {doc.meta_data}'
+            if not doc.meta_data.get('is_code'):
+                understanding_text = ''
+                # The summary vector is all zero when the understanding text is empty
+                # Otherwise, FAISSRetriever will raise an error because summary_vectors are of different lengths.
+                summary_vector = [0.0] * len(code_vector)
+            else:
+                understanding_text = self.code_generator.generate_code_understanding(
+                    doc.text, doc.meta_data.get('file_path')
+                )
+                summary_embedding_result = self.embedder.call(understanding_text)
+                summary_vector = summary_embedding_result.data[0].embedding if not summary_embedding_result.error else []
+
             dual_docs.append(
                 DualVectorDocument(
                     original_doc=doc,
-                    code_text=doc.text,
                     code_embedding=code_vector,
                     understanding_embedding=summary_vector,
                     understanding_text=understanding_text,
@@ -269,9 +275,7 @@ class DualVectorRetriever:
             # Get the document from code retriever to extract original chunk_id
             doc_id = self.dual_docs[i].original_doc.id
             original_chunk_id = doc_id.replace("_code", "")
-            if original_chunk_id not in combined_scores:
-                combined_scores[original_chunk_id] = 0.0
-            combined_scores[original_chunk_id] += score
+            combined_scores[original_chunk_id] = score
 
         # Process understanding results - extract original chunk_id from FAISS document ID
         for i, score in zip(understanding_results.doc_indices, understanding_results.doc_scores):
@@ -279,8 +283,9 @@ class DualVectorRetriever:
             doc_id = self.dual_docs[i].original_doc.id
             original_chunk_id = doc_id.replace("_understanding", "")
             if original_chunk_id not in combined_scores:
-                combined_scores[original_chunk_id] = 0.0
-            combined_scores[original_chunk_id] += score
+                combined_scores[original_chunk_id] = score
+            else:
+                combined_scores[original_chunk_id] = max(combined_scores[original_chunk_id], score)
 
         # 4. Sort and get the top-k results
         # Sort by the combined score in descending order
