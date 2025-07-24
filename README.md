@@ -39,7 +39,7 @@ git clone <repository-url>
 cd RAGalyze-open
 
 # Install dependencies
-pip install -r requirements_server.txt
+pip install -r requirements.txt
 ```
 
 ### 2. **API Keys Required**
@@ -112,18 +112,56 @@ python analyze_solidity_repo.py /path/to/solidity/repo
 ### 6. **Web Server Mode with Browser Interface**
 
 ```bash
-# Start the server
-python server.py --port 8000
+# Start the server (configuration is loaded from server_config.json)
+python -m server.main
 
 # Use the web interface (recommended)
-# Open browser: http://localhost:8000/web
+# Open browser: http://localhost:8000/web (or the configured host:port)
+```
 
+### 7. **Server Configuration**
+
+The server is configured using the `server_config.json` file in the project root directory:
+
+```json
+{
+    "server": {
+        "host": "localhost",
+        "port": 8000,
+        "reload": false,
+        "log_level": "info",
+        "mode": "subprocess"
+    }
+}
+```
+
+Modify this file to change the server settings. The available options are:
+
+- `host`: The host to bind to (default: "localhost")
+- `port`: The port to bind to (default: 8000)
+- `reload`: Enable auto-reload for development (default: false)
+- `log_level`: Log level (default: "info")
+- `mode`: Server execution mode: "subprocess" (better process management) or "direct" (simpler) (default: "subprocess")
+
+### 8. **Custom Configuration Path**
+
+By default, the server looks for `server_config.json` in the project root directory. You can specify a custom path using the environment variable:
+
+```bash
+export RAGalyze_SERVER_CONFIG="/path/to/your/server_config.json"
+python -m server.main
+```
+
+```bash
 # Ask questions via client (appears in web interface)
 python client.py /path/to/repo "How does this work?"
 ```
 
 Then visit http://localhost:8000/web to check the history and retrieval log.
 
+## Contributions
+
+[CONTRIBUTION.md](CONTRIBUTION.md)
 
 ## Acknowledgements
 

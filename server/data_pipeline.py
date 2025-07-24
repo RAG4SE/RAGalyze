@@ -1,16 +1,18 @@
 import adalflow as adal
 from adalflow.core.types import Document, List
-from adalflow.components.data_process import TextSplitter, ToEmbeddings
+from adalflow.components.data_process import TextSplitter
 import os
-from typing import List, Optional, Callable, Any, TypeVar, Tuple, Union
-from adalflow.core.component import Component
+from typing import List, Optional, Tuple, Union
 import logging
 import glob
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
 from server.config import configs, DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES
 from server.dual_vector_pipeline import DualVectorDocument
-
+from server.config import get_embedder_config
+from server.huggingface_embedder_client import HuggingfaceClientToEmbeddings
+from server.dashscope_client import DashScopeToEmbeddings
+from server.dual_vector_pipeline import DualVectorToEmbeddings
 from server.tools.embedder import get_embedder
 
 # The setting is from the observation that the maximum length of Solidity compiler's files is 919974
@@ -18,6 +20,62 @@ MAX_EMBEDDING_LENGTH = 1000000
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
+
+def count_tokens(
+    text: str,
+    model_provider: str,
+    model_name: Optional[str] = None,
+    hf_tokenizer=None,
+) -> int:
+    """
+    Count the number of tokens in a text string using the correct tokenizer
+    for the model provider: OpenAI (tiktoken), HuggingFace (transformers), DashScope (approx).
+
+    Args:
+        text (str): The text to count tokens for.
+        model_provider (str): "openai", "huggingface", or "dashscope".
+        model_name (str, optional): Model name (for auto-determine tokenizer).
+        hf_tokenizer (PreTrainedTokenizer, optional): HuggingFace tokenizer instance.
+
+    Returns:
+        int: The number of tokens in the text.
+    """
+    try:
+        if model_provider.lower() == "openai":
+            import tiktoken
+            # You can switch model name if needed
+            encoding = tiktoken.encoding_for_model(model_name or "text-embedding-3-small")
+            return len(encoding.encode(text))
+
+        elif model_provider.lower() == "huggingface":
+            # Needs transformers and a loaded tokenizer object
+            if hf_tokenizer is None:
+                from transformers import AutoTokenizer
+                assert model_name, "model_name is required for HuggingFace tokenizer"
+                hf_tokenizer = AutoTokenizer.from_pretrained(model_name)
+            return len(hf_tokenizer.encode(text))
+
+        elif model_provider.lower() == "dashscope":
+            # DashScope doesn't officially publish a tokenizer; use character or word heuristic
+            # You may customize this rule per DashScope's documentation if available.
+            # OpenAI-style estimate: ~4 chars/token for English
+            return max(1, len(text) // 4)
+        elif model_provider.lower() == "google":
+            # Following https://ai.google.dev/gemini-api/docs/tokens?lang=python, ~4 chars/token for English
+            return max(1, len(text) // 4)
+        else:
+            logger.warning(f"Unknown model provider '{model_provider}'; using rough 4-char-per-token estimate.")
+            return max(1, len(text) // 4)
+
+    except Exception as e:
+        logger.warning(f"Error counting tokens ({model_provider=}, {model_name=}): {e}")
+        return max(1, len(text) // 4)
 
 def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
     """
@@ -130,7 +188,7 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
     return None, "all_encodings_failed"
 
 def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                      included_dirs: List[str] = None, included_files: List[str] = None, file_count_upperlimit: Union[int, None] = None):
+                      included_dirs: List[str] = None, included_files: List[str] = None):
     """
     Recursively reads all documents in a directory and its subdirectories.
 
@@ -144,7 +202,6 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
             When provided, only files in these directories will be processed.
         included_files (List[str], optional): List of file patterns to include exclusively.
             When provided, only files matching these patterns will be processed.
-        file_count_upperlimit (int, optional): Upper limit of the number of files to process.
 
     Returns:
         list: A list of Document objects with metadata.
@@ -368,13 +425,8 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
                     },
                 )
                 documents.append(doc)
-                if file_count_upperlimit is not None and len(documents) >= file_count_upperlimit:
-                    break
             except Exception as e:
                 logger.error(f"Error processing {file_path}: {e}")
-    if file_count_upperlimit is not None and len(documents) >= file_count_upperlimit:
-        logger.info(f"read_all_documents: Found {len(documents)} documents")
-        return documents
     # Then process documentation files
     for ext in doc_extensions:
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
@@ -419,8 +471,6 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
                     },
                 )
                 documents.append(doc)
-                if file_count_upperlimit is not None and len(documents) >= file_count_upperlimit:
-                    break
             except Exception as e:
                 logger.error(f"Error processing {file_path}: {e}")
 
@@ -429,7 +479,6 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
     return documents
 
 def prepare_data_pipeline(
-    is_huggingface_embedder: bool = False,
     force_recreate_db: bool = False,
     embedding_cache_file_name: str = "default",
     use_dual_vector: bool = False
@@ -440,14 +489,9 @@ def prepare_data_pipeline(
     Returns:
         Tuple[adal.Sequential, str]: The data transformation pipeline and the cache file name as the key of the transformer.
     """
-    from server.config import get_embedder_config
-    from server.huggingface_embedder_client import HuggingfaceClientToEmbeddings
-    from server.dashscope_client import DashScopeToEmbeddings
-    from server.dual_vector_pipeline import DualVectorToEmbeddings
-
     splitter = TextSplitter(**configs["text_splitter"])
     embedder_config = get_embedder_config()
-    embedder = get_embedder(is_huggingface_embedder)
+    embedder = get_embedder()
     if use_dual_vector:
         embedder_transformer = DualVectorToEmbeddings(
             embedder=embedder,
@@ -455,7 +499,7 @@ def prepare_data_pipeline(
             embedding_cache_file_name=embedding_cache_file_name
         )
         logger.info("Using DualVectorToEmbeddings transformer.")
-    elif is_huggingface_embedder:
+    elif embedder.__class__.__name__ == "HuggingfaceEmbedder":
         # HuggingFace can use larger batch sizes
         batch_size = embedder_config.get("batch_size", 100)
         embedder_transformer = HuggingfaceClientToEmbeddings(
@@ -465,7 +509,7 @@ def prepare_data_pipeline(
             embedding_cache_file_name=embedding_cache_file_name
         )
         logger.info(f"Using HuggingFace embedder with batch size: {batch_size}, embedding_cache_file_name: {embedding_cache_file_name}")
-    else:
+    elif embedder.__class__.__name__ == "DashScopeEmbedder":
         # DashScope API limits batch size to maximum of 10
         batch_size = min(embedder_config.get("batch_size", 10), 10)
         embedder_transformer = DashScopeToEmbeddings(
@@ -475,6 +519,8 @@ def prepare_data_pipeline(
             embedding_cache_file_name=embedding_cache_file_name
         )
         logger.info(f"Using DashScope specialized embedder with batch size: {batch_size}, embedding_cache_file_name: {embedding_cache_file_name} (API limit: ≤10)")
+    else:
+        raise ValueError(f"Unknown embedder type: {embedder.__class__.__name__}")
 
     data_transformer = adal.Sequential(
         splitter, embedder_transformer
@@ -487,7 +533,6 @@ def prepare_data_pipeline(
 def transform_documents_and_save_to_db(
     documents: List[Document],
     db_path: str,
-    is_huggingface_embedder: bool = False,
     force_recreate: bool = False,
     embedding_cache_file_name: str = "default",
     use_dual_vector: bool = False,
@@ -504,7 +549,6 @@ def transform_documents_and_save_to_db(
     """
     if not data_transformer or not data_transformer_key:
         data_transformer, data_transformer_key = prepare_data_pipeline(
-            is_huggingface_embedder,
             force_recreate_db=force_recreate,
             embedding_cache_file_name=embedding_cache_file_name,
             use_dual_vector=use_dual_vector
@@ -527,7 +571,7 @@ class DatabaseManager:
     Manages the creation, loading, transformation, and persistence of LocalDB instances.
     """
 
-    def __init__(self, repo_path: str, file_count_upperlimit: int = None, use_dual_vector: bool = False):
+    def __init__(self, repo_path: str, use_dual_vector: bool = False):
         self.db = None
         self.db_info = None
         self.data_transformer = None
@@ -535,14 +579,13 @@ class DatabaseManager:
         self.embedding_cache_file_name = None
 
         self.repo_path = repo_path
-        self.file_count_upperlimit = file_count_upperlimit
         self.use_dual_vector = use_dual_vector
 
     def _create_db_info(self) -> None:
         """
         Download and prepare all paths.
         Paths:
-        ~/.adalflow/repos/{owner}_{repo_name}_{file_count_upperlimit}.pkl
+        ~/.adalflow/repos/{owner}_{repo_name}.pkl
 
         Args:
             repo_path (str): The local path of the repository
@@ -572,8 +615,8 @@ class DatabaseManager:
         if self.embedding_cache_file_name:
             return self.embedding_cache_file_name
         # Extract repository name from path
-        repo_name = os.path.basename(self.repo_path.rstrip('/'))
-        file_name = repo_name + f"_{self.file_count_upperlimit}" if self.file_count_upperlimit else ""
+        repo_name = os.path.abspath(self.repo_path.rstrip('/'))
+        file_name = repo_name
         if self.use_dual_vector:
             file_name += "_dual_vector"
         self.embedding_cache_file_name = file_name
@@ -581,8 +624,7 @@ class DatabaseManager:
 
     def prepare_database(self,
                        excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                       included_dirs: List[str] = None, included_files: List[str] = None, force_recreate: bool = False,
-                       is_huggingface_embedder: bool = False) -> List[Union[Document, DualVectorDocument]]:
+                       included_dirs: List[str] = None, included_files: List[str] = None, force_recreate: bool = False) -> List[Union[Document, DualVectorDocument]]:
         """
         Create a new database from the repository.
 
@@ -593,24 +635,20 @@ class DatabaseManager:
             included_dirs (List[str], optional): List of directories to include exclusively
             included_files (List[str], optional): List of file patterns to include exclusively
             force_recreate (bool, optional): Whether to force recreate the database
-            file_count_upperlimit (int, optional): Upper limit of the number of files to process
         Returns:
             List[Document]: List of Document objects
         """
         self.data_transformer, self.data_transformer_key = prepare_data_pipeline(
-            is_huggingface_embedder,
             force_recreate_db=force_recreate,
             embedding_cache_file_name=self._prepare_embedding_cache_file_name(),
             use_dual_vector=self.use_dual_vector
         )
         self._create_db_info()    
         return self.prepare_db_index(excluded_dirs=excluded_dirs, excluded_files=excluded_files,
-                                   included_dirs=included_dirs, included_files=included_files, force_recreate=force_recreate,
-                                   is_huggingface_embedder=is_huggingface_embedder)
+                                   included_dirs=included_dirs, included_files=included_files, force_recreate=force_recreate)
     
     def prepare_db_index(self, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                        included_dirs: List[str] = None, included_files: List[str] = None, force_recreate: bool = False,
-                        is_huggingface_embedder: bool = False) -> List[Union[Document, DualVectorDocument]]:
+                        included_dirs: List[str] = None, included_files: List[str] = None, force_recreate: bool = False) -> List[Union[Document, DualVectorDocument]]:
         """
         Prepare the indexed database for the repository.
 
@@ -620,7 +658,6 @@ class DatabaseManager:
             included_dirs (List[str], optional): List of directories to include exclusively
             included_files (List[str], optional): List of file patterns to include exclusively
             force_recreate (bool, optional): Whether to force recreate the database
-            file_count_upperlimit (int, optional): Upper limit of the number of files to process
         Returns:
             List[Document]: List of Document objects
         """
@@ -648,10 +685,9 @@ class DatabaseManager:
             excluded_files=excluded_files,
             included_dirs=included_dirs,
             included_files=included_files,
-            file_count_upperlimit=self.file_count_upperlimit
         )
         self.db = transform_documents_and_save_to_db(
-            documents, self.db_info["save_db_file"], is_huggingface_embedder=is_huggingface_embedder,
+            documents, self.db_info["save_db_file"],
             force_recreate=force_recreate, embedding_cache_file_name=self._prepare_embedding_cache_file_name(),
             use_dual_vector=self.use_dual_vector,
             data_transformer=self.data_transformer,

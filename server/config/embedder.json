@@ -1,13 +1,15 @@
 {
   "embedder": {
-    "client_class": "HuggingfaceClient",
-    "batch_size": 500,
+    "client_class": "DashScopeEmbedder",
+    "batch_size": 10,
     "model_kwargs": {
-      "model": "intfloat/multilingual-e5-large-instruct",
+      "model": "text-embedding-v4",
       "dimensions": 256,
       "encoding_format": "float"
     }
   },
+  "sketch_filling": true,
+  "force_embedding": false,
   "retriever": {
     "top_k": 20
   },

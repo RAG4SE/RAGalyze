@@ -248,7 +248,7 @@ class RAG(adal.Component):
     """RAG with one repo.
     If you want to load a new repos, call prepare_retriever(repo_path) first."""
 
-    def __init__(self, provider=None, model=None, is_huggingface_embedder: bool = False, use_dual_vector: bool = False):  # noqa: F841 - use_s3 is kept for compatibility
+    def __init__(self, provider=None, model=None, use_dual_vector: bool = False):  # noqa: F841 - use_s3 is kept for compatibility
         """
         Initialize the RAG component.
 
@@ -275,7 +275,7 @@ class RAG(adal.Component):
         self.use_dual_vector = use_dual_vector
         # Initialize components
         self.memory = Memory()
-        self.embedder = get_embedder(is_huggingface_embedder)
+        self.embedder = get_embedder()
 
         # Format instructions for natural language output (no structured parsing)
         format_instructions = """
@@ -310,9 +310,9 @@ IMPORTANT FORMATTING RULES:
         self.db_manager = None
         self.documents = None
 
-    def initialize_db_manager(self, repo_path: str, file_count_upperlimit: int = None, use_dual_vector: bool = False):
+    def initialize_db_manager(self, repo_path: str, use_dual_vector: bool = False):
         """Initialize the database manager with local storage"""
-        self.db_manager = DatabaseManager(repo_path, file_count_upperlimit, use_dual_vector)
+        self.db_manager = DatabaseManager(repo_path, use_dual_vector)
         self.documents = []
 
     def _validate_and_filter_embeddings(self, documents: List[Document|DualVectorDocument]) -> List:
@@ -440,8 +440,7 @@ IMPORTANT FORMATTING RULES:
 
     def prepare_retriever(self, repo_path: str,
                       excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                      included_dirs: List[str] = None, included_files: List[str] = None, force_recreate_db: bool = False, file_count_upperlimit: Union[int, None] = None,
-                      is_huggingface_embedder: bool = False):
+                      included_dirs: List[str] = None, included_files: List[str] = None, force_recreate_db: bool = False):
         """
         Prepare the retriever for a repository.
         Will load database from local storage if available.
@@ -454,10 +453,8 @@ IMPORTANT FORMATTING RULES:
             included_dirs: Optional list of directories to include exclusively
             included_files: Optional list of file patterns to include exclusively
             force_recreate_db: Whether to force recreate the database
-            file_count_upperlimit: Upper limit of the number of files to process
-            is_huggingface_embedder: Whether to use huggingface embedder
         """
-        self.initialize_db_manager(repo_path, file_count_upperlimit, self.use_dual_vector)
+        self.initialize_db_manager(repo_path, self.use_dual_vector)
 
         logger.info(f'\n🔍 Build up database...')
         # self.documents is a list of Document or DualVectorDocument
@@ -466,8 +463,7 @@ IMPORTANT FORMATTING RULES:
             excluded_files=excluded_files,
             included_dirs=included_dirs,
             included_files=included_files,
-            force_recreate=force_recreate_db,
-            is_huggingface_embedder=is_huggingface_embedder
+            force_recreate=force_recreate_db
         )
         logger.info(f"✅ Loaded {len(self.documents)} documents for retrieval")
         # Validate and filter embeddings to ensure consistent sizes

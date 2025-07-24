@@ -1,8 +1,8 @@
-"""GPU-accelerated HuggingFace ModelClient using PyTorch."""
+"""GPU-accelerated HuggingFace ModelClient."""
 
 import os
 import logging
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional
 import numpy as np
 import torch
 from copy import deepcopy
@@ -320,7 +320,6 @@ class HuggingfaceEmbedder(DataComponent):
     def __init__(
         self,
         *,
-        model_client: ModelClient,
         model_kwargs: Dict[str, Any] = {},
         output_processors: Optional[DataComponent] = None,
     ) -> None:
@@ -332,11 +331,7 @@ class HuggingfaceEmbedder(DataComponent):
             )
         self.model_kwargs = model_kwargs.copy()
 
-        if not isinstance(model_client, ModelClient):
-            raise TypeError(
-                f"{type(self).__name__} requires a ModelClient instance for model_client, please pass it as OpenAIClient() or GroqAPIClient() for example."
-            )
-        self.model_client = model_client
+        self.model_client = HuggingfaceClient()
         self.output_processors = output_processors
 
     @classmethod

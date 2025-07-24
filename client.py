@@ -54,7 +54,7 @@ def _make_request(method: str, endpoint: str, data: dict = None, server_url: str
         if "Connection refused" in str(e):
             raise RAGalyzeError(
                 f"Cannot connect to RAGalyze server at {server_url}. "
-                f"Please make sure the server is running: python server.py"
+                f"Please make sure the server is running: python -m server.main"
             )
         raise RAGalyzeError(f"Request failed: {str(e)}")
     except Exception as e:
@@ -276,4 +276,4 @@ if __name__ == "__main__":
         sys.exit(1)
     except KeyboardInterrupt:
         print("\n👋 Interrupted by user")
-        sys.exit(0) 
+        sys.exit(0)

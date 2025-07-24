@@ -93,15 +93,15 @@ def parse_stream_response(completion: ChatCompletionChunk) -> str:
     return completion.choices[0].delta.content
 
 
-def handle_streaming_response(generator: Stream[ChatCompletionChunk]):
-    """Handle the streaming response."""
-    for completion in generator:
+async def handle_streaming_response(generator: Stream[ChatCompletionChunk]):
+    """Handle the streaming response asynchronously."""
+    async for completion in generator:
         log.debug(f"Raw chunk completion: {completion}")
         parsed_content = parse_stream_response(completion)
         yield parsed_content
 
 
-class DashscopeClient(ModelClient):
+class DashScopeClient(ModelClient):
     """A component wrapper for the Dashscope (Alibaba Cloud) API client.
 
     Dashscope provides access to Alibaba Cloud's Qwen and other models through an OpenAI-compatible API.
@@ -332,7 +332,6 @@ class DashscopeClient(ModelClient):
                 if 'extra_headers' not in api_kwargs:
                     api_kwargs['extra_headers'] = {}
                 api_kwargs['extra_headers']['X-DashScope-WorkSpace'] = workspace_id
-            
             return api_kwargs
             
         elif model_type == ModelType.EMBEDDER:
@@ -650,7 +649,6 @@ class DashScopeEmbedder(DataComponent):
     def __init__(
         self,
         *,
-        model_client: ModelClient,
         model_kwargs: Dict[str, Any] = {},
         output_processors: Optional[DataComponent] = None,
     ) -> None:
@@ -661,12 +659,7 @@ class DashScopeEmbedder(DataComponent):
                 f"{type(self).__name__} requires a dictionary for model_kwargs, not a string"
             )
         self.model_kwargs = model_kwargs.copy()
-
-        if not isinstance(model_client, ModelClient):
-            raise TypeError(
-                f"{type(self).__name__} requires a ModelClient instance for model_client."
-            )
-        self.model_client = model_client
+        self.model_client = DashScopeClient()
         self.output_processors = output_processors
 
     def call(
@@ -824,6 +817,7 @@ class DashScopeToEmbeddings(DataComponent):
         self.embedder = embedder
         self.batch_size = batch_size
         self.batch_embedder = DashScopeBatchEmbedder(embedder=embedder, batch_size=batch_size, embedding_cache_file_name=embedding_cache_file_name)
+        self.cache_path = self.batch_embedder.cache_path
         self.force_recreate_db = force_recreate_db
 
     def __call__(self, input: List[Document]) -> List[Document]:
@@ -911,4 +905,4 @@ class DashScopeToEmbeddings(DataComponent):
         return output
 
     def _extra_repr(self) -> str:
-        return f"batch_size={self.batch_size}" 
+        return f"batch_size={self.batch_size}"

@@ -26,6 +26,9 @@ from contextlib import asynccontextmanager
 
 from server.rag import RAG
 from server.config import configs
+# Import the simplified chat implementation
+from server.simple_chat import chat_completions_stream
+from server.websocket_chat import handle_websocket_chat
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -254,9 +257,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Add the chat_completions_stream endpoint to the main app
+app.add_api_route("/chat/completions/stream", chat_completions_stream, methods=["POST"])
+
+# Add the WebSocket endpoint
+app.add_websocket_route("/chat", handle_websocket_chat)
+
 # Mount static files and templates
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="server/static"), name="static")
+templates = Jinja2Templates(directory="server/templates")
 
 # Request/Response models
 class AnalyzeRequest(BaseModel):
@@ -271,6 +281,8 @@ class AnalyzeRequest(BaseModel):
 class ChatRequest(BaseModel):
     repo_path: str = Field(..., description="Analyzed code repository path")
     question: str = Field(..., description="Question to ask")
+    provider: Optional[str] = Field(None, description="LLM provider")
+    model: Optional[str] = Field(None, description="LLM model")
 
 class AnalyzeResponse(BaseModel):
     success: bool
@@ -294,9 +306,14 @@ class StatusResponse(BaseModel):
 
 def get_cache_key(repo_path: str) -> str:
     """Generate cache key"""
-    return os.path.abspath(repo_path)
+    # Extract repository name from path
+    repo_name = os.path.abspath(repo_path)
+    cache_key = repo_name
+    if configs["sketch_filling"]:
+        cache_key += "_dual_vector"
+    return cache_key
 
-def analyze_repository_sync(repo_path: str, **kwargs) -> RAG:
+def analyze_repository_sync(repo_path: str) -> RAG:
     """
     Synchronously analyze a code repository.
     This function will be run in a background thread.
@@ -304,30 +321,25 @@ def analyze_repository_sync(repo_path: str, **kwargs) -> RAG:
     try:
         repo_path = os.path.abspath(repo_path)
         cache_key = get_cache_key(repo_path)
-        use_dual_vector = kwargs.get("use_dual_vector", False)
+        use_dual_vector = configs["sketch_filling"]
         
-        # Add dual vector flag to cache key to differentiate
-        if use_dual_vector:
-            cache_key += "_dual_vector"
-
-        if not kwargs.get("force_recreate", False) and cache_key in rag_cache:
+        if not configs["force_embedding"] and cache_key in rag_cache:
             logger.info(f"✅ Using cached RAG instance for: {repo_path} (dual_vector: {use_dual_vector})")
             return rag_cache[cache_key]
 
         logger.info(f"🚀 Starting new analysis for: {repo_path} (dual_vector: {use_dual_vector})")
         
         # Initialize RAG with dual vector flag
-        rag = RAG(is_huggingface_embedder=False, use_dual_vector=use_dual_vector)
+        rag = RAG(use_dual_vector=use_dual_vector)
         
         # Prepare retriever
         rag.prepare_retriever(
             repo_path,
-            excluded_dirs=kwargs.get('excluded_dirs', configs["file_filters"]["excluded_dirs"]),
-            excluded_files=kwargs.get('excluded_files', configs["file_filters"]["excluded_files"]),
-            included_files=kwargs.get('included_files'),
-            included_dirs=kwargs.get('included_dirs'),
-            force_recreate_db=kwargs.get('force_recreate', False),
-            is_huggingface_embedder=False
+            excluded_dirs=configs["file_filters"]["excluded_dirs"],
+            excluded_files=configs["file_filters"]["excluded_files"],
+            included_files=configs["file_filters"]["included_files"],
+            included_dirs=configs["file_filters"]["included_dirs"],
+            force_recreate_db=configs["force_embedding"]
         )
         
         logger.info(f"✅ Analysis complete for: {repo_path}")
@@ -337,7 +349,7 @@ def analyze_repository_sync(repo_path: str, **kwargs) -> RAG:
         logger.error(f"❌ Analysis failed for {repo_path}: {e}", exc_info=True)
         raise
 
-def query_rag_sync(rag: RAG, question: str) -> Dict[str, Any]:
+def query_rag_sync(rag: RAG, question: str, provider: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
     """
     Synchronously query RAG system
     
@@ -362,11 +374,18 @@ def query_rag_sync(rag: RAG, question: str) -> Dict[str, Any]:
             
             # Generate answer
             logger.info("🤖 Generating answer...")
+            model_kwargs = {}
+            if provider:
+                model_kwargs['provider'] = provider
+            if model:
+                model_kwargs['model'] = model
+
             generator_result = rag.generator(
                 prompt_kwargs={
                     "input_str": question,
                     "contexts": retrieved_docs
-                }
+                },
+                model_kwargs=model_kwargs
             )
             
             if generator_result and hasattr(generator_result, 'data'):
@@ -445,7 +464,7 @@ def query_rag_sync(rag: RAG, question: str) -> Dict[str, Any]:
                     logger.error("❌ Empty answer after processing")
                     return {
                         "success": False,
-                        "error_message": "生成的答案为空"
+                        "error_message": "Empty Answer..."
                     }
                 
                 logger.info(f"✅ Final answer length: {len(answer_text)} characters")
@@ -511,7 +530,7 @@ async def analyze_repository(request: AnalyzeRequest, background_tasks: Backgrou
             raise HTTPException(status_code=400, detail=f"Repository path does not exist: {repo_path}")
         
         # Check cache
-        if cache_key in rag_cache and not request.force_recreate:
+        if cache_key in rag_cache and not configs["force_embedding"]:
             rag = rag_cache[cache_key]
             return AnalyzeResponse(
                 success=True,
@@ -527,13 +546,7 @@ async def analyze_repository(request: AnalyzeRequest, background_tasks: Backgrou
         # Run analysis in background (simplified as synchronous here, can be made async in production)
         background_tasks.add_task(
             analyze_repository_sync,
-            request.repo_path,
-            force_recreate=request.force_recreate,
-            excluded_dirs=request.excluded_dirs,
-            excluded_files=request.excluded_files,
-            included_dirs=request.included_dirs,
-            included_files=request.included_files,
-            use_dual_vector=request.use_dual_vector
+            request.repo_path
         )
         
         # Cache result
@@ -579,7 +592,7 @@ async def chat_with_repository(request: ChatRequest):
         rag = rag_cache[cache_key]
         
         # Query RAG system
-        result = query_rag_sync(rag, request.question)
+        result = query_rag_sync(rag, request.question, request.provider, request.model)
         
         if result["success"]:
             # Store query result for web interface
@@ -647,6 +660,34 @@ async def get_latest_query():
     else:
         return {"message": "No queries yet"}
 
+@app.get("/api/config")
+async def get_config():
+    """
+    Get configuration information for the frontend
+    """
+    try:
+        config_path = os.path.join(os.path.dirname(__file__), "config", "generator.json")
+        with open(config_path, 'r', encoding='utf-8') as f:
+            gen_config = json.load(f)
+        
+        providers = []
+        for provider_name, provider_data in gen_config.get("providers", {}).items():
+            models = provider_data.get("models", {})
+            model_list = [{"name": name} for name in models.keys()]
+            providers.append({
+                "name": provider_name,
+                "default_model": provider_data.get("default_model"),
+                "models": model_list
+            })
+
+        return {
+            "default_provider": gen_config.get("default_provider"),
+            "providers": providers
+        }
+    except Exception as e:
+        logger.error(f"Error loading generator config: {e}")
+        return JSONResponse(status_code=500, content={"error": "Failed to load generator configuration"})
+
 @app.delete("/cache/{repo_path:path}")
 async def clear_cache(repo_path: str):
     """
@@ -681,34 +722,61 @@ async def lifespan(app: FastAPI):
 
 def main():
     """Main entry point for the server"""
-    import argparse
+    import json
+    import os
+    from pathlib import Path
     
-    parser = argparse.ArgumentParser(description="RAGalyze Code Analysis Server")
-    parser.add_argument("--host", default="localhost", help="Host to bind to")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
-    parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
-    parser.add_argument("--log-level", default="info", help="Log level")
-    parser.add_argument("--mode", choices=["subprocess", "direct"], default="subprocess", 
-                       help="Server execution mode: subprocess (better process management) or direct (simpler)")
+    # Define default config values
+    default_config = {
+        "server": {
+            "host": "localhost",
+            "port": 8000,
+            "reload": False,
+            "log_level": "info",
+            "mode": "subprocess"
+        }
+    }
     
-    args = parser.parse_args()
+    # Load configuration from file
+    config_path = Path('/home/lyr/RAGalyze/server_config.json')
+    config = default_config.copy()
+    
+    if config_path.exists():
+        try:
+            with open(config_path, 'r') as f:
+                file_config = json.load(f)
+                # Update config with values from file
+                if "server" in file_config:
+                    config["server"].update(file_config["server"])
+            logger.info(f"Loaded server configuration from {config_path}")
+        except Exception as e:
+            logger.error(f"Error loading server configuration: {str(e)}")
+    else:
+        logger.warning(f"Server configuration file {config_path} not found, using defaults")
     
     # Create and run server manager
     server_manager = ServerManager()
     
-    if args.mode == "subprocess":
+    # Get configuration values
+    host = config["server"]["host"]
+    port = config["server"]["port"]
+    reload = config["server"]["reload"]
+    log_level = config["server"]["log_level"]
+    mode = config["server"]["mode"]
+    
+    if mode == "subprocess":
         exit_code = server_manager.run_server_subprocess(
-            host=args.host,
-            port=args.port,
-            reload=args.reload,
-            log_level=args.log_level
+            host=host,
+            port=port,
+            reload=reload,
+            log_level=log_level
         )
     else:
         exit_code = server_manager.run_server_direct(
-            host=args.host,
-            port=args.port,
-            reload=args.reload,
-            log_level=args.log_level
+            host=host,
+            port=port,
+            reload=reload,
+            log_level=log_level
         )
     
     sys.exit(exit_code)

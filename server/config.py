@@ -8,37 +8,27 @@ from typing import List, Union, Dict, Any
 logger = logging.getLogger(__name__)
 
 from server.openai_client import OpenAIClient
-from server.huggingface_embedder_client import HuggingfaceClient
-from server.deepseek_client import DeepSeekClient
-from server.dashscope_client import DashscopeClient
-from server.siliconflow_client import SiliconFlowClient
+
+#! Though the following imports are not directly used, they are stored in globals() and will be used implicitly. So DO NOT REMOVE THEM!!
+from server.huggingface_embedder_client import HuggingfaceClient, HuggingfaceEmbedder
+from server.dashscope_client import DashScopeClient, DashScopeEmbedder
 from adalflow import GoogleGenAIClient
 
 # Get API keys from environment variables
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
-OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
-DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 DASHSCOPE_API_KEY = os.environ.get('DASHSCOPE_API_KEY')
 DASHSCOPE_WORKSPACE_ID = os.environ.get('DASHSCOPE_WORKSPACE_ID')
-SILICONFLOW_API_KEY = os.environ.get('SILICONFLOW_API_KEY')
 
 # Set keys in environment (in case they're needed elsewhere in the code)
 if OPENAI_API_KEY:
     os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 if GOOGLE_API_KEY:
     os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
-if OPENROUTER_API_KEY:
-    os.environ["OPENROUTER_API_KEY"] = OPENROUTER_API_KEY
-
-if DEEPSEEK_API_KEY:
-    os.environ["DEEPSEEK_API_KEY"] = DEEPSEEK_API_KEY
 if DASHSCOPE_API_KEY:
     os.environ["DASHSCOPE_API_KEY"] = DASHSCOPE_API_KEY
 if DASHSCOPE_WORKSPACE_ID:
     os.environ["DASHSCOPE_WORKSPACE_ID"] = DASHSCOPE_WORKSPACE_ID
-if SILICONFLOW_API_KEY:
-    os.environ["SILICONFLOW_API_KEY"] = SILICONFLOW_API_KEY
 
 # Wiki authentication settings
 raw_auth_mode = os.environ.get('RAGalyze_AUTH_MODE', 'False')
@@ -48,14 +38,10 @@ WIKI_AUTH_CODE = os.environ.get('RAGalyze_AUTH_CODE', '')
 # Get configuration directory from environment variable, or use default if not set
 CONFIG_DIR = os.environ.get('RAGalyze_CONFIG_DIR', None)
 
-# Client class mapping
-CLIENT_CLASSES = {
-    "GoogleGenAIClient": GoogleGenAIClient,
-    "OpenAIClient": OpenAIClient,
-    "HuggingfaceClient": HuggingfaceClient,
-    "DeepSeekClient": DeepSeekClient,
-    "DashscopeClient": DashscopeClient,
-    "SiliconFlowClient": SiliconFlowClient
+PROVIDER_NAME_TO_CLASS = {
+    "google": GoogleGenAIClient,
+    "openai": OpenAIClient,
+    "dashscope": DashScopeClient,
 }
 
 def replace_env_placeholders(config: Union[Dict[str, Any], List[Any], str, Any]) -> Union[Dict[str, Any], List[Any], str, Any]:
@@ -113,6 +99,7 @@ def load_json_config(filename):
         return {}
 
 # Load generator model configuration
+#TODO: immitate load_code_understanding_config to rewrite load_generator_config
 def load_generator_config():
     generator_config = load_json_config("generator.json")
 
@@ -120,18 +107,8 @@ def load_generator_config():
     if "providers" in generator_config:
         for provider_id, provider_config in generator_config["providers"].items():
             # Try to set client class from client_class
-            if provider_config.get("client_class") in CLIENT_CLASSES:
-                provider_config["model_client"] = CLIENT_CLASSES[provider_config["client_class"]]
-            # Fall back to default mapping based on provider_id
-            elif provider_id in ["google", "openai", "deepseek", "dashscope", "siliconflow"]:
-                default_map = {
-                    "google": GoogleGenAIClient,
-                    "openai": OpenAIClient,
-                    "deepseek": DeepSeekClient,
-                    "dashscope": DashscopeClient,
-                    "siliconflow": SiliconFlowClient
-                }
-                provider_config["model_client"] = default_map[provider_id]
+            if provider_id in ["google", "openai", "dashscope"]:
+                provider_config["model_client"] = PROVIDER_NAME_TO_CLASS[provider_id]
             else:
                 logger.warning(f"Unknown provider or client class: {provider_id}")
 
@@ -145,8 +122,8 @@ def load_embedder_config():
     for key in ["embedder"]:
         if key in embedder_config and "client_class" in embedder_config[key]:
             class_name = embedder_config[key]["client_class"]
-            if class_name in CLIENT_CLASSES:
-                embedder_config[key]["model_client"] = CLIENT_CLASSES[class_name]
+            assert class_name in globals(), f"load_embedder_config: {class_name} not in globals()  {globals()}"
+            embedder_config[key]["model_client"] = globals()[class_name]
 
     return embedder_config
 
@@ -226,7 +203,7 @@ if generator_config:
 
 # Update embedder configuration
 if embedder_config:
-    for key in ["embedder", "retriever", "text_splitter"]:
+    for key in ["embedder", "sketch_filling", "force_embedding", "retriever", "text_splitter"]:
         if key in embedder_config:
             configs[key] = embedder_config[key]
 
@@ -247,7 +224,7 @@ def get_model_config(provider=None, model=None):
     Get configuration for the specified provider and model
 
     Parameters:
-        provider (str): Model provider ('google', 'openai', 'dashscope', 'siliconflow', 'deepseek'). If None, uses default from config.
+        provider (str): Model provider ('google', 'openai', 'dashscope'). If None, uses default from config.
         model (str): Model name, or None to use default model
 
     Returns:
@@ -328,7 +305,7 @@ def get_code_understanding_config(provider=None, model=None):
         raise ValueError(f"Client class not specified for provider '{provider}' in code understanding configuration")
 
     # Map client class to actual class
-    model_client = CLIENT_CLASSES.get(client_class)
+    model_client = globals().get(client_class)
     if not model_client:
         raise ValueError(f"Unknown client class: {client_class}")
 

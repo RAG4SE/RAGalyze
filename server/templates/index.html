@@ -39,6 +39,26 @@
                     <i class="fas fa-arrow-left"></i>
                     <h3>Select a query from the history</h3>
                     <p>Choose a query from the left sidebar to view the answer and retrieved documents.</p>
+                    <div class="chat-section">
+                        <h3>Or start a new chat</h3>
+                        <div class="repo-input-section">
+                            <label for="repo-path">Repository Path:</label>
+                            <input type="text" id="repo-path" placeholder="/path/to/repository" />
+                        </div>
+                        <div class="provider-model-section">
+                            <div class="provider-selection">
+                                <label for="provider-select">Provider:</label>
+                                <select id="provider-select"></select>
+                            </div>
+                            <div class="model-selection">
+                                <label for="model-select">Model:</label>
+                                <select id="model-select"></select>
+                            </div>
+                        </div>
+                        <button id="start-chat-btn" class="btn btn-primary">
+                            <i class="fas fa-comments"></i> Start Chat
+                        </button>
+                    </div>
                 </div>
 
                 <div id="query-details" class="query-details hidden">
@@ -65,10 +85,31 @@
                         <div id="selected-documents" class="documents-list"></div>
                     </div>
                 </div>
+                
+                <div id="chat-interface" class="chat-interface hidden">
+                    <div class="chat-header">
+                        <h2>Chat with Repository</h2>
+                        <div class="chat-meta">
+                            <span id="chat-repo" class="repo-path"></span>
+                            <button id="close-chat-btn" class="btn btn-secondary">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="chat-messages" class="chat-messages"></div>
+                    
+                    <div class="chat-input-area">
+                        <textarea id="chat-input" placeholder="Type your message here..."></textarea>
+                        <button id="send-message-btn" class="btn btn-primary">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
             </div>
         </main>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=1.1"></script>
 </body>
-</html> 
+</html>

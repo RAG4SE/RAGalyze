@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RAGalyze Server Connection Test - Interactive client for testing server.py connection
+RAGalyze Server Connection Test - Interactive client for testing server connection
 This file tests the connection and functionality of the RAGalyze server
 """
 
@@ -76,7 +76,7 @@ def demo_usage():
     status = client.check_status()
     if "error" in status:
         print(f"❌ Server connection failed: {status['error']}")
-        print("Please make sure the server is running: python server.py")
+        print("Please make sure the server is running: python -m server.main")
         return
     
     print(f"✅ Server status: {status['status']}")
@@ -220,4 +220,4 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--interactive":
         interactive_mode()
     else:
-        demo_usage() 
+        demo_usage()

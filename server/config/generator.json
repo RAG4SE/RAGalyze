@@ -59,7 +59,7 @@
       }
     },
     "dashscope": {
-      "client_class": "DashscopeClient",
+      "client_class": "DashScopeClient",
       "default_model": "qwen-plus",
       "supportsCustomModel": true,
       "models": {

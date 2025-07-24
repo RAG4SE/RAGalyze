@@ -121,7 +121,9 @@
       "packages/*/dist", 
       "packages/*/build", 
       ".output"
-    ]
+    ],
+    "included_dirs": [],
+    "included_files": []
   },
   "repository": {
     "max_size_mb": 50000

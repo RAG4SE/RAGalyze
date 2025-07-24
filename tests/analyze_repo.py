@@ -43,17 +43,15 @@ def analyze_solidity_repository(repo_path: str, db_path: str = None):
     
     try:
         print("\n🔍 Building RAG system...")
-        rag = RAG(is_huggingface_embedder=True)
+        rag = RAG()
 
-        
         rag.prepare_retriever(
             repo_path, 
             excluded_dirs=configs["file_filters"]["excluded_dirs"],
             excluded_files=configs["file_filters"]["excluded_files"],
             included_files=None,
             included_dirs=None,
-            force_recreate_db=False,
-            is_huggingface_embedder=True
+            force_recreate_db=False
         )
         
         print(f"✅ RAG system build completed, loaded {len(rag.transformed_docs)} documents")

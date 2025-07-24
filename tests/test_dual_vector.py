@@ -59,7 +59,7 @@ def test_rag_with_dual_vector():
     
     try:
         # Create a RAG system with dual-vector enabled
-        rag = RAG(is_huggingface_embedder=True, use_dual_vector=True)
+        rag = RAG(use_dual_vector=True)
         
         # Use the current directory as the test repository
         current_dir = os.getcwd()
@@ -75,15 +75,12 @@ def test_rag_with_dual_vector():
             excluded_dirs=[".git", "__pycache__", ".pytest_cache", "venv", "env", "cache", ".adalflow"],
             excluded_files=["*.pyc", "*.pyo", "*.egg-info", "*.dist-info"],
             force_recreate_db=True,
-            is_huggingface_embedder=True,
-            file_count_upperlimit=2
         )
         
         # Test query
         test_query = "What is Quick Start?"
         
         results = rag.call(test_query)
-        print('>>>', results)
         
         if results and len(results) > 0:
             result = results[0]
@@ -117,8 +114,8 @@ def main():
     
     test_results = []
     
-    # # Test 1: Code Understanding Generator
-    # test_results.append(("Code Understanding Generator", test_code_understanding_generator()))
+    # Test 1: Code Understanding Generator
+    test_results.append(("Code Understanding Generator", test_code_understanding_generator()))
     
     # Test 2: RAG Dual-Vector Integration
     test_results.append(("RAG Dual-Vector Integration", test_rag_with_dual_vector()))

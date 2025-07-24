@@ -5,9 +5,8 @@ from server.dual_vector import DualVectorDocument
 
 from adalflow.core.types import Document, ModelType, RetrieverOutput, RetrieverOutputType
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
-from server.dashscope_client import DashscopeClient
+from server.dashscope_client import DashScopeClient
 from server.config import configs, get_code_understanding_config
-from server.data_pipeline import get_embedder
 from adalflow.core.component import DataComponent
 
 logger = logging.getLogger(__name__)
@@ -65,7 +64,7 @@ class CodeUnderstandingGenerator:
         
         # Initialize client
         model_client_class = config["model_client"]
-        if model_client_class == DashscopeClient:
+        if model_client_class == DashScopeClient:
             self.client = model_client_class(
                 api_key=api_key,
                 # workspace_id=workspace_id
@@ -112,7 +111,6 @@ class CodeUnderstandingGenerator:
             logger.error(f"Failed to generate code understanding for {file_path}: {e}")
             # Return an empty or default summary on error
             return None
-
 
 class DualVectorToEmbeddings(DataComponent):
     """

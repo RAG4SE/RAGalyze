@@ -1,0 +1,9 @@
+{
+    "server": {
+        "host": "localhost",
+        "port": 8000,
+        "reload": false,
+        "log_level": "info",
+        "mode": "subprocess"
+    }
+}
