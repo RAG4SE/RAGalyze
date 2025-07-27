@@ -461,28 +461,49 @@ class RAGalyzeApp {
     }
     
     handleStreamingResponse(text) {
-        // Check if we already have an assistant message element
-        let messageElement = this.chatMessages.querySelector('.assistant-message:last-child');
-        
-        if (!messageElement) {
-            // Create a new message element if none exists
-            messageElement = this.createMessageElement('assistant', '');
-            this.chatMessages.appendChild(messageElement);
+        // Check if this is a retrieved document section
+        if (text.includes('[Retrieved Document]')) {
+            // Create or get the documents container
+            let docsContainer = this.chatMessages.querySelector('.retrieved-documents-container');
+            
+            if (!docsContainer) {
+                // Create a new container for retrieved documents
+                docsContainer = document.createElement('div');
+                docsContainer.className = 'retrieved-documents-container';
+                docsContainer.innerHTML = '<h4>Retrieved Documents:</h4>';
+                this.chatMessages.appendChild(docsContainer);
+            }
+            
+            // Add the document to the container
+            const docElement = document.createElement('div');
+            docElement.className = 'retrieved-document';
+            docElement.innerHTML = `<pre>${this.escapeHtml(text)}</pre>`;
+            docsContainer.appendChild(docElement);
+        } else {
+            // Regular response handling
+            // Check if we already have an assistant message element
+            let messageElement = this.chatMessages.querySelector('.assistant-message:last-child');
+            
+            if (!messageElement) {
+                // Create a new message element if none exists
+                messageElement = this.createMessageElement('assistant', '');
+                this.chatMessages.appendChild(messageElement);
+            }
+            
+            // Create a pre element to preserve formatting if it doesn't exist
+            let preElement = messageElement.querySelector('pre');
+            if (!preElement) {
+                preElement = document.createElement('pre');
+                preElement.style.whiteSpace = 'pre-wrap';
+                preElement.style.margin = '0';
+                preElement.style.fontFamily = 'inherit';
+                messageElement.textContent = ''; // Clear the text content
+                messageElement.appendChild(preElement);
+            }
+            
+            // Append the new text to the pre element
+            preElement.textContent += text;
         }
-        
-        // Create a pre element to preserve formatting if it doesn't exist
-        let preElement = messageElement.querySelector('pre');
-        if (!preElement) {
-            preElement = document.createElement('pre');
-            preElement.style.whiteSpace = 'pre-wrap';
-            preElement.style.margin = '0';
-            preElement.style.fontFamily = 'inherit';
-            messageElement.textContent = ''; // Clear the text content
-            messageElement.appendChild(preElement);
-        }
-        
-        // Append the new text to the pre element
-        preElement.textContent += text;
         
         // Scroll to bottom
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;

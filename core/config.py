@@ -7,11 +7,11 @@ from typing import List, Union, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-from server.openai_client import OpenAIClient
+from core.openai_client import OpenAIClient
 
 #! Though the following imports are not directly used, they are stored in globals() and will be used implicitly. So DO NOT REMOVE THEM!!
-from server.huggingface_embedder_client import HuggingfaceClient, HuggingfaceEmbedder
-from server.dashscope_client import DashScopeClient, DashScopeEmbedder
+from core.huggingface_embedder_client import HuggingfaceClient, HuggingfaceEmbedder
+from core.dashscope_client import DashScopeClient, DashScopeEmbedder
 from adalflow import GoogleGenAIClient
 
 # Get API keys from environment variables

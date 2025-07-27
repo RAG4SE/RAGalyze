@@ -24,11 +24,10 @@ import json
 from datetime import datetime
 from contextlib import asynccontextmanager
 
-from server.rag import RAG
-from server.config import configs
+from core.rag import RAG
+from core.config import configs
 # Import the simplified chat implementation
-from server.simple_chat import chat_completions_stream
-from server.websocket_chat import handle_websocket_chat
+from core.websocket_chat import handle_websocket_chat
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -256,10 +255,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# Add the chat_completions_stream endpoint to the main app
-app.add_api_route("/chat/completions/stream", chat_completions_stream, methods=["POST"])
 
 # Add the WebSocket endpoint
 app.add_websocket_route("/chat", handle_websocket_chat)

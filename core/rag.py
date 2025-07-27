@@ -5,8 +5,8 @@ from uuid import uuid4
 import adalflow as adal
 from adalflow.core.types import RetrieverOutput, RetrieverOutputType
 from adalflow.core.types import Document
-from server.tools.embedder import get_embedder
-from server.dual_vector_pipeline import DualVectorRetriever
+from core.tools.embedder import get_embedder
+from core.dual_vector_pipeline import DualVectorRetriever
 
 # Create our own implementation of the conversation classes
 @dataclass
@@ -37,9 +37,9 @@ class CustomConversation:
 
 # Import other adalflow components
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever, FAISSRetrieverQueriesType
-from server.config import configs
-from server.data_pipeline import DatabaseManager
-from server.dual_vector import DualVectorDocument
+from core.config import configs
+from core.data_pipeline import DatabaseManager
+from core.dual_vector import DualVectorDocument
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -260,7 +260,7 @@ class RAG(adal.Component):
         super().__init__()
 
         # Import configs to get defaults
-        from server.config import configs
+        from core.config import configs
         
         # Use provided provider or fall back to config default
         if provider is None:
@@ -290,7 +290,7 @@ IMPORTANT FORMATTING RULES:
 6. Structure your answer logically with clear sections if the question is complex"""
 
         # Get model configuration based on provider and model
-        from server.config import get_model_config
+        from core.config import get_model_config
         generator_config = get_model_config(self.provider, self.model)
 
         # Set up the main generator (no output processors to avoid JSON parsing issues)

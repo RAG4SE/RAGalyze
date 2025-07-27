@@ -1,12 +1,12 @@
 import os
 import logging
 from typing import List, Optional, Union
-from server.dual_vector import DualVectorDocument
+from core.dual_vector import DualVectorDocument
 
 from adalflow.core.types import Document, ModelType, RetrieverOutput, RetrieverOutputType
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
-from server.dashscope_client import DashScopeClient
-from server.config import configs, get_code_understanding_config
+from core.dashscope_client import DashScopeClient
+from core.config import configs, get_code_understanding_config
 from adalflow.core.component import DataComponent
 
 logger = logging.getLogger(__name__)

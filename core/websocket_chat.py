@@ -8,14 +8,14 @@ from adalflow.core.types import ModelType
 from fastapi import WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel, Field
 
-from server.config import get_model_config, configs, OPENAI_API_KEY, DASHSCOPE_API_KEY, GOOGLE_API_KEY
-from server.data_pipeline import count_tokens
-from server.openai_client import OpenAIClient
-from server.dashscope_client import DashScopeClient
-from server.rag import RAG
+from core.config import get_model_config, configs, OPENAI_API_KEY, DASHSCOPE_API_KEY, GOOGLE_API_KEY
+from core.data_pipeline import count_tokens
+from core.openai_client import OpenAIClient
+from core.dashscope_client import DashScopeClient
+from core.rag import RAG
 
 # Configure logging
-from server.logging_config import setup_logging
+from core.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -352,6 +352,7 @@ This file contains...
                     # Handle streaming response from Dashscope
                     # Buffer to collect text and send in complete sentences or paragraphs
                     buffer = ""
+                    await websocket.send_text("## Response:\n")
                     async for chunk in response:
                         if chunk.strip():
                             buffer += chunk
@@ -364,6 +365,28 @@ This file contains...
                         await websocket.send_text(buffer)
                     # Send a completion message but don't close the connection
                     await websocket.send_text("\n[Response complete]\n")
+                    
+                    # Display retrieved documents if available
+                    if retrieved_documents and retrieved_documents[0].documents:
+                        documents = retrieved_documents[0].documents
+                        await websocket.send_text("\n\n## Retrieved Documents:\n")
+                        
+                        # Group documents by file path
+                        docs_by_file = {}
+                        for doc in documents:
+                            file_path = doc.meta_data.get('file_path', 'unknown')
+                            if file_path not in docs_by_file:
+                                docs_by_file[file_path] = []
+                            docs_by_file[file_path].append(doc)
+                        
+                        # Format and send each document group
+                        for file_path, docs in docs_by_file.items():
+                            await websocket.send_text(f"\n### File: {file_path}\n")
+                            for i, doc in enumerate(docs):
+                                await websocket.send_text(f"\n**Snippet {i+1}:**\n```\n{doc.text}\n```\n")
+                        
+                        await websocket.send_text("\n[End of Retrieved Documents]\n")
+
                 except Exception as e_dashscope:
                     logger.error(f"Error with Dashscope API: {str(e_dashscope)}")
                     error_msg = f"\nError with Dashscope API: {str(e_dashscope)}\n\nPlease check that you have set the DASHSCOPE_API_KEY environment variable with a valid API key."
@@ -405,6 +428,7 @@ This file contains...
                 response = model.generate_content(prompt, stream=True)
                 # Stream the response
                 buffer = ""
+                await websocket.send_text("## Response:\n")
                 for chunk in response:
                     if hasattr(chunk, 'text'):
                         if chunk.text.strip():
@@ -418,6 +442,27 @@ This file contains...
                     await websocket.send_text(buffer)
                 # Send a completion message but don't close the connection
                 await websocket.send_text("\n[Response complete]\n")
+                
+                # Display retrieved documents if available
+                if retrieved_documents and retrieved_documents[0].documents:
+                    documents = retrieved_documents[0].documents
+                    await websocket.send_text("\n\n## Retrieved Documents:\n")
+                    
+                    # Group documents by file path
+                    docs_by_file = {}
+                    for doc in documents:
+                        file_path = doc.meta_data.get('file_path', 'unknown')
+                        if file_path not in docs_by_file:
+                            docs_by_file[file_path] = []
+                        docs_by_file[file_path].append(doc)
+                    
+                    # Format and send each document group
+                    for file_path, docs in docs_by_file.items():
+                        await websocket.send_text(f"\n### File: {file_path}\n")
+                        for i, doc in enumerate(docs):
+                            await websocket.send_text(f"\n**Snippet {i+1}:**\n```\n{doc.text}\n```\n")
+                    
+                    await websocket.send_text("\n[End of Retrieved Documents]\n")
 
         except Exception as e_outer:
             logger.error(f"Error in streaming response: {str(e_outer)}")

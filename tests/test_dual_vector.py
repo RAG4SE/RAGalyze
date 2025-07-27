@@ -13,8 +13,8 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from adalflow.core.types import Document
-from server.dual_vector_pipeline import CodeUnderstandingGenerator
-from server.rag import RAG
+from core.dual_vector_pipeline import CodeUnderstandingGenerator
+from core.rag import RAG
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

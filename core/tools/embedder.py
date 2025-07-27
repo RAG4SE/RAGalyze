@@ -1,6 +1,6 @@
 import adalflow as adal
 
-from server.config import configs
+from core.config import configs
 
 SUPPORT_EMBEDDER = [
     "HuggingfaceEmbedder",

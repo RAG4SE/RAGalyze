@@ -57,7 +57,7 @@ from adalflow.core.embedder import (
 import adalflow.core.functional as F
 from adalflow.components.model_client.utils import parse_embedding_response
 
-from server.logging_config import setup_logging
+from core.logging_config import setup_logging
 
 # # Disable tqdm progress bars
 # os.environ["TQDM_DISABLE"] = "1"
