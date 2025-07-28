@@ -30,7 +30,8 @@ config_data = {
         'sketch_filling': configs.get('sketch_filling', False),
         'force_embedding': configs.get('force_embedding', False),
         'hybrid': configs.get('hybrid', {'enabled': False})
-    }
+    },
+    'file_extensions': configs.get('file_extensions', {})
 }
 
 def analyze_repository(repo_path: str) -> RAG:
@@ -68,6 +69,8 @@ def analyze_repository(repo_path: str) -> RAG:
         excluded_files = config_data['repo']['file_filters']['excluded_files']
         included_dirs = config_data['repo']['file_filters']['included_dirs']
         included_files = config_data['repo']['file_filters']['included_files']
+        code_extensions = config_data['file_extensions']['code_extensions']
+        doc_extensions = config_data['file_extensions']['doc_extensions']
 
         logger.info(f"🚀 Starting new analysis for: {repo_path} (dual_vector: {use_dual_vector})")
         
@@ -81,7 +84,9 @@ def analyze_repository(repo_path: str) -> RAG:
             excluded_files=excluded_files,
             included_files=included_files,
             included_dirs=included_dirs,
-            force_recreate_db=force_recreate
+            force_recreate_db=force_recreate,
+            code_extensions=code_extensions,
+            doc_extensions=doc_extensions
         )
         
         logger.info(f"✅ Analysis complete for: {repo_path}")

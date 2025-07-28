@@ -182,7 +182,8 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
     return None, "all_encodings_failed"
 
 def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                      included_dirs: List[str] = None, included_files: List[str] = None):
+                      included_dirs: List[str] = None, included_files: List[str] = None,
+                      code_extensions: List[str] = None, doc_extensions: List[str] = None):
     """
     Recursively reads all documents in a directory and its subdirectories.
 
@@ -196,58 +197,34 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
             When provided, only files in these directories will be processed.
         included_files (List[str], optional): List of file patterns to include exclusively.
             When provided, only files matching these patterns will be processed.
+        code_extensions (List[str], optional): List of code file extensions to process.
+            Overrides the default configuration if provided.
+        doc_extensions (List[str], optional): List of documentation file extensions to process.
+            Overrides the default configuration if provided.
 
     Returns:
         list: A list of Document objects with metadata.
     """
     documents = []
-    # File extensions to look for, prioritizing code files
-    code_extensions = [
-        # Popular languages
-        ".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp", ".go", ".rs",
-        ".jsx", ".tsx", ".html", ".css", ".php", ".swift", ".cs", ".sol",
-        # Functional languages
-        ".ml", ".mli",  # OCaml
-        ".hs", ".lhs",  # Haskell
-        ".fs", ".fsi", ".fsx",  # F#
-        ".erl", ".hrl",  # Erlang
-        ".ex", ".exs",  # Elixir
-        ".clj", ".cljs", ".cljc",  # Clojure
-        ".scm", ".ss",  # Scheme
-        ".lisp", ".lsp",  # Lisp
-        ".elm",  # Elm
-        # Other languages
-        ".rb", ".pl", ".pm",  # Ruby, Perl
-        ".scala", ".sc",  # Scala
-        ".kt", ".kts",  # Kotlin
-        ".dart",  # Dart
-        ".lua",  # Lua
-        ".r", ".R",  # R
-        ".m",  # MATLAB/Objective-C
-        ".jl",  # Julia
-        ".nim",  # Nim
-        ".cr",  # Crystal
-        ".zig",  # Zig
-        ".v", ".sv",  # Verilog/SystemVerilog
-        ".vhd", ".vhdl",  # VHDL
-        # Assembly and low-level
-        ".s", ".S", ".asm",  # Assembly
-        # Shell scripts
-        ".sh", ".bash", ".zsh", ".fish",  # Shell scripts
-        ".ps1", ".psm1",  # PowerShell
-        ".bat", ".cmd",  # Batch files
-        # Configuration and data
-        ".toml", ".ini", ".cfg", ".conf",  # Config files
-        ".xml", ".xaml",  # XML
-        ".proto",  # Protocol Buffers
-        ".graphql", ".gql",  # GraphQL
-        ".sql",  # SQL
-        # Build files
-        ".mk", ".cmake",  # Make, CMake
-        ".gradle", ".sbt",  # Gradle, SBT
-        ".bazel", ".bzl",  # Bazel
-    ]
-    doc_extensions = [".md", ".txt", ".rst", ".json", ".yaml", ".yml", ".adoc", ".org", ".tex"]
+    print(code_extensions)
+    print(doc_extensions)
+    
+    # Get file extensions from configuration or use provided parameters
+    if code_extensions is None:
+        code_extensions = configs.get("file_extensions", {}).get("code_extensions", [
+            # Default fallback extensions if config is not available
+            ".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp", ".go", ".rs",
+            ".jsx", ".tsx", ".html", ".css", ".php", ".swift", ".cs", ".sol"
+        ])
+    
+    if doc_extensions is None:
+        doc_extensions = configs.get("file_extensions", {}).get("doc_extensions", [
+            # Default fallback extensions if config is not available
+            ".md", ".txt", ".rst", ".json", ".yaml", ".yml"
+        ])
+    
+    logger.info(f"Processing {len(code_extensions)} code extensions: {code_extensions}")
+    logger.info(f"Processing {len(doc_extensions)} doc extensions: {doc_extensions}")
 
     # Determine filtering mode: inclusion or exclusion
     use_inclusion_mode = (included_dirs is not None and len(included_dirs) > 0) or (included_files is not None and len(included_files) > 0)
@@ -589,16 +566,19 @@ class DatabaseManager:
 
     def prepare_database(self,
                        excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                       included_dirs: List[str] = None, included_files: List[str] = None, force_recreate: bool = False) -> List[Union[Document, DualVectorDocument]]:
+                       included_dirs: List[str] = None, included_files: List[str] = None, 
+                       code_extensions: List[str] = None, doc_extensions: List[str] = None,
+                       force_recreate: bool = False) -> List[Union[Document, DualVectorDocument]]:
         """
         Create a new database from the repository.
 
         Args:
-            repo_path (str): The local path of the repository
             excluded_dirs (List[str], optional): List of directories to exclude from processing
             excluded_files (List[str], optional): List of file patterns to exclude from processing
             included_dirs (List[str], optional): List of directories to include exclusively
             included_files (List[str], optional): List of file patterns to include exclusively
+            code_extensions (List[str], optional): List of code file extensions to process
+            doc_extensions (List[str], optional): List of documentation file extensions to process
             force_recreate (bool, optional): Whether to force recreate the database
         Returns:
             List[Document]: List of Document objects
@@ -606,10 +586,14 @@ class DatabaseManager:
         self.data_transformer = prepare_data_transformer(use_dual_vector=self.use_dual_vector)
         self._create_db_info()    
         return self.prepare_db_index(excluded_dirs=excluded_dirs, excluded_files=excluded_files,
-                                   included_dirs=included_dirs, included_files=included_files, force_recreate=force_recreate)
+                                   included_dirs=included_dirs, included_files=included_files,
+                                   code_extensions=code_extensions, doc_extensions=doc_extensions,
+                                   force_recreate=force_recreate)
     
     def prepare_db_index(self, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                        included_dirs: List[str] = None, included_files: List[str] = None, force_recreate: bool = False) -> List[Union[Document, DualVectorDocument]]:
+                        included_dirs: List[str] = None, included_files: List[str] = None,
+                        code_extensions: List[str] = None, doc_extensions: List[str] = None,
+                        force_recreate: bool = False) -> List[Union[Document, DualVectorDocument]]:
         """
         Prepare the indexed database for the repository.
 
@@ -618,6 +602,8 @@ class DatabaseManager:
             excluded_files (List[str], optional): List of file patterns to exclude from processing
             included_dirs (List[str], optional): List of directories to include exclusively
             included_files (List[str], optional): List of file patterns to include exclusively
+            code_extensions (List[str], optional): List of code file extensions to process
+            doc_extensions (List[str], optional): List of documentation file extensions to process
             force_recreate (bool, optional): Whether to force recreate the database
         Returns:
             List[Document]: List of Document objects
@@ -646,6 +632,8 @@ class DatabaseManager:
             excluded_files=excluded_files,
             included_dirs=included_dirs,
             included_files=included_files,
+            code_extensions=code_extensions,
+            doc_extensions=doc_extensions,
         )
         self.db = transform_documents_and_save_to_db(
             documents, self.db_info["db_file_path"],
@@ -654,17 +642,3 @@ class DatabaseManager:
         )
         documents = self.db.get_transformed_data(key=os.path.basename(self.db_info["db_file_path"]))
         return documents
-
-    def prepare_retriever(self, repo_path: str, type: str = "github", access_token: str = None):
-        """
-        Prepare the retriever for a repository.
-        This is a compatibility method for the isolated API.
-
-        Args:
-            repo_path (str): The URL or local path of the repository
-            access_token (str, optional): Access token for private repositories
-
-        Returns:
-            List[Document]: List of Document objects
-        """
-        return self.prepare_database(repo_path, type, access_token)

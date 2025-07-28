@@ -209,7 +209,7 @@ if embedder_config:
 
 # Update repository configuration
 if repo_config:
-    for key in ["file_filters", "repository"]:
+    for key in ["file_filters", "repository", "file_extensions"]:
         if key in repo_config:
             configs[key] = repo_config[key]
 

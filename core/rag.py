@@ -406,19 +406,21 @@ IMPORTANT FORMATTING RULES:
 
     def prepare_retriever(self, repo_path: str,
                       excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                      included_dirs: List[str] = None, included_files: List[str] = None, force_recreate_db: bool = False):
+                      included_dirs: List[str] = None, included_files: List[str] = None, force_recreate_db: bool = False,
+                      code_extensions: List[str] = None, doc_extensions: List[str] = None):
         """
         Prepare the retriever for a repository.
         Will load database from local storage if available.
 
         Args:
             repo_path: URL or local path to the repository
-            access_token: Optional access token for private repositories
             excluded_dirs: Optional list of directories to exclude from processing
             excluded_files: Optional list of file patterns to exclude from processing
             included_dirs: Optional list of directories to include exclusively
             included_files: Optional list of file patterns to include exclusively
             force_recreate_db: Whether to force recreate the database
+            code_extensions: Optional list of code file extensions to override config
+            doc_extensions: Optional list of documentation file extensions to override config
         """
         self.initialize_db_manager(repo_path)
 
@@ -429,7 +431,9 @@ IMPORTANT FORMATTING RULES:
             excluded_files=excluded_files,
             included_dirs=included_dirs,
             included_files=included_files,
-            force_recreate=force_recreate_db
+            force_recreate=force_recreate_db,
+            code_extensions=code_extensions,
+            doc_extensions=doc_extensions
         )
         logger.info(f"✅ Loaded {len(self.documents)} documents for retrieval")
         # Validate and filter embeddings to ensure consistent sizes

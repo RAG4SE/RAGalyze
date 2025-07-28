@@ -127,5 +127,48 @@
   },
   "repository": {
     "max_size_mb": 50000
+  },
+  "file_extensions": {
+    "code_extensions": [
+      ".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp", ".go", ".rs",
+      ".jsx", ".tsx", ".html", ".css", ".php", ".swift", ".cs", ".sol",
+      ".ml", ".mli",
+      ".hs", ".lhs",
+      ".fs", ".fsi", ".fsx",
+      ".erl", ".hrl",
+      ".ex", ".exs",
+      ".clj", ".cljs", ".cljc",
+      ".scm", ".ss",
+      ".lisp", ".lsp",
+      ".elm",
+      ".rb", ".pl", ".pm",
+      ".scala", ".sc",
+      ".kt", ".kts",
+      ".dart",
+      ".lua",
+      ".r", ".R",
+      ".m",
+      ".jl",
+      ".nim",
+      ".cr",
+      ".zig",
+      ".v", ".sv",
+      ".vhd", ".vhdl",
+      ".s", ".S", ".asm",
+      ".sh", ".bash", ".zsh", ".fish",
+      ".ps1", ".psm1",
+      ".bat", ".cmd",
+      ".toml", ".ini", ".cfg", ".conf",
+      ".xml", ".xaml",
+      ".proto",
+      ".graphql", ".gql",
+      ".sql",
+      ".mk", ".cmake",
+      ".gradle", ".sbt",
+      ".bazel", ".bzl"
+    ],
+    "doc_extensions": [
+      ".md", ".txt", ".rst", ".json", ".yaml", ".yml", ".adoc", ".org", ".tex"
+    ]
   }
 }
