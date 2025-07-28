@@ -4,6 +4,4 @@ __pycache__/
 .env
 .next
 logs/
-cache/
-embedding_cache/
 .vercel/

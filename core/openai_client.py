@@ -16,7 +16,7 @@ from typing import (
 )
 import re
 
-import logging
+from logger.logging_config import get_tqdm_compatible_logger
 import backoff
 
 # optional import
@@ -50,7 +50,7 @@ from adalflow.core.types import (
 )
 from adalflow.components.model_client.utils import parse_embedding_response
 
-log = logging.getLogger(__name__)
+log = get_tqdm_compatible_logger(__name__)
 T = TypeVar("T")
 
 

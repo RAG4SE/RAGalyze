@@ -1,4 +1,4 @@
-import logging
+from logger.logging_config import get_tqdm_compatible_logger
 from dataclasses import dataclass
 from typing import Any, List, Tuple, Dict, Union, Optional
 from uuid import uuid4
@@ -7,6 +7,7 @@ from adalflow.core.types import RetrieverOutput, RetrieverOutputType
 from adalflow.core.types import Document
 from core.tools.embedder import get_embedder
 from core.dual_vector_pipeline import DualVectorRetriever
+from core.hybrid_retriever import HybridRetriever
 
 # Create our own implementation of the conversation classes
 @dataclass
@@ -35,14 +36,12 @@ class CustomConversation:
             self.dialog_turns = []
         self.dialog_turns.append(dialog_turn)
 
-# Import other adalflow components
-from adalflow.components.retriever.faiss_retriever import FAISSRetriever, FAISSRetrieverQueriesType
 from core.config import configs
 from core.data_pipeline import DatabaseManager
 from core.dual_vector import DualVectorDocument
 
 # Configure logging
-logger = logging.getLogger(__name__)
+logger = get_tqdm_compatible_logger(__name__)
 
 # Maximum token limit for embedding models
 MAX_INPUT_TOKENS = 7500  # Safe threshold below 8192 token limit
@@ -212,43 +211,11 @@ class RAGAnswer(adal.DataClass):
 
     __output_fields__ = ["rationale", "answer"]
 
-class SingleVectorRetriever(FAISSRetriever):
-    """A wrapper of FAISSRetriever with the additional feature of supporting docoments feature"""
-    def __init__(self, documents, *args, **kwargs):
-        self.original_doc = documents
-        super().__init__(documents=documents, *args, **kwargs)
-    
-    def call(
-        self,
-        input: FAISSRetrieverQueriesType,
-        top_k: Optional[int] = None,
-    ) -> RetrieverOutputType:
-        retriever_output = super().call(input, top_k)
-
-        # Extract the first result from the list
-        if not retriever_output:
-            return []
-
-        first_output = retriever_output[0]
-
-        # Get the documents based on the indices
-        retrieved_docs = [self.original_doc[i] for i in first_output.doc_indices]
-
-        # Create a new RetrieverOutput with the documents
-        return [
-            RetrieverOutput(
-                doc_indices=first_output.doc_indices,
-                doc_scores=first_output.doc_scores,
-                query=first_output.query,
-                documents=retrieved_docs,
-            )
-        ]
-
 class RAG(adal.Component):
     """RAG with one repo.
     If you want to load a new repos, call prepare_retriever(repo_path) first."""
 
-    def __init__(self, provider=None, model=None, use_dual_vector: bool = False):  # noqa: F841 - use_s3 is kept for compatibility
+    def __init__(self, provider=None, model=None, use_dual_vector: bool = False, use_bm25: bool = False):
         """
         Initialize the RAG component.
 
@@ -259,9 +226,6 @@ class RAG(adal.Component):
         """
         super().__init__()
 
-        # Import configs to get defaults
-        from core.config import configs
-        
         # Use provided provider or fall back to config default
         if provider is None:
             provider = configs.get("default_provider", "dashscope")
@@ -273,6 +237,8 @@ class RAG(adal.Component):
         self.provider = provider
         self.model = model
         self.use_dual_vector = use_dual_vector
+        self.use_bm25 = use_bm25
+
         # Initialize components
         self.memory = Memory()
         self.embedder = get_embedder()
@@ -310,9 +276,9 @@ IMPORTANT FORMATTING RULES:
         self.db_manager = None
         self.documents = None
 
-    def initialize_db_manager(self, repo_path: str, use_dual_vector: bool = False):
+    def initialize_db_manager(self, repo_path: str):
         """Initialize the database manager with local storage"""
-        self.db_manager = DatabaseManager(repo_path, use_dual_vector)
+        self.db_manager = DatabaseManager(repo_path, self.use_dual_vector, self.use_bm25)
         self.documents = []
 
     def _validate_and_filter_embeddings(self, documents: List[Document|DualVectorDocument]) -> List:
@@ -454,9 +420,9 @@ IMPORTANT FORMATTING RULES:
             included_files: Optional list of file patterns to include exclusively
             force_recreate_db: Whether to force recreate the database
         """
-        self.initialize_db_manager(repo_path, self.use_dual_vector)
+        self.initialize_db_manager(repo_path)
 
-        logger.info(f'\n🔍 Build up database...')
+        logger.info(f'🔍 Build up database...')
         # self.documents is a list of Document or DualVectorDocument
         self.documents = self.db_manager.prepare_database(
             excluded_dirs=excluded_dirs,
@@ -473,17 +439,32 @@ IMPORTANT FORMATTING RULES:
             raise ValueError("No valid documents with embeddings found. Cannot create retriever.")
 
         try:
-            if self.use_dual_vector:
-                self.retriever = DualVectorRetriever(self.documents, self.embedder, **configs["retriever"])
-                logger.info("✅ Dual vector retriever created successfully")
-            else:
-                self.retriever = SingleVectorRetriever(
-                    **configs["retriever"],
-                    embedder=self.embedder,
-                    documents=self.documents,
-                    document_map_func=lambda doc: doc.vector,
-                )
-                logger.info(f"✅ SingleVectorRetriever created successfully")
+            # Get hybrid configuration from embedder config
+            hybrid_config = configs.get('hybrid', {})
+            use_bm25 = hybrid_config.get('enabled', False)
+            
+            # Get BM25 parameters from hybrid.bm25 section
+            bm25_config = hybrid_config.get('bm25', {})
+            bm25_top_k = bm25_config.get('top_k', 100)
+            bm25_k1 = bm25_config.get('k1', 1.2)
+            bm25_b = bm25_config.get('b', 0.75)
+            
+            # Get retriever top_k
+            retriever_config = configs.get('retriever', {})
+            top_k = retriever_config.get('top_k', 20)
+            
+            # Use HybridRetriever which combines BM25 and FAISS
+            self.retriever = HybridRetriever(
+                documents=self.documents,
+                embedder=self.embedder,
+                use_bm25=use_bm25,
+                bm25_top_k=bm25_top_k,
+                bm25_k1=bm25_k1,
+                bm25_b=bm25_b,
+                top_k=top_k,
+                use_dual_vector=self.use_dual_vector
+            )
+            logger.info(f"✅ HybridRetriever created successfully (dual_vector={self.use_dual_vector}, BM25={'enabled' if self.use_bm25 else 'disabled'})")
         except Exception as e:
             logger.error(f"❌ Failed to create retriever: {e}")
             raise

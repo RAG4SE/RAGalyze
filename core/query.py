@@ -1,77 +1,39 @@
 #!/usr/bin/env python3
 """
 RAGalyze Query Module
-
-A standalone module that merges the logic of server.py and client.py
-without using WebSockets. Provides a simple function to query a repository
-about a question and return structured results.
 """
 
 import os
 import sys
-import json
-import logging
+from logger.logging_config import get_tqdm_compatible_logger
 from typing import Dict, List, Optional, Any
-from pathlib import Path
-
 # Add the parent directory to Python path to import core modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.rag import RAG
 from core.config import configs
-from core.logging_config import setup_logging
+from logger.logging_config import setup_logging
 
 # Setup logging
-setup_logging()
-logger = logging.getLogger(__name__)
+logger = get_tqdm_compatible_logger(__name__)
 
-# Global cache for RAG instances
-rag_cache: Dict[str, RAG] = {}
-
-# Load configuration from JSON files
-def load_config():
-    """Load configuration from JSON files in core/config/"""
-    config_dir = os.path.join(os.path.dirname(__file__), 'config')
-    
-    # Load generator config
-    with open(os.path.join(config_dir, 'generator.json'), 'r') as f:
-        generator_config = json.load(f)
-    
-    # Load repo config
-    with open(os.path.join(config_dir, 'repo.json'), 'r') as f:
-        repo_config = json.load(f)
-    
-    # Load embedder config
-    with open(os.path.join(config_dir, 'embedder.json'), 'r') as f:
-        embedder_config = json.load(f)
-    
-    return {
-        'generator': generator_config,
-        'repo': repo_config,
-        'embedder': embedder_config
+# Use the global configs from config.py instead of loading separately
+config_data = {
+    'generator': {
+        'default_provider': configs.get('default_provider', 'dashscope'),
+        'providers': configs.get('providers', {})
+    },
+    'repo': {
+        'file_filters': configs.get('file_filters', {})
+    },
+    'embedder': {
+        'sketch_filling': configs.get('sketch_filling', False),
+        'force_embedding': configs.get('force_embedding', False),
+        'hybrid': configs.get('hybrid', {'enabled': False})
     }
+}
 
-# Load configurations
-config_data = load_config()
-
-def get_cache_key(repo_path: str, use_dual_vector: bool = None) -> str:
-    """Generate cache key for RAG instance"""
-    if use_dual_vector is None:
-        use_dual_vector = config_data['embedder'].get('sketch_filling', False)
-    
-    repo_name = os.path.abspath(repo_path)
-    cache_key = repo_name
-    if use_dual_vector:
-        cache_key += "_dual_vector"
-    return cache_key
-
-def analyze_repository(repo_path: str, 
-                      force_recreate: bool = None,
-                      use_dual_vector: bool = None,
-                      excluded_dirs: Optional[List[str]] = None,
-                      excluded_files: Optional[List[str]] = None,
-                      included_dirs: Optional[List[str]] = None,
-                      included_files: Optional[List[str]] = None) -> RAG:
+def analyze_repository(repo_path: str) -> RAG:
     """
     Analyze a code repository and return a RAG instance.
     
@@ -98,32 +60,20 @@ def analyze_repository(repo_path: str,
         if not os.path.exists(repo_path):
             raise ValueError(f"Repository path does not exist: {repo_path}")
             
-        cache_key = get_cache_key(repo_path, use_dual_vector)
-        
-        # Check cache first
-        if not force_recreate and cache_key in rag_cache:
-            logger.info(f"✅ Using cached RAG instance for: {repo_path} (dual_vector: {use_dual_vector})")
-            return rag_cache[cache_key]
-            
+
+        use_dual_vector = config_data['embedder']['sketch_filling']
+        force_recreate = config_data['embedder']['force_embedding']
+        use_bm25 = config_data['embedder']['hybrid']['enabled']
+        excluded_dirs = config_data['repo']['file_filters']['excluded_dirs']
+        excluded_files = config_data['repo']['file_filters']['excluded_files']
+        included_dirs = config_data['repo']['file_filters']['included_dirs']
+        included_files = config_data['repo']['file_filters']['included_files']
+
         logger.info(f"🚀 Starting new analysis for: {repo_path} (dual_vector: {use_dual_vector})")
         
         # Initialize RAG with dual vector flag
-        rag = RAG(use_dual_vector=use_dual_vector)
-        
-        # Use provided parameters or fall back to config defaults
-        if force_recreate is None:
-            force_recreate = config_data['embedder'].get('force_embedding', False)
-        if use_dual_vector is None:
-            use_dual_vector = config_data['embedder'].get('sketch_filling', False)
-        if excluded_dirs is None:
-            excluded_dirs = config_data['repo']['file_filters'].get('excluded_dirs', [])
-        if excluded_files is None:
-            excluded_files = config_data['repo']['file_filters'].get('excluded_files', [])
-        if included_dirs is None:
-            included_dirs = config_data['repo']['file_filters'].get('included_dirs', [])
-        if included_files is None:
-            included_files = config_data['repo']['file_filters'].get('included_files', [])
-            
+        rag = RAG(use_dual_vector=use_dual_vector, use_bm25=use_bm25)
+
         # Prepare retriever
         rag.prepare_retriever(
             repo_path,
@@ -135,7 +85,7 @@ def analyze_repository(repo_path: str,
         )
         
         logger.info(f"✅ Analysis complete for: {repo_path}")
-        rag_cache[cache_key] = rag
+
         return rag
         
     except Exception as e:
@@ -181,15 +131,7 @@ def query_repository(repo_path: str,
             model = config_data['generator']['providers'][provider].get('default_model')
         
         # Analyze repository
-        rag = analyze_repository(
-            repo_path=repo_path,
-            force_recreate=force_recreate,
-            use_dual_vector=use_dual_vector,
-            excluded_dirs=excluded_dirs,
-            excluded_files=excluded_files,
-            included_dirs=included_dirs,
-            included_files=included_files
-        )
+        rag = analyze_repository(repo_path=repo_path)
         
         logger.info(f"🔍 Processing question: {question}")
         
@@ -243,8 +185,6 @@ def query_repository(repo_path: str,
                     
                 # Extract answer text from various possible formats
                 answer_text = ""
-                
-
                 
                 # First check for actual ChatCompletion objects
                 if hasattr(rag_answer, 'choices') and len(rag_answer.choices) > 0 and hasattr(rag_answer.choices[0], 'message'):

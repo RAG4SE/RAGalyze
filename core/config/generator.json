@@ -43,21 +43,6 @@
         }
       }
     },
-    "deepseek": {
-      "client_class": "DeepSeekClient",
-      "default_model": "deepseek-chat",
-      "supportsCustomModel": true,
-      "models": {
-        "deepseek-chat": {
-          "temperature": 0.7,
-          "top_p": 0.8
-        },
-        "deepseek-reasoner": {
-          "temperature": 0.7,
-          "top_p": 0.8
-        }
-      }
-    },
     "dashscope": {
       "client_class": "DashScopeClient",
       "default_model": "qwen-plus",
@@ -76,33 +61,6 @@
           "top_p": 0.8
         },
         "deepseek-r1-0528": {
-          "temperature": 0.7,
-          "top_p": 0.8
-        }
-      }
-    },
-    "siliconflow": {
-      "client_class": "SiliconFlowClient",
-      "default_model": "deepseek-ai/DeepSeek-V3",
-      "supportsCustomModel": true,
-      "models": {
-        "deepseek-ai/DeepSeek-V3": {
-          "temperature": 0.7,
-          "top_p": 0.8
-        },
-        "deepseek-ai/deepseek-chat": {
-          "temperature": 0.7,
-          "top_p": 0.8
-        },
-        "deepseek-ai/deepseek-coder": {
-          "temperature": 0.7,
-          "top_p": 0.8
-        },
-        "Qwen/Qwen2.5-72B-Instruct": {
-          "temperature": 0.7,
-          "top_p": 0.8
-        },
-        "meta-llama/Llama-3.1-405B-Instruct": {
           "temperature": 0.7,
           "top_p": 0.8
         }

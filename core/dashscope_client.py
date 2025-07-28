@@ -14,7 +14,7 @@ from typing import (
     Sequence,
 )
 
-import logging
+from logger.logging_config import get_tqdm_compatible_logger
 import backoff
 from copy import deepcopy
 from tqdm import tqdm
@@ -57,13 +57,10 @@ from adalflow.core.embedder import (
 import adalflow.core.functional as F
 from adalflow.components.model_client.utils import parse_embedding_response
 
-from core.logging_config import setup_logging
-
 # # Disable tqdm progress bars
 # os.environ["TQDM_DISABLE"] = "1"
 
-setup_logging()
-log = logging.getLogger(__name__)
+log = get_tqdm_compatible_logger(__name__)
 
 def get_first_message_content(completion: ChatCompletion) -> str:
     """When we only need the content of the first message."""
@@ -290,11 +287,7 @@ class DashScopeClient(ModelClient):
         # Add detailed debugging
         try:
             result = parse_embedding_response(response)
-            if result.data:
-                log.info(f"🔍 Number of embeddings: {len(result.data)}")
-                if len(result.data) > 0:
-                    log.info(f"🔍 First embedding length: {len(result.data[0].embedding) if hasattr(result.data[0], 'embedding') else 'N/A'}")
-            else:
+            if not result.data:
                 log.warning(f"🔍 No embedding data found in result")
             return result
         except Exception as e:
@@ -437,22 +430,16 @@ class DashScopeClient(ModelClient):
             filtered_api_kwargs = api_kwargs.copy()
             filtered_api_kwargs["input"] = valid_texts
             
-            log.info(f"🔍 DashScope embedding API call with {len(valid_texts)} valid texts out of {len(texts)} total")
-            
             try:
                 response = self.sync_client.embeddings.create(**filtered_api_kwargs)
-                log.info(f"🔍 DashScope API call successful, response type: {type(response)}")
                 result = self.parse_embedding_response(response)
                 
                 # If we filtered texts, we need to create embeddings for the original indices
                 if len(valid_texts) != len(texts):
-                    log.info(f"🔍 Creating embeddings for {len(texts)} original positions")
-                    
                     # Get the correct embedding dimension from the first valid embedding
                     embedding_dim = None  # Must be determined from a successful response
                     if result.data and len(result.data) > 0 and hasattr(result.data[0], 'embedding'):
                         embedding_dim = len(result.data[0].embedding)
-                        log.info(f"🔍 Using embedding dimension: {embedding_dim}")
                     
                     final_data = []
                     valid_idx = 0
@@ -714,40 +701,28 @@ class DashScopeEmbedder(DataComponent):
 class DashScopeBatchEmbedder(DataComponent):
     """Batch embedder specifically designed for DashScope API"""
 
-    def __init__(self, embedder, batch_size: int = 100, embedding_cache_file_name: str = "default") -> None:
+    def __init__(self, embedder, batch_size: int = 100) -> None:
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
         if self.batch_size > 25:
             log.warning(f"DashScope batch embedder initialization, batch size: {self.batch_size}, note that DashScope batch embedding size cannot exceed 25, automatically set to 25")
             self.batch_size = 25
-        self.cache_path = f'./embedding_cache/{embedding_cache_file_name}_{self.embedder.__class__.__name__}_dashscope_embeddings.pkl'
 
     def call(
-        self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}, force_recreate: bool = False
-    ) -> BatchEmbedderOutputType:
+        self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}) -> BatchEmbedderOutputType:
         """
         Batch call to DashScope embedder
         
         Args:
             input: List of input texts
             model_kwargs: Model parameters
-            force_recreate: Whether to force recreation
             
         Returns:
             Batch embedding output
         """
         # Check cache first
-        
-        if not force_recreate and os.path.exists(self.cache_path):
-            try:
-                with open(self.cache_path, 'rb') as f:
-                    embeddings = pickle.load(f)
-                    log.info(f"Loaded cached DashScope embeddings from: {self.cache_path}")
-                return embeddings
-            except Exception as e:
-                log.warning(f"Failed to load cache file {self.cache_path}: {e}, proceeding with fresh embedding")
-        
+
         if isinstance(input, str):
             input = [input]
         
@@ -790,16 +765,6 @@ class DashScopeBatchEmbedder(DataComponent):
         
         log.info(f"DashScope batch embedding completed, processed {len(embeddings)} batches")
         
-        # Save to cache
-        try:
-            if not os.path.exists('./embedding_cache'):
-                os.makedirs('./embedding_cache')
-            with open(self.cache_path, 'wb') as f:
-                pickle.dump(embeddings, f)
-                log.info(f"Saved DashScope embeddings cache to: {self.cache_path}")
-        except Exception as e:
-            log.warning(f"Failed to save cache to {self.cache_path}: {e}")
-        
         return embeddings
     
     def __call__(self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}, force_recreate: bool = False) -> BatchEmbedderOutputType:
@@ -812,13 +777,11 @@ class DashScopeBatchEmbedder(DataComponent):
 class DashScopeToEmbeddings(DataComponent):
     """Component that converts document sequences to embedding vector sequences, specifically optimized for DashScope API"""
 
-    def __init__(self, embedder, batch_size: int = 100, force_recreate_db: bool = False, embedding_cache_file_name: str = "default") -> None:
+    def __init__(self, embedder, batch_size: int = 100) -> None:
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
-        self.batch_embedder = DashScopeBatchEmbedder(embedder=embedder, batch_size=batch_size, embedding_cache_file_name=embedding_cache_file_name)
-        self.cache_path = self.batch_embedder.cache_path
-        self.force_recreate_db = force_recreate_db
+        self.batch_embedder = DashScopeBatchEmbedder(embedder=embedder, batch_size=batch_size)
 
     def __call__(self, input: List[Document]) -> List[Document]:
         """
@@ -838,10 +801,7 @@ class DashScopeToEmbeddings(DataComponent):
         log.info(f"Starting to process embeddings for {len(embedder_input)} documents")
         
         # Batch process embeddings
-        outputs: List[EmbedderOutput] = self.batch_embedder(
-            input=embedder_input, 
-            force_recreate=self.force_recreate_db
-        )
+        outputs: List[EmbedderOutput] = self.batch_embedder(input=embedder_input)
         
         # Validate output
         total_embeddings = 0

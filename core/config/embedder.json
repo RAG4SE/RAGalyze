@@ -9,13 +9,21 @@
     }
   },
   "sketch_filling": true,
-  "force_embedding": false,
+  "force_embedding": true,
   "retriever": {
     "top_k": 20
+  },
+  "hybrid": {
+    "enabled": true,
+    "bm25": {
+      "top_k": 100,
+      "k1": 1.2,
+      "b": 0.75
+    }
   },
   "text_splitter": {
     "split_by": "word",
     "chunk_size": 512,
     "chunk_overlap": 32
   }
-} 
+}

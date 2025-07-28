@@ -1,6 +1,3 @@
-# RAGalyze Server Dependencies
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
 pydantic>=2.0.0
 requests>=2.28.0
 jinja2>=3.0.0
@@ -10,4 +7,4 @@ faiss-cpu
 chardet>=5.0.0
 tqdm>=4.66.1
 transformers
-websockets
+rank_bm25>=0.2.2

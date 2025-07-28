@@ -1,11 +1,11 @@
 import os
 import json
-import logging
+from logger.logging_config import get_tqdm_compatible_logger
 import re
 from pathlib import Path
 from typing import List, Union, Dict, Any
 
-logger = logging.getLogger(__name__)
+logger = get_tqdm_compatible_logger(__name__)
 
 from core.openai_client import OpenAIClient
 
@@ -203,7 +203,7 @@ if generator_config:
 
 # Update embedder configuration
 if embedder_config:
-    for key in ["embedder", "sketch_filling", "force_embedding", "retriever", "text_splitter"]:
+    for key in ["embedder", "sketch_filling", "force_embedding", "retriever", "text_splitter", "hybrid"]:
         if key in embedder_config:
             configs[key] = embedder_config[key]
 
@@ -216,8 +216,6 @@ if repo_config:
 # Update code understanding configuration
 if code_understanding_config:
     configs["code_understanding"] = code_understanding_config
-
-
 
 def get_model_config(provider=None, model=None):
     """

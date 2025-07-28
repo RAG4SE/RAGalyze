@@ -1,4 +1,5 @@
 import os
+from logger.logging_config import get_tqdm_compatible_logger
 import logging
 from typing import List, Optional, Union
 from core.dual_vector import DualVectorDocument
@@ -9,7 +10,7 @@ from core.dashscope_client import DashScopeClient
 from core.config import configs, get_code_understanding_config
 from adalflow.core.component import DataComponent
 
-logger = logging.getLogger(__name__)
+logger = get_tqdm_compatible_logger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 # System prompt designed specifically for the code understanding task
 CODE_UNDERSTANDING_SYSTEM_PROMPT = """
@@ -117,23 +118,15 @@ class DualVectorToEmbeddings(DataComponent):
     A data component that transforms documents into dual-vector embeddings,
     including both code and understanding vectors.
     """
-    def __init__(self, embedder, force_recreate_db: bool = False, embedding_cache_file_name: str = "default"):
+    def __init__(self, embedder):
         super().__init__()
         self.embedder = embedder
         self.code_generator = CodeUnderstandingGenerator()
-        self.force_recreate_db = force_recreate_db
-        self.cache_path = f'./embedding_cache/{embedding_cache_file_name}_dual_vector_embeddings.pkl'
 
     def __call__(self, documents: List[Document]) -> List[DualVectorDocument]:
         """
         Processes a list of documents to generate and cache dual-vector embeddings.
         """
-        import pickle
-        if not self.force_recreate_db and os.path.exists(self.cache_path):
-            logger.info("Loading cached dual-vector embeddings from %s", self.cache_path)
-            with open(self.cache_path, 'rb') as f:
-                return pickle.load(f)
-
         logger.info("Generating dual-vector embeddings for %s documents", len(documents))
         
         dual_docs = []
@@ -164,16 +157,11 @@ class DualVectorToEmbeddings(DataComponent):
                 )
             )
 
-        # Cache the results
-        os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
-        with open(self.cache_path, 'wb') as f:
-            pickle.dump(dual_docs, f)
-        
-        logger.info("Successfully generated and cached %s dual-vector documents.", len(dual_docs))
+        logger.info("Successfully generated %s dual-vector documents.", len(dual_docs))
         return dual_docs
 
 class DualVectorRetriever:
-    """Dual vector retriever: supports hybrid retrieval from code and summary vectors."""
+    """Dual vector retriever: supports dual retrieval from code and summary vectors."""
     
     def __init__(self, dual_docs: List[DualVectorDocument], embedder, top_k: int = 20):
         """
@@ -242,7 +230,7 @@ class DualVectorRetriever:
 
     def call(self, query_str: str) -> RetrieverOutputType:
         """
-        Performs hybrid retrieval.
+        Performs dual retrieval.
         
         Args:
             query_str: The query string.

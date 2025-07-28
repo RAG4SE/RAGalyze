@@ -3,7 +3,7 @@ from adalflow.core.types import Document, List
 from adalflow.components.data_process import TextSplitter
 import os
 from typing import List, Optional, Tuple, Union
-import logging
+from logger.logging_config import get_tqdm_compatible_logger
 import glob
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
@@ -19,13 +19,7 @@ from core.tools.embedder import get_embedder
 MAX_EMBEDDING_LENGTH = 1000000
 
 # Configure logging
-logger = logging.getLogger(__name__)
-
-
-from typing import Optional
-import logging
-
-logger = logging.getLogger(__name__)
+logger = get_tqdm_compatible_logger(__name__)
 
 def count_tokens(
     text: str,
@@ -478,47 +472,35 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
 
     return documents
 
-def prepare_data_pipeline(
-    force_recreate_db: bool = False,
-    embedding_cache_file_name: str = "default",
-    use_dual_vector: bool = False
-) -> Tuple[adal.Sequential, str]:
+def prepare_data_transformer(use_dual_vector: bool = False) -> Tuple[adal.Sequential, str]:
     """
     Creates and returns the data transformation pipeline.
 
     Returns:
-        Tuple[adal.Sequential, str]: The data transformation pipeline and the cache file name as the key of the transformer.
+        adal.Sequential: The data transformation pipeline
     """
     splitter = TextSplitter(**configs["text_splitter"])
     embedder_config = get_embedder_config()
     embedder = get_embedder()
     if use_dual_vector:
-        embedder_transformer = DualVectorToEmbeddings(
-            embedder=embedder,
-            force_recreate_db=force_recreate_db,
-            embedding_cache_file_name=embedding_cache_file_name
-        )
+        embedder_transformer = DualVectorToEmbeddings(embedder=embedder)
         logger.info("Using DualVectorToEmbeddings transformer.")
     elif embedder.__class__.__name__ == "HuggingfaceEmbedder":
         # HuggingFace can use larger batch sizes
         batch_size = embedder_config.get("batch_size", 100)
         embedder_transformer = HuggingfaceClientToEmbeddings(
-            embedder=embedder, 
-            force_recreate_db=force_recreate_db,
+            embedder=embedder,
             batch_size=batch_size,
-            embedding_cache_file_name=embedding_cache_file_name
         )
-        logger.info(f"Using HuggingFace embedder with batch size: {batch_size}, embedding_cache_file_name: {embedding_cache_file_name}")
+        logger.info(f"Using HuggingFace embedder with batch size: {batch_size}")
     elif embedder.__class__.__name__ == "DashScopeEmbedder":
         # DashScope API limits batch size to maximum of 10
         batch_size = min(embedder_config.get("batch_size", 10), 10)
         embedder_transformer = DashScopeToEmbeddings(
             embedder=embedder, 
-            batch_size=batch_size,
-            force_recreate_db=force_recreate_db,
-            embedding_cache_file_name=embedding_cache_file_name
+            batch_size=batch_size
         )
-        logger.info(f"Using DashScope specialized embedder with batch size: {batch_size}, embedding_cache_file_name: {embedding_cache_file_name} (API limit: ≤10)")
+        logger.info(f"Using DashScope specialized embedder with batch size: {batch_size} (API limit: ≤10)")
     else:
         raise ValueError(f"Unknown embedder type: {embedder.__class__.__name__}")
 
@@ -526,18 +508,13 @@ def prepare_data_pipeline(
         splitter, embedder_transformer
     )
 
-    assert hasattr(embedder_transformer, 'cache_path'), f"embedder_transformer {embedder_transformer.__class__.__name__} does not have a cache_path attribute"
-
-    return data_transformer, os.path.basename(embedder_transformer.cache_path).replace('.pkl', '')
+    return data_transformer
 
 def transform_documents_and_save_to_db(
     documents: List[Document],
     db_path: str,
-    force_recreate: bool = False,
-    embedding_cache_file_name: str = "default",
     use_dual_vector: bool = False,
     data_transformer: adal.Sequential = None,
-    data_transformer_key: str = None,
 ) -> LocalDB:
     """
     Transforms a list of documents and saves them to a local database.
@@ -545,23 +522,20 @@ def transform_documents_and_save_to_db(
     Args:
         documents (list): A list of `Document` objects.
         db_path (str): The path to the local database file.
-        embedding_cache_file_name (str): Repository name for cache file naming.
+
+    Returns:
+        LocalDB: The local database instance.
     """
-    if not data_transformer or not data_transformer_key:
-        data_transformer, data_transformer_key = prepare_data_pipeline(
-            force_recreate_db=force_recreate,
-            embedding_cache_file_name=embedding_cache_file_name,
-            use_dual_vector=use_dual_vector
-        )
+    data_transformer = prepare_data_transformer(use_dual_vector=use_dual_vector)
 
     # Save the documents to a local database
     db = LocalDB()
     # Build a relation from the key to the data transformer, required by adalflow.core.db
-    db.register_transformer(transformer=data_transformer, key=data_transformer_key)
+    db.register_transformer(transformer=data_transformer, key=os.path.basename(db_path))
     db.load(documents)
     # Suppose the data transformer is HuggingfaceClientToEmbeddings, then
     # this function will call the HuggingfaceClientToEmbeddings.__call__ function
-    db.transform(key=data_transformer_key)
+    db.transform(key=os.path.basename(db_path))
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     db.save_state(filepath=db_path)
     return db
@@ -571,25 +545,16 @@ class DatabaseManager:
     Manages the creation, loading, transformation, and persistence of LocalDB instances.
     """
 
-    def __init__(self, repo_path: str, use_dual_vector: bool = False):
+    def __init__(self, repo_path: str, use_dual_vector: bool = False, use_bm25: bool = False):
         self.db = None
         self.db_info = None
         self.data_transformer = None
-        self.data_transformer_key = None
-        self.embedding_cache_file_name = None
 
         self.repo_path = repo_path
         self.use_dual_vector = use_dual_vector
+        self.use_bm25 = use_bm25
 
     def _create_db_info(self) -> None:
-        """
-        Download and prepare all paths.
-        Paths:
-        ~/.adalflow/repos/{owner}_{repo_name}.pkl
-
-        Args:
-            repo_path (str): The local path of the repository
-        """
         logger.info(f"Preparing repo storage for {self.repo_path}...")
 
         try:
@@ -598,12 +563,12 @@ class DatabaseManager:
             os.makedirs(root_path, exist_ok=True)
 
             save_db_file = os.path.join(root_path, "databases", f"{self._prepare_embedding_cache_file_name()}.pkl")
+
             os.makedirs(os.path.dirname(save_db_file), exist_ok=True)
 
             self.db_info = {
-                "save_repo_dir": self.repo_path,
-                "save_db_file": save_db_file,
-                "data_transformer_key": self.data_transformer_key,
+                "repo_path": self.repo_path,
+                "db_file_path": save_db_file,
             }
             logger.info(f"DB info: {self.db_info}")
 
@@ -612,14 +577,14 @@ class DatabaseManager:
             raise
 
     def _prepare_embedding_cache_file_name(self):
-        if self.embedding_cache_file_name:
-            return self.embedding_cache_file_name
         # Extract repository name from path
         repo_name = os.path.abspath(self.repo_path.rstrip('/'))
         file_name = repo_name
         if self.use_dual_vector:
-            file_name += "_dual_vector"
-        self.embedding_cache_file_name = file_name
+            file_name += "-dual-vector"
+        if self.use_bm25:
+            file_name += "-bm25"
+        file_name = file_name.replace('/', '#')
         return file_name
 
     def prepare_database(self,
@@ -638,11 +603,7 @@ class DatabaseManager:
         Returns:
             List[Document]: List of Document objects
         """
-        self.data_transformer, self.data_transformer_key = prepare_data_pipeline(
-            force_recreate_db=force_recreate,
-            embedding_cache_file_name=self._prepare_embedding_cache_file_name(),
-            use_dual_vector=self.use_dual_vector
-        )
+        self.data_transformer = prepare_data_transformer(use_dual_vector=self.use_dual_vector)
         self._create_db_info()    
         return self.prepare_db_index(excluded_dirs=excluded_dirs, excluded_files=excluded_files,
                                    included_dirs=included_dirs, included_files=included_files, force_recreate=force_recreate)
@@ -662,11 +623,11 @@ class DatabaseManager:
             List[Document]: List of Document objects
         """
         # check the database
-        if self.db_info and os.path.exists(self.db_info["save_db_file"]) and not force_recreate:
+        if self.db_info and os.path.exists(self.db_info["db_file_path"]) and not force_recreate:
             logger.info("Loading existing database...")
             try:
-                self.db = LocalDB.load_state(self.db_info["save_db_file"])
-                documents = self.db.get_transformed_data(key=self.db_info["data_transformer_key"])
+                self.db = LocalDB.load_state(self.db_info["db_file_path"])
+                documents = self.db.get_transformed_data(key=os.path.basename(self.db_info["db_file_path"]))
                 if documents:
                     logger.info(f"Loaded {len(documents)} documents from existing database")
                     return documents
@@ -680,20 +641,18 @@ class DatabaseManager:
         # prepare the database
         logger.info("Creating new database...")
         documents = read_all_documents(
-            self.db_info["save_repo_dir"],
+            self.db_info["repo_path"],
             excluded_dirs=excluded_dirs,
             excluded_files=excluded_files,
             included_dirs=included_dirs,
             included_files=included_files,
         )
         self.db = transform_documents_and_save_to_db(
-            documents, self.db_info["save_db_file"],
-            force_recreate=force_recreate, embedding_cache_file_name=self._prepare_embedding_cache_file_name(),
+            documents, self.db_info["db_file_path"],
             use_dual_vector=self.use_dual_vector,
-            data_transformer=self.data_transformer,
-            data_transformer_key=self.data_transformer_key
+            data_transformer=self.data_transformer
         )
-        documents = self.db.get_transformed_data(key=self.data_transformer_key)
+        documents = self.db.get_transformed_data(key=os.path.basename(self.db_info["db_file_path"]))
         return documents
 
     def prepare_retriever(self, repo_path: str, type: str = "github", access_token: str = None):

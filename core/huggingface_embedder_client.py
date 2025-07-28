@@ -1,7 +1,7 @@
 """GPU-accelerated HuggingFace ModelClient."""
 
 import os
-import logging
+from logger.logging_config import get_tqdm_compatible_logger
 from typing import Dict, List, Any, Optional
 import numpy as np
 import torch
@@ -28,13 +28,12 @@ from adalflow.core.types import (
 import adalflow.core.functional as F
 
 # Configure logging
-from core.logging_config import setup_logging
+from logger.logging_config import setup_logging
 
 # # Disable tqdm progress bars
 # os.environ["TQDM_DISABLE"] = "1"
 
-setup_logging()
-log = logging.getLogger(__name__)
+log = get_tqdm_compatible_logger(__name__)
 
 class HuggingfaceClient(ModelClient):
     """A GPU-accelerated component wrapper for HuggingFace sentence-transformers models.
@@ -458,14 +457,13 @@ class HuggingfaceClientBatchEmbedder(DataComponent):
         embedding_cache_file_name (str, optional): Cache file naming. Defaults to "default".
     """
 
-    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500, embedding_cache_file_name: str = "default") -> None:
+    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500) -> None:
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
-        self.cache_path = f'./embedding_cache/{embedding_cache_file_name}_{self.embedder.__class__.__name__}_embeddings.pkl'
 
     def call(
-        self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}, force_recreate: bool = False
+        self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}
     ) -> BatchEmbedderOutputType:
         r"""Call the embedder with batching.
 
@@ -477,14 +475,6 @@ class HuggingfaceClientBatchEmbedder(DataComponent):
         Returns:
             BatchEmbedderOutputType: The output from the embedder.
         """
-
-        # Generate repository-specific cache file name
-        if not force_recreate and os.path.exists(self.cache_path):
-            with open(self.cache_path, 'rb') as f:
-                embeddings = pickle.load(f)
-                log.info(f"Loaded cached embeddings from: {self.cache_path}")
-            return embeddings
-
         if isinstance(input, str):
             input = [input]
         n = len(input)
@@ -498,11 +488,7 @@ class HuggingfaceClientBatchEmbedder(DataComponent):
                 input=batch_input, model_kwargs=model_kwargs
             )
             embeddings.append(batch_output)
-        if not os.path.exists('./embedding_cache'):
-            os.makedirs('./embedding_cache')
-        with open(self.cache_path, 'wb') as f:
-            pickle.dump(embeddings, f)
-            log.info(f"Saved embeddings cache to: {self.cache_path}")
+
         return embeddings
 
 
@@ -512,19 +498,17 @@ class HuggingfaceClientToEmbeddings(DataComponent):
     It operates on a copy of the input data, and does not modify the input data.
     """
 
-    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500, force_recreate_db: bool = False, embedding_cache_file_name: str = "default") -> None:
+    def __init__(self, embedder: HuggingfaceEmbedder, batch_size: int = 500) -> None:
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
-        self.batch_embedder = HuggingfaceClientBatchEmbedder(embedder=embedder, batch_size=batch_size, embedding_cache_file_name=embedding_cache_file_name)
-        self.force_recreate_db = force_recreate_db
-        self.cache_path = self.batch_embedder.cache_path
+        self.batch_embedder = HuggingfaceClientBatchEmbedder(embedder=embedder, batch_size=batch_size)
 
     def __call__(self, input: ToEmbeddingsInputType) -> ToEmbeddingsOutputType:
         output = deepcopy(input)
         # convert documents to a list of strings
         embedder_input: BatchEmbedderInputType = [chunk.text for chunk in output]
-        outputs: BatchEmbedderOutputType = self.batch_embedder(input=embedder_input, force_recreate=self.force_recreate_db)
+        outputs: BatchEmbedderOutputType = self.batch_embedder(input=embedder_input)
         # put them back to the original order along with its query
         for batch_idx, batch_output in tqdm(
             enumerate(outputs), desc="Adding embeddings to documents from batch"
