@@ -1,11 +1,12 @@
+from configs import get_embedder, configs
 from logger.logging_config import get_tqdm_compatible_logger
 import re
 from typing import List, Optional, Union, Dict, Any
 from rank_bm25 import BM25Okapi
 from adalflow.core.types import RetrieverOutput, Document
-from core.dual_vector import DualVectorDocument
-from core.dual_vector_pipeline import DualVectorRetriever
-from core.single_retriever import SingleVectorRetriever
+from rag.dual_vector import DualVectorDocument
+from rag.dual_vector_pipeline import DualVectorRetriever
+from rag.single_retriever import SingleVectorRetriever
 
 logger = get_tqdm_compatible_logger(__name__)
 
@@ -21,13 +22,6 @@ class HybridRetriever:
     
     def __init__(self, 
                  documents: List[Union[Document, DualVectorDocument]], 
-                 embedder,
-                 use_bm25: bool = True,
-                 bm25_top_k: int = 100,
-                 bm25_k1: float = 1.2,
-                 bm25_b: float = 0.75,
-                 top_k: int = 20,
-                 use_dual_vector: bool = False,
                  **kwargs):
         """
         Initialize the hybrid retriever.
@@ -44,27 +38,37 @@ class HybridRetriever:
             **kwargs: Additional arguments for FAISS retriever
         """
         self.documents = documents
-        self.embedder = embedder
-        self.use_bm25 = use_bm25
-        self.bm25_top_k = bm25_top_k
-        self.bm25_k1 = bm25_k1
-        self.bm25_b = bm25_b
-        self.top_k = top_k
-        self.use_dual_vector = use_dual_vector
-
+        self.embedder = get_embedder()
+        
+        embedder_config = configs["knowledge"]
+        self.use_dual_vector = embedder_config["sketch_filling"]
+        assert "hybrid" in embedder_config, "embedder_config must contain hybrid section"
+        assert "enabled" in embedder_config["hybrid"], "hybrid_config must contain enabled section"
+        self.use_bm25 = embedder_config["hybrid"]["enabled"]
+        assert "bm25" in embedder_config["hybrid"], "hybrid_config must contain bm25 section"
+        bm25_config = embedder_config["hybrid"]["bm25"]
+        assert (bm25_config is None) or ('top_k' in bm25_config and 'k1' in bm25_config and 'b' in bm25_config), "bm25_config must contain top_k, k1, and b parameters"
+        self.bm25_top_k = bm25_config["top_k"]
+        self.bm25_k1 = bm25_config["k1"]
+        self.bm25_b = bm25_config["b"]
+        assert "retriever" in embedder_config, "embedder_config must contain retriever section"
+        retriever_config = embedder_config["retriever"]
+        assert "top_k" in retriever_config, "retriever_config must contain top_k section"
+        self.top_k = retriever_config["top_k"]
+        
         # Initialize BM25 if enabled
         if self.use_bm25:
-            self._initialize_bm25(bm25_k1, bm25_b)
+            self._initialize_bm25()
             # FAISS retriever will be initialized later with filtered documents
             self.faiss_retriever = None
         else:
             # Initialize FAISS retriever with all documents when BM25 is disabled
             self._initialize_faiss_retriever(**kwargs)
         
-        logger.info(f"Hybrid retriever initialized with BM25={'enabled' if use_bm25 else 'disabled'}, "
-                   f"dual_vector={'enabled' if use_dual_vector else 'disabled'}")
+        logger.info(f"Hybrid retriever initialized with BM25={'enabled' if self.use_bm25 else 'disabled'}, "
+                   f"dual_vector={'enabled' if self.use_dual_vector else 'disabled'}")
     
-    def _initialize_bm25(self, k1: float, b: float):
+    def _initialize_bm25(self):
         """Initialize BM25 index with document texts."""
         try:
             # Extract text content from documents for BM25 indexing
@@ -81,7 +85,7 @@ class HybridRetriever:
                 corpus.append(tokens)
             
             # Initialize BM25 with custom parameters
-            self.bm25 = BM25Okapi(corpus, k1=k1, b=b)
+            self.bm25 = BM25Okapi(corpus, k1=self.bm25_k1, b=self.bm25_b)
             logger.info(f"BM25 index created with {len(corpus)} documents")
             
         except Exception as e:
@@ -91,27 +95,22 @@ class HybridRetriever:
     
     def _initialize_faiss_retriever(self, **kwargs):
         """Initialize FAISS retriever based on vector type."""
-        try:
-            if self.use_dual_vector:
-                self.faiss_retriever = DualVectorRetriever(
-                    dual_docs=self.documents,
-                    embedder=self.embedder,
-                    top_k=self.top_k,
-                    **kwargs
-                )
-            else:
-                self.faiss_retriever = SingleVectorRetriever(
-                    documents=self.documents,
-                    embedder=self.embedder,
-                    top_k=self.top_k,
-                    document_map_func=lambda doc: doc.vector,
-                    **kwargs
-                )
-            logger.info(f"FAISS retriever initialized successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize FAISS retriever: {e}")
-            raise
+        if self.use_dual_vector:
+            self.faiss_retriever = DualVectorRetriever(
+                dual_docs=self.documents,
+                embedder=self.embedder,
+                top_k=self.top_k,
+                **kwargs
+            )
+        else:
+            self.faiss_retriever = SingleVectorRetriever(
+                documents=self.documents,
+                embedder=self.embedder,
+                top_k=self.top_k,
+                document_map_func=lambda doc: doc.vector,
+                **kwargs
+            )
+        logger.info(f"FAISS retriever initialized successfully")
     
     def _tokenize_text(self, text: str) -> List[str]:
         """Simple tokenization for BM25 indexing."""
@@ -145,7 +144,7 @@ class HybridRetriever:
             
         except Exception as e:
             logger.error(f"BM25 filtering failed: {e}, falling back to all documents")
-            return list(range(len(self.documents)))
+            raise
     
     def call(self, query: str, top_k: Optional[int] = None) -> List[RetrieverOutput]:
         """Perform hybrid retrieval combining BM25 and FAISS."""
@@ -177,6 +176,7 @@ class HybridRetriever:
                 
         except Exception as e:
             logger.error(f"Hybrid retrieval failed: {e}, falling back to pure FAISS search")
+            raise
             # Fall back to pure FAISS search - ensure retriever is initialized
             if self.faiss_retriever is None:
                 self._initialize_faiss_retriever()

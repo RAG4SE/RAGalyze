@@ -67,22 +67,17 @@ def get_first_message_content(completion: ChatCompletion) -> str:
     log.info(f"🔍 get_first_message_content called with: {type(completion)}")
     log.debug(f"raw completion: {completion}")
     
-    try:
-        if hasattr(completion, 'choices') and len(completion.choices) > 0:
-            choice = completion.choices[0]
-            if hasattr(choice, 'message') and hasattr(choice.message, 'content'):
-                content = choice.message.content
-                log.info(f"✅ Successfully extracted content: {type(content)}, length: {len(content) if content else 0}")
-                return content
-            else:
-                log.error("❌ Choice doesn't have message.content")
-                return str(completion)
+    if hasattr(completion, 'choices') and len(completion.choices) > 0:
+        choice = completion.choices[0]
+        if hasattr(choice, 'message') and hasattr(choice.message, 'content'):
+            content = choice.message.content
+            log.info(f"✅ Successfully extracted content: {type(content)}, length: {len(content) if content else 0}")
+            return content
         else:
-            log.error("❌ Completion doesn't have choices")
+            log.error("❌ Choice doesn't have message.content")
             return str(completion)
-    except Exception as e:
-        log.error(f"❌ Error in get_first_message_content: {e}")
-        return str(completion)
+    else:
+        raise ValueError("❌ Completion doesn't have choices")
 
 
 def parse_stream_response(completion: ChatCompletionChunk) -> str:
@@ -124,6 +119,7 @@ class DashScopeClient(ModelClient):
         env_base_url_name: str = "DASHSCOPE_BASE_URL",
         env_api_key_name: str = "DASHSCOPE_API_KEY",
         env_workspace_id_name: str = "DASHSCOPE_WORKSPACE_ID",
+        **kwargs
     ):
         super().__init__()
         self._api_key = api_key
@@ -155,7 +151,7 @@ class DashScopeClient(ModelClient):
         
         if not api_key:
             raise ValueError(
-                f"Environment variable {self._env_api_key_name} must be set"
+                f"clients/dashscope_client.py:Environment variable {self._env_api_key_name} must be set"
             )
         
         if not workspace_id:
@@ -196,74 +192,71 @@ class DashScopeClient(ModelClient):
         completion: Union[ChatCompletion, Generator[ChatCompletionChunk, None, None]],
     ) -> "GeneratorOutput":
         """Parse the completion response to a GeneratorOutput."""
-        try:
-            # If the completion is already a GeneratorOutput, return it directly (prevent recursion)
-            if isinstance(completion, GeneratorOutput):
-                return completion
-            
-            # Check if it's a ChatCompletion object (non-streaming response)
-            if hasattr(completion, 'choices') and hasattr(completion, 'usage'):
-                # ALWAYS extract the string content directly
-                try:
-                    # Direct extraction of message content
-                    if (hasattr(completion, 'choices') and 
-                        len(completion.choices) > 0 and 
-                        hasattr(completion.choices[0], 'message') and 
-                        hasattr(completion.choices[0].message, 'content')):
-                        
-                        content = completion.choices[0].message.content
-                        if isinstance(content, str):
-                            parsed_data = content
-                        else:
-                            parsed_data = str(content)
+        # If the completion is already a GeneratorOutput, return it directly (prevent recursion)
+        if isinstance(completion, GeneratorOutput):
+            return completion
+        
+        # Check if it's a ChatCompletion object (non-streaming response)
+        if hasattr(completion, 'choices') and hasattr(completion, 'usage'):
+            # ALWAYS extract the string content directly
+            try:
+                # Direct extraction of message content
+                if (hasattr(completion, 'choices') and 
+                    len(completion.choices) > 0 and 
+                    hasattr(completion.choices[0], 'message') and 
+                    hasattr(completion.choices[0].message, 'content')):
+                    
+                    content = completion.choices[0].message.content
+                    if isinstance(content, str):
+                        parsed_data = content
                     else:
-                        # Fallback: convert entire completion to string
-                        parsed_data = str(completion)
-                        
-                except Exception as e:
-                    # Ultimate fallback
+                        parsed_data = str(content)
+                else:
+                    # Fallback: convert entire completion to string
                     parsed_data = str(completion)
-                
-                return GeneratorOutput(
-                    data=parsed_data,
-                    usage=CompletionUsage(
-                        completion_tokens=completion.usage.completion_tokens,
-                        prompt_tokens=completion.usage.prompt_tokens,
-                        total_tokens=completion.usage.total_tokens,
-                    ),
-                    raw_response=str(completion),
+                    
+            except Exception as e:
+                # Ultimate fallback
+                parsed_data = str(completion)
+                raise
+            
+            return GeneratorOutput(
+                data=parsed_data,
+                usage=CompletionUsage(
+                    completion_tokens=completion.usage.completion_tokens,
+                    prompt_tokens=completion.usage.prompt_tokens,
+                    total_tokens=completion.usage.total_tokens,
+                ),
+                raw_response=str(completion),
+            )
+        else:
+            # Handle streaming response - collect all content parts into a single string
+            content_parts = []
+            usage_info = None
+            for chunk in completion:
+                if chunk.choices[0].delta.content:
+                    content_parts.append(chunk.choices[0].delta.content)
+                # Try to get usage info from the last chunk
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    usage_info = chunk.usage
+            
+            # Join all content parts into a single string
+            full_content = ''.join(content_parts)
+            
+            # Create usage object
+            usage = None
+            if usage_info:
+                usage = CompletionUsage(
+                    completion_tokens=usage_info.completion_tokens,
+                    prompt_tokens=usage_info.prompt_tokens,
+                    total_tokens=usage_info.total_tokens,
                 )
-            else:
-                # Handle streaming response - collect all content parts into a single string
-                content_parts = []
-                usage_info = None
-                for chunk in completion:
-                    if chunk.choices[0].delta.content:
-                        content_parts.append(chunk.choices[0].delta.content)
-                    # Try to get usage info from the last chunk
-                    if hasattr(chunk, 'usage') and chunk.usage:
-                        usage_info = chunk.usage
-                
-                # Join all content parts into a single string
-                full_content = ''.join(content_parts)
-                
-                # Create usage object
-                usage = None
-                if usage_info:
-                    usage = CompletionUsage(
-                        completion_tokens=usage_info.completion_tokens,
-                        prompt_tokens=usage_info.prompt_tokens,
-                        total_tokens=usage_info.total_tokens,
-                    )
-                
-                return GeneratorOutput(
-                    data=full_content,
-                    usage=usage,
-                    raw_response="streaming"
-                )
-        except Exception as e:
-            log.error(f"Error parsing completion: {e}")
-            raise
+            
+            return GeneratorOutput(
+                data=full_content,
+                usage=usage,
+                raw_response="streaming"
+            )
 
     def track_completion_usage(
         self,
@@ -288,12 +281,13 @@ class DashScopeClient(ModelClient):
         try:
             result = parse_embedding_response(response)
             if not result.data:
-                log.warning(f"🔍 No embedding data found in result")
+                log.error(f"🔍 No embedding data found in result")
+                raise
             return result
         except Exception as e:
-            log.error(f"🔍 Error parsing DashScope embedding response: {e}")
-            log.error(f"🔍 Raw response details: {repr(response)}")
-            return EmbedderOutput(data=[], error=str(e), raw_response=response)
+              log.error(f"🔍 Error parsing DashScope embedding response: {e}")
+              log.error(f"🔍 Raw response details: {repr(response)}")
+              raise
 
     def convert_inputs_to_api_kwargs(
         self,
@@ -311,7 +305,7 @@ class DashScopeClient(ModelClient):
             elif isinstance(input, list):
                 messages = input
             else:
-                raise ValueError(f"Unsupported input type: {type(input)}")
+                raise ValueError(f"clients/dashscope_client.py:Unsupported input type: {type(input)}")
             
             api_kwargs = {
                 "messages": messages,
@@ -353,10 +347,18 @@ class DashScopeClient(ModelClient):
                 # Convert to string as fallback
                 processed_input = str(input)
             
+            # Filter out batch_size and other unsupported parameters for DashScope API
+            filtered_kwargs = {k: v for k, v in final_model_kwargs.items() 
+                             if k not in ['batch_size']}
+            
             api_kwargs = {
                 "input": processed_input,
-                **final_model_kwargs
+                **filtered_kwargs
             }
+            
+            # Ensure model parameter is included for DashScope API
+            if "model" not in api_kwargs and hasattr(self, 'model'):
+                api_kwargs["model"] = self.model
             
             # Add workspace ID to headers if available
             workspace_id = getattr(self.sync_client, '_workspace_id', None) or getattr(self.async_client, '_workspace_id', None)
@@ -367,7 +369,7 @@ class DashScopeClient(ModelClient):
             
             return api_kwargs
         else:
-            raise ValueError(f"model_type {model_type} is not supported")
+            raise ValueError(f"clients/dashscope_client.py:model_type {model_type} is not supported")
 
     @backoff.on_exception(
         backoff.expo,
@@ -380,7 +382,7 @@ class DashScopeClient(ModelClient):
         ),
         max_time=5,
     )
-    def call(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED):
+    def call(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED, **kwargs):
         """Call the Dashscope API."""
         if model_type == ModelType.LLM:
             if not api_kwargs.get("stream", False):
@@ -430,43 +432,38 @@ class DashScopeClient(ModelClient):
             filtered_api_kwargs = api_kwargs.copy()
             filtered_api_kwargs["input"] = valid_texts
             
-            try:
-                response = self.sync_client.embeddings.create(**filtered_api_kwargs)
-                result = self.parse_embedding_response(response)
+            response = self.sync_client.embeddings.create(**filtered_api_kwargs)
+            result = self.parse_embedding_response(response)
+            
+            # If we filtered texts, we need to create embeddings for the original indices
+            if len(valid_texts) != len(texts):
+                # Get the correct embedding dimension from the first valid embedding
+                embedding_dim = None  # Must be determined from a successful response
+                if result.data and len(result.data) > 0 and hasattr(result.data[0], 'embedding'):
+                    embedding_dim = len(result.data[0].embedding)
                 
-                # If we filtered texts, we need to create embeddings for the original indices
-                if len(valid_texts) != len(texts):
-                    # Get the correct embedding dimension from the first valid embedding
-                    embedding_dim = None  # Must be determined from a successful response
-                    if result.data and len(result.data) > 0 and hasattr(result.data[0], 'embedding'):
-                        embedding_dim = len(result.data[0].embedding)
-                    
-                    final_data = []
-                    valid_idx = 0
-                    for i in range(len(texts)):
-                        if i in valid_indices:
-                            # Use the embedding from valid texts
-                            final_data.append(result.data[valid_idx])
-                            valid_idx += 1
-                        else:
-                            # Create zero embedding for filtered texts with correct dimension
-                            log.warning(f"🔍 Creating zero embedding for filtered text at index {i}")
-                            final_data.append(Embedding(
-                                embedding=[0.0] * embedding_dim,  # Use correct embedding dimension
-                                index=i
-                            ))
-                    
-                    result = EmbedderOutput(
-                        data=final_data,
-                        error=None,
-                        raw_response=result.raw_response
-                    )
+                final_data = []
+                valid_idx = 0
+                for i in range(len(texts)):
+                    if i in valid_indices:
+                        # Use the embedding from valid texts
+                        final_data.append(result.data[valid_idx])
+                        valid_idx += 1
+                    else:
+                        # Create zero embedding for filtered texts with correct dimension
+                        log.warning(f"🔍 Creating zero embedding for filtered text at index {i}")
+                        final_data.append(Embedding(
+                            embedding=[0.0] * embedding_dim,  # Use correct embedding dimension
+                            index=i
+                        ))
                 
-                return result
-                
-            except Exception as e:
-                log.error(f"🔍 DashScope API call failed: {e}")
-                return EmbedderOutput(data=[], error=str(e), raw_response=None)
+                result = EmbedderOutput(
+                    data=final_data,
+                    error=None,
+                    raw_response=result.raw_response
+                )
+            
+            return result
         else:
             raise ValueError(f"model_type {model_type} is not supported")
 
@@ -576,8 +573,8 @@ class DashScopeClient(ModelClient):
                 return result
                 
             except Exception as e:
-                log.error(f"🔍 DashScope async API call failed: {e}")
-                return EmbedderOutput(data=[], error=str(e), raw_response=None)
+                  log.error(f"🔍 DashScope async API call failed: {e}")
+                  raise
         else:
             raise ValueError(f"model_type {model_type} is not supported")
 
@@ -643,7 +640,7 @@ class DashScopeEmbedder(DataComponent):
         super().__init__(model_kwargs=model_kwargs)
         if not isinstance(model_kwargs, Dict):
             raise TypeError(
-                f"{type(self).__name__} requires a dictionary for model_kwargs, not a string"
+                f"clients/dashscope_client.py:{type(self).__name__} requires a dictionary for model_kwargs, not a string"
             )
         self.model_kwargs = model_kwargs.copy()
         self.model_client = DashScopeClient()
@@ -660,13 +657,10 @@ class DashScopeEmbedder(DataComponent):
             model_kwargs=self._compose_model_kwargs(**model_kwargs),
             model_type=self.model_type,
         )
-        try:
-            output = self.model_client.call(
-                api_kwargs=api_kwargs, model_type=self.model_type
-            )
-        except Exception as e:
-            log.error(f"🤡 Error calling the DashScope model: {e}")
-            output = EmbedderOutput(error=str(e))
+        output = self.model_client.call(
+            api_kwargs=api_kwargs, model_type=self.model_type
+        )
+
         return output
 
     async def acall(
@@ -687,8 +681,9 @@ class DashScopeEmbedder(DataComponent):
             )
             output = self.model_client.parse_embedding_response(response)
         except Exception as e:
-            log.error(f"Error calling the DashScope model: {e}")
-            output = EmbedderOutput(error=str(e))
+              log.error(f"Error calling the DashScope model: {e}")
+              output = EmbedderOutput(error=str(e))
+              raise
 
         output.input = [input] if isinstance(input, str) else input
         log.debug(f"Output from {self.__class__.__name__}: {output}")
@@ -754,14 +749,15 @@ class DashScopeBatchEmbedder(DataComponent):
                     log.warning(f"Batch {i//self.batch_size + 1} returned no embedding data")
                     
             except Exception as e:
-                log.error(f"Batch {i//self.batch_size + 1} processing exception: {e}")
-                # Create error embedding output
-                error_output = EmbedderOutput(
-                    data=[],
-                    error=str(e),
-                    raw_response=None
-                )
-                embeddings.append(error_output)
+                  log.error(f"Batch {i//self.batch_size + 1} processing exception: {e}")
+                  # Create error embedding output
+                  error_output = EmbedderOutput(
+                      data=[],
+                      error=str(e),
+                      raw_response=None
+                  )
+                  embeddings.append(error_output)
+                  raise
         
         log.info(f"DashScope batch embedding completed, processed {len(embeddings)} batches")
         

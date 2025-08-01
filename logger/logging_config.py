@@ -53,7 +53,7 @@ def setup_logging(format: str = None, log_name: str = None):
     resolved_path = log_file_path.resolve()
     if not str(resolved_path).startswith(str(log_dir_resolved) + os.sep):
         raise ValueError(
-            f"LOG_FILE_PATH '{log_file_path}' is outside the trusted log directory '{log_dir_resolved}'"
+            f"logger/logging_config.py:LOG_FILE_PATH '{log_file_path}' is outside the trusted log directory '{log_dir_resolved}'"
         )
     # Ensure parent dirs exist for the log file
     resolved_path.parent.mkdir(parents=True, exist_ok=True)

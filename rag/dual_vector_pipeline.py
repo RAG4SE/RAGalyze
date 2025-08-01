@@ -1,13 +1,14 @@
 import os
+import adalflow as adal
+from configs import configs
 from logger.logging_config import get_tqdm_compatible_logger
 import logging
 from typing import List, Optional, Union
-from core.dual_vector import DualVectorDocument
+from rag.dual_vector import DualVectorDocument
 
 from adalflow.core.types import Document, ModelType, RetrieverOutput, RetrieverOutputType
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
-from core.dashscope_client import DashScopeClient
-from core.config import configs, get_code_understanding_config
+from clients.dashscope_client import DashScopeClient
 from adalflow.core.component import DataComponent
 
 logger = get_tqdm_compatible_logger(__name__)
@@ -32,49 +33,43 @@ class CodeUnderstandingGenerator:
     """
     Uses the Dashscope model to generate natural language summaries for code.
     """
-    def __init__(self, provider=None, model=None):
+    def __init__(self, **kwargs):
         """
         Initializes the code understanding generator.
-        
-        Args:
-            provider (str): Provider name. If None, uses default from config.
-            model (str): Model name. If None, uses default for the provider.
+
         """
-        # Get configuration using the centralized function
-        config = get_code_understanding_config(provider, model)
-        
-        # Currently only support dashscope
-        assert config["provider"] == "dashscope", f"Currently only 'dashscope' provider is supported, got '{config['provider']}'"
-        
-        # Extract configuration
-        self.provider = config["provider"]
-        self.model = config["model"]
-        model_config = config["model_config"]
-        
-        # Set model parameters
-        self.temperature = model_config.get("temperature", 0.7)
-        self.top_p = model_config.get("top_p", 0.8)
-        self.max_tokens = model_config.get("max_tokens", 2048)
+        code_understanding_generator_config = configs["knowledge"]["code_understanding"]
+        assert 'model' in code_understanding_generator_config, f"rag/dual_vector_pipeline.py:model not found in code_understanding_generator_config"
+        self.model = code_understanding_generator_config['model']
+        assert 'model_client' in code_understanding_generator_config, f"rag/dual_vector_pipeline.py:model_client not found in code_understanding_generator_config"
+        model_client = code_understanding_generator_config['model_client']
+        # Initialize client
         
         # Get API configuration from environment
         api_key = os.environ.get('DASHSCOPE_API_KEY')
         if not api_key:
             raise ValueError("DASHSCOPE_API_KEY environment variable not set")
         
-        # workspace_id = os.environ.get('DASHSCOPE_WORKSPACE_ID')
-        
-        # Initialize client
-        model_client_class = config["model_client"]
-        if model_client_class == DashScopeClient:
-            self.client = model_client_class(
+        if model_client == DashScopeClient:
+            self.client = model_client(
                 api_key=api_key,
                 # workspace_id=workspace_id
             )
         else:
-            raise ValueError(f"Unsupported client class: {model_client_class}")
+            raise ValueError(f"rag/dual_vector_pipeline.py:Unsupported client class: {model_client.__class__.name}")
         
-        logger.info(f"CodeUnderstandingGenerator initialized with provider: {self.provider}, model: {self.model}")
-
+        # Extract configuration
+        if 'model_kwargs' in code_understanding_generator_config:
+            self.model_kwargs = code_understanding_generator_config['model_kwargs']
+        else:
+            self.model_kwargs = {}
+        
+        # Get API configuration from environment
+        api_key = os.environ.get('DASHSCOPE_API_KEY')
+        if not api_key:
+            raise ValueError("rag/dual_vector_pipeline.py:DASHSCOPE_API_KEY environment variable not set")
+        
+        
     def generate_code_understanding(self, code: str, file_path: Optional[str] = None) -> Union[str, None]:
         """
         Generates a summary for the given code snippet.
@@ -96,9 +91,7 @@ class CodeUnderstandingGenerator:
                         {"role": "system", "content": CODE_UNDERSTANDING_SYSTEM_PROMPT},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": self.temperature,
-                    "top_p": self.top_p,
-                    "max_tokens": self.max_tokens
+                    **self.model_kwargs
                 },
                 model_type=ModelType.LLM
             )
@@ -118,10 +111,17 @@ class DualVectorToEmbeddings(DataComponent):
     A data component that transforms documents into dual-vector embeddings,
     including both code and understanding vectors.
     """
-    def __init__(self, embedder):
+    def __init__(self, embedder: adal.Embedder, generator: CodeUnderstandingGenerator):
+        """
+        Initialize the DualVectorToEmbeddings component.
+
+        Args:
+            embedder: the embedder instance
+            generator: the code understanding generator instance
+        """
         super().__init__()
         self.embedder = embedder
-        self.code_generator = CodeUnderstandingGenerator()
+        self.code_generator = generator
 
     def __call__(self, documents: List[Document]) -> List[DualVectorDocument]:
         """
@@ -135,7 +135,7 @@ class DualVectorToEmbeddings(DataComponent):
         for doc in tqdm(documents, desc="Generating dual-vector embeddings"):
             code_embedding_result = self.embedder.call(doc.text)
             code_vector = code_embedding_result.data[0].embedding if not code_embedding_result.error else []
-            assert 'is_code' in doc.meta_data, f'No `is_code` key in meta_data: {doc.meta_data}'
+            assert 'is_code' in doc.meta_data, f'rag/dual_vector_pipeline.py:No `is_code` key in meta_data: {doc.meta_data}'
             if not doc.meta_data.get('is_code'):
                 understanding_text = ''
                 # The summary vector is all zero when the understanding text is empty
@@ -202,7 +202,7 @@ class DualVectorRetriever:
             code_docs.append(faiss_doc)
 
         self.code_retriever = FAISSRetriever(
-            **configs["retriever"],
+            top_k=self.top_k,
             embedder=self.embedder,
             documents=code_docs,
             document_map_func=lambda doc: doc.vector,
@@ -221,7 +221,7 @@ class DualVectorRetriever:
             understanding_docs.append(faiss_doc)
 
         self.understanding_retriever = FAISSRetriever(
-            **configs["retriever"],
+            top_k=self.top_k,
             embedder=self.embedder,
             documents=understanding_docs,
             document_map_func=lambda doc: doc.vector,

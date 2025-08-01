@@ -7,13 +7,11 @@ from logger.logging_config import get_tqdm_compatible_logger
 import glob
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
-from core.config import configs, DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES
-from core.dual_vector_pipeline import DualVectorDocument
-from core.config import get_embedder_config
-from core.huggingface_embedder_client import HuggingfaceClientToEmbeddings
-from core.dashscope_client import DashScopeToEmbeddings
-from core.dual_vector_pipeline import DualVectorToEmbeddings
-from core.tools.embedder import get_embedder
+from rag.dual_vector_pipeline import DualVectorDocument
+from clients.huggingface_embedder_client import HuggingfaceClientToEmbeddings
+from clients.dashscope_client import DashScopeToEmbeddings
+from rag.dual_vector_pipeline import DualVectorToEmbeddings, CodeUnderstandingGenerator
+from configs import get_embedder, configs
 
 # The setting is from the observation that the maximum length of Solidity compiler's files is 919974
 MAX_EMBEDDING_LENGTH = 1000000
@@ -118,7 +116,8 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
                 return None, "binary_file_non_printable"
     
     except (IOError, OSError) as e:
-        return None, f"file_access_error: {e}"
+        logger.error(f"File access error for {file_path}: {e}")
+        raise
     
     # Try different encodings in order of preference
     encodings_to_try = [
@@ -167,6 +166,7 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
             logger.debug(f"Failed to read {file_path} with {encoding}: {e}")
             continue
         except (IOError, OSError) as e:
+            logger.error(f"File error for {file_path}: {e}")
             return None, f"file_error: {e}"
     
     # If all encodings failed, try one more time with errors='replace'
@@ -177,55 +177,28 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
                 logger.warning(f"Read {file_path} with character replacement (some characters may be corrupted)")
                 return content, "success_utf8_with_replacement"
     except Exception as e:
-        logger.debug(f"Final fallback failed for {file_path}: {e}")
+        logger.error(f"Final fallback failed for {file_path}: {e}")
     
     return None, "all_encodings_failed"
 
-def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                      included_dirs: List[str] = None, included_files: List[str] = None,
-                      code_extensions: List[str] = None, doc_extensions: List[str] = None):
+def read_all_documents(path: str):
     """
     Recursively reads all documents in a directory and its subdirectories.
 
     Args:
         path (str): The root directory path.
-        excluded_dirs (List[str], optional): List of directories to exclude from processing.
-            Overrides the default configuration if provided.
-        excluded_files (List[str], optional): List of file patterns to exclude from processing.
-            Overrides the default configuration if provided.
-        included_dirs (List[str], optional): List of directories to include exclusively.
-            When provided, only files in these directories will be processed.
-        included_files (List[str], optional): List of file patterns to include exclusively.
-            When provided, only files matching these patterns will be processed.
-        code_extensions (List[str], optional): List of code file extensions to process.
-            Overrides the default configuration if provided.
-        doc_extensions (List[str], optional): List of documentation file extensions to process.
-            Overrides the default configuration if provided.
 
     Returns:
         list: A list of Document objects with metadata.
     """
     documents = []
-    print(code_extensions)
-    print(doc_extensions)
+    included_dirs = configs['repo']['file_filters']['included_dirs']
+    included_files = configs['repo']['file_filters']['included_files']
+    excluded_dirs = configs['repo']['file_filters']['excluded_dirs']
+    excluded_files = configs['repo']['file_filters']['excluded_files']
+    code_extensions = configs['repo']['file_extensions']['code_extensions']
+    doc_extensions = configs['repo']['file_extensions']['doc_extensions']
     
-    # Get file extensions from configuration or use provided parameters
-    if code_extensions is None:
-        code_extensions = configs.get("file_extensions", {}).get("code_extensions", [
-            # Default fallback extensions if config is not available
-            ".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp", ".go", ".rs",
-            ".jsx", ".tsx", ".html", ".css", ".php", ".swift", ".cs", ".sol"
-        ])
-    
-    if doc_extensions is None:
-        doc_extensions = configs.get("file_extensions", {}).get("doc_extensions", [
-            # Default fallback extensions if config is not available
-            ".md", ".txt", ".rst", ".json", ".yaml", ".yml"
-        ])
-    
-    logger.info(f"Processing {len(code_extensions)} code extensions: {code_extensions}")
-    logger.info(f"Processing {len(doc_extensions)} doc extensions: {doc_extensions}")
-
     # Determine filtering mode: inclusion or exclusion
     use_inclusion_mode = (included_dirs is not None and len(included_dirs) > 0) or (included_files is not None and len(included_files) > 0)
 
@@ -244,28 +217,7 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
         excluded_dirs = []
         excluded_files = []
     else:
-        # Exclusion mode: use default exclusions plus any additional ones
-        final_excluded_dirs = set(DEFAULT_EXCLUDED_DIRS)
-        final_excluded_files = set(DEFAULT_EXCLUDED_FILES)
 
-        # Add any additional excluded directories from config
-        if "file_filters" in configs and "excluded_dirs" in configs["file_filters"]:
-            final_excluded_dirs.update(configs["file_filters"]["excluded_dirs"])
-
-        # Add any additional excluded files from config
-        if "file_filters" in configs and "excluded_files" in configs["file_filters"]:
-            final_excluded_files.update(configs["file_filters"]["excluded_files"])
-
-        # Add any explicitly provided excluded directories and files
-        if excluded_dirs is not None:
-            final_excluded_dirs.update(excluded_dirs)
-
-        if excluded_files is not None:
-            final_excluded_files.update(excluded_files)
-
-        # Convert back to lists for compatibility
-        excluded_dirs = list(final_excluded_dirs)
-        excluded_files = list(final_excluded_files)
         included_dirs = []
         included_files = []
 
@@ -368,36 +320,34 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
                     logger.warning(f"Skipping file {relative_path}: {status}")
                 continue
             
-            try:
-                relative_path = os.path.relpath(file_path, path)
+            relative_path = os.path.relpath(file_path, path)
 
-                # Determine if this is an implementation file
-                is_implementation = (
-                    not relative_path.startswith("test_")
-                    and not relative_path.startswith("app_")
-                    and not relative_path.startswith("build")
-                    and "test" not in relative_path.lower()
-                )
+            # Determine if this is an implementation file
+            is_implementation = (
+                not relative_path.startswith("test_")
+                and not relative_path.startswith("app_")
+                and not relative_path.startswith("build")
+                and "test" not in relative_path.lower()
+            )
 
-                # Check token count
-                if len(content) > MAX_EMBEDDING_LENGTH:
-                    logger.warning(f"Skipping large file {relative_path}: Token count ({len(content)}) exceeds limit")
-                    continue
+            # Check token count
+            if len(content) > MAX_EMBEDDING_LENGTH:
+                logger.warning(f"Skipping large file {relative_path}: Token count ({len(content)}) exceeds limit")
+                continue
 
-                doc = Document(
-                    text=content,
-                    meta_data={
-                        "file_path": relative_path,
-                        "type": ext[1:],
-                        "is_code": True,
-                        "is_implementation": is_implementation,
-                        "title": relative_path,
-                        "encoding_status": status,  # Track how file was read
-                    },
-                )
-                documents.append(doc)
-            except Exception as e:
-                logger.error(f"Error processing {file_path}: {e}")
+            doc = Document(
+                text=content,
+                meta_data={
+                    "file_path": relative_path,
+                    "type": ext[1:],
+                    "is_code": True,
+                    "is_implementation": is_implementation,
+                    "title": relative_path,
+                    "encoding_status": status,  # Track how file was read
+                },
+            )
+            documents.append(doc)
+    
     # Then process documentation files
     for ext in doc_extensions:
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
@@ -449,22 +399,26 @@ def read_all_documents(path: str, excluded_dirs: List[str] = None, excluded_file
 
     return documents
 
-def prepare_data_transformer(use_dual_vector: bool = False) -> Tuple[adal.Sequential, str]:
+def prepare_data_transformer() -> Tuple[adal.Sequential, str]:
     """
     Creates and returns the data transformation pipeline.
 
     Returns:
         adal.Sequential: The data transformation pipeline
     """
-    splitter = TextSplitter(**configs["text_splitter"])
-    embedder_config = get_embedder_config()
+    text_splitter_config = configs["knowledge"]['text_splitter']
+    use_dual_vector = configs["knowledge"]['sketch_filling']
+    code_understanding_config = configs["knowledge"]['code_understanding']
+    splitter = TextSplitter(**text_splitter_config)
+    knowledge_config = configs["knowledge"]['embedder']['model_kwargs']
     embedder = get_embedder()
     if use_dual_vector:
-        embedder_transformer = DualVectorToEmbeddings(embedder=embedder)
+        code_understanding_generator = CodeUnderstandingGenerator(**code_understanding_config)
+        embedder_transformer = DualVectorToEmbeddings(embedder=embedder, generator=code_understanding_generator)
         logger.info("Using DualVectorToEmbeddings transformer.")
     elif embedder.__class__.__name__ == "HuggingfaceEmbedder":
         # HuggingFace can use larger batch sizes
-        batch_size = embedder_config.get("batch_size", 100)
+        batch_size = knowledge_config.get("batch_size", 100)
         embedder_transformer = HuggingfaceClientToEmbeddings(
             embedder=embedder,
             batch_size=batch_size,
@@ -472,7 +426,7 @@ def prepare_data_transformer(use_dual_vector: bool = False) -> Tuple[adal.Sequen
         logger.info(f"Using HuggingFace embedder with batch size: {batch_size}")
     elif embedder.__class__.__name__ == "DashScopeEmbedder":
         # DashScope API limits batch size to maximum of 10
-        batch_size = min(embedder_config.get("batch_size", 10), 10)
+        batch_size = min(knowledge_config.get("batch_size", 10), 10)
         embedder_transformer = DashScopeToEmbeddings(
             embedder=embedder, 
             batch_size=batch_size
@@ -490,8 +444,6 @@ def prepare_data_transformer(use_dual_vector: bool = False) -> Tuple[adal.Sequen
 def transform_documents_and_save_to_db(
     documents: List[Document],
     db_path: str,
-    use_dual_vector: bool = False,
-    data_transformer: adal.Sequential = None,
 ) -> LocalDB:
     """
     Transforms a list of documents and saves them to a local database.
@@ -503,7 +455,7 @@ def transform_documents_and_save_to_db(
     Returns:
         LocalDB: The local database instance.
     """
-    data_transformer = prepare_data_transformer(use_dual_vector=use_dual_vector)
+    data_transformer = prepare_data_transformer()
 
     # Save the documents to a local database
     db = LocalDB()
@@ -522,36 +474,38 @@ class DatabaseManager:
     Manages the creation, loading, transformation, and persistence of LocalDB instances.
     """
 
-    def __init__(self, repo_path: str, use_dual_vector: bool = False, use_bm25: bool = False):
+    def __init__(self, repo_path: str):
         self.db = None
         self.db_info = None
         self.data_transformer = None
-
         self.repo_path = repo_path
-        self.use_dual_vector = use_dual_vector
-        self.use_bm25 = use_bm25
+        
+        assert "knowledge" in configs, "configs must contain knowledge section"
+        knowledge_config = configs["knowledge"]
+        assert "sketch_filling" in knowledge_config, "knowledge_config must contain sketch_filling section"
+        self.use_dual_vector = knowledge_config["sketch_filling"]
+        
+        assert "hybrid" in knowledge_config, "knowledge_config must contain hybrid section"
+        assert "enabled" in knowledge_config["hybrid"], "hybrid_config must contain enabled section"
+        self.use_bm25 = knowledge_config["hybrid"]["enabled"]
 
     def _create_db_info(self) -> None:
         logger.info(f"Preparing repo storage for {self.repo_path}...")
 
-        try:
-            root_path = get_adalflow_default_root_path()
+        root_path = get_adalflow_default_root_path()
 
-            os.makedirs(root_path, exist_ok=True)
+        os.makedirs(root_path, exist_ok=True)
 
-            save_db_file = os.path.join(root_path, "databases", f"{self._prepare_embedding_cache_file_name()}.pkl")
+        save_db_file = os.path.join(root_path, "databases", f"{self._prepare_embedding_cache_file_name()}.pkl")
 
-            os.makedirs(os.path.dirname(save_db_file), exist_ok=True)
+        os.makedirs(os.path.dirname(save_db_file), exist_ok=True)
 
-            self.db_info = {
-                "repo_path": self.repo_path,
-                "db_file_path": save_db_file,
-            }
-            logger.info(f"DB info: {self.db_info}")
+        self.db_info = {
+            "repo_path": self.repo_path,
+            "db_file_path": save_db_file,
+        }
+        logger.info(f"DB info: {self.db_info}")
 
-        except Exception as e:
-            logger.error(f"Failed to create repository structure: {e}")
-            raise
 
     def _prepare_embedding_cache_file_name(self):
         # Extract repository name from path
@@ -564,81 +518,46 @@ class DatabaseManager:
         file_name = file_name.replace('/', '#')
         return file_name
 
-    def prepare_database(self,
-                       excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                       included_dirs: List[str] = None, included_files: List[str] = None, 
-                       code_extensions: List[str] = None, doc_extensions: List[str] = None,
-                       force_recreate: bool = False) -> List[Union[Document, DualVectorDocument]]:
+    def prepare_database(self) -> List[Union[Document, DualVectorDocument]]: 
         """
         Create a new database from the repository.
 
-        Args:
-            excluded_dirs (List[str], optional): List of directories to exclude from processing
-            excluded_files (List[str], optional): List of file patterns to exclude from processing
-            included_dirs (List[str], optional): List of directories to include exclusively
-            included_files (List[str], optional): List of file patterns to include exclusively
-            code_extensions (List[str], optional): List of code file extensions to process
-            doc_extensions (List[str], optional): List of documentation file extensions to process
-            force_recreate (bool, optional): Whether to force recreate the database
         Returns:
             List[Document]: List of Document objects
         """
-        self.data_transformer = prepare_data_transformer(use_dual_vector=self.use_dual_vector)
+        self.data_transformer = prepare_data_transformer()
         self._create_db_info()    
-        return self.prepare_db_index(excluded_dirs=excluded_dirs, excluded_files=excluded_files,
-                                   included_dirs=included_dirs, included_files=included_files,
-                                   code_extensions=code_extensions, doc_extensions=doc_extensions,
-                                   force_recreate=force_recreate)
+        return self.prepare_db_index()
     
-    def prepare_db_index(self, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                        included_dirs: List[str] = None, included_files: List[str] = None,
-                        code_extensions: List[str] = None, doc_extensions: List[str] = None,
-                        force_recreate: bool = False) -> List[Union[Document, DualVectorDocument]]:
+    def prepare_db_index(self) -> List[Union[Document, DualVectorDocument]]:
         """
         Prepare the indexed database for the repository.
 
-        Args:
-            excluded_dirs (List[str], optional): List of directories to exclude from processing
-            excluded_files (List[str], optional): List of file patterns to exclude from processing
-            included_dirs (List[str], optional): List of directories to include exclusively
-            included_files (List[str], optional): List of file patterns to include exclusively
-            code_extensions (List[str], optional): List of code file extensions to process
-            doc_extensions (List[str], optional): List of documentation file extensions to process
-            force_recreate (bool, optional): Whether to force recreate the database
         Returns:
             List[Document]: List of Document objects
         """
+
+        force_recreate = configs["knowledge"]['force_embedding']
+
         # check the database
         if self.db_info and os.path.exists(self.db_info["db_file_path"]) and not force_recreate:
             logger.info("Loading existing database...")
-            try:
-                self.db = LocalDB.load_state(self.db_info["db_file_path"])
-                documents = self.db.get_transformed_data(key=os.path.basename(self.db_info["db_file_path"]))
-                if documents:
-                    logger.info(f"Loaded {len(documents)} documents from existing database")
-                    return documents
-                else:
-                    logger.warning("No documents found in the existing database")
-                    return []
-            except Exception as e:
-                logger.error(f"Error loading existing database: {e}")
-                # Continue to create a new database
+            self.db = LocalDB.load_state(self.db_info["db_file_path"])
+            documents = self.db.get_transformed_data(key=os.path.basename(self.db_info["db_file_path"]))
+            if documents:
+                logger.info(f"Loaded {len(documents)} documents from existing database")
+                return documents
+            else:
+                logger.warning("No documents found in the existing database")
+                return []
 
         # prepare the database
         logger.info("Creating new database...")
         documents = read_all_documents(
             self.db_info["repo_path"],
-            excluded_dirs=excluded_dirs,
-            excluded_files=excluded_files,
-            included_dirs=included_dirs,
-            included_files=included_files,
-            code_extensions=code_extensions,
-            doc_extensions=doc_extensions,
         )
         self.db = transform_documents_and_save_to_db(
-            documents, self.db_info["db_file_path"],
-            use_dual_vector=self.use_dual_vector,
-            data_transformer=self.data_transformer
+            documents, self.db_info["db_file_path"]
         )
         documents = self.db.get_transformed_data(key=os.path.basename(self.db_info["db_file_path"]))
         return documents

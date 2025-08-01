@@ -1,142 +1,17 @@
+from configs import configs
 from logger.logging_config import get_tqdm_compatible_logger
 from dataclasses import dataclass
-from typing import Any, List, Tuple, Dict, Union, Optional
+from typing import List, Dict
 from uuid import uuid4
 import adalflow as adal
-from adalflow.core.types import RetrieverOutput, RetrieverOutputType
+from adalflow.core.types import RetrieverOutput
 from adalflow.core.types import Document
-from core.tools.embedder import get_embedder
-from core.dual_vector_pipeline import DualVectorRetriever
-from core.hybrid_retriever import HybridRetriever
-
-# Create our own implementation of the conversation classes
-@dataclass
-class UserQuery:
-    query_str: str
-
-@dataclass
-class AssistantResponse:
-    response_str: str
-
-@dataclass
-class DialogTurn:
-    id: str
-    user_query: UserQuery
-    assistant_response: AssistantResponse
-
-class CustomConversation:
-    """Custom implementation of Conversation to fix the list assignment index out of range error"""
-
-    def __init__(self):
-        self.dialog_turns = []
-
-    def append_dialog_turn(self, dialog_turn):
-        """Safely append a dialog turn to the conversation"""
-        if not hasattr(self, 'dialog_turns'):
-            self.dialog_turns = []
-        self.dialog_turns.append(dialog_turn)
-
-from core.config import configs
+from rag.hybrid_retriever import HybridRetriever
 from core.data_pipeline import DatabaseManager
-from core.dual_vector import DualVectorDocument
+from rag.dual_vector import DualVectorDocument
 
 # Configure logging
 logger = get_tqdm_compatible_logger(__name__)
-
-# Maximum token limit for embedding models
-MAX_INPUT_TOKENS = 7500  # Safe threshold below 8192 token limit
-
-class Memory(adal.core.component.DataComponent):
-    """Simple conversation management with a list of dialog turns."""
-
-    def __init__(self):
-        super().__init__()
-        # Use our custom implementation instead of the original Conversation class
-        self.current_conversation = CustomConversation()
-
-    def call(self) -> Dict:
-        """Return the conversation history as a dictionary."""
-        all_dialog_turns = {}
-        try:
-            # Check if dialog_turns exists and is a list
-            if hasattr(self.current_conversation, 'dialog_turns'):
-                if self.current_conversation.dialog_turns:
-                    logger.info(f"Memory content: {len(self.current_conversation.dialog_turns)} turns")
-                    for i, turn in enumerate(self.current_conversation.dialog_turns):
-                        if hasattr(turn, 'id') and turn.id is not None:
-                            all_dialog_turns[turn.id] = turn
-                            logger.info(f"Added turn {i+1} with ID {turn.id} to memory")
-                        else:
-                            logger.warning(f"Skipping invalid turn object in memory: {turn}")
-                else:
-                    logger.info("Dialog turns list exists but is empty")
-            else:
-                logger.info("No dialog_turns attribute in current_conversation")
-                # Try to initialize it
-                self.current_conversation.dialog_turns = []
-        except Exception as e:
-            logger.error(f"Error accessing dialog turns: {str(e)}")
-            # Try to recover
-            try:
-                self.current_conversation = CustomConversation()
-                logger.info("Recovered by creating new conversation")
-            except Exception as e2:
-                logger.error(f"Failed to recover: {str(e2)}")
-
-        logger.info(f"Returning {len(all_dialog_turns)} dialog turns from memory")
-        return all_dialog_turns
-
-    def add_dialog_turn(self, user_query: str, assistant_response: str) -> bool:
-        """
-        Add a dialog turn to the conversation history.
-
-        Args:
-            user_query: The user's query
-            assistant_response: The assistant's response
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            # Create a new dialog turn using our custom implementation
-            dialog_turn = DialogTurn(
-                id=str(uuid4()),
-                user_query=UserQuery(query_str=user_query),
-                assistant_response=AssistantResponse(response_str=assistant_response),
-            )
-
-            # Make sure the current_conversation has the append_dialog_turn method
-            if not hasattr(self.current_conversation, 'append_dialog_turn'):
-                logger.warning("current_conversation does not have append_dialog_turn method, creating new one")
-                # Initialize a new conversation if needed
-                self.current_conversation = CustomConversation()
-
-            # Ensure dialog_turns exists
-            if not hasattr(self.current_conversation, 'dialog_turns'):
-                logger.warning("dialog_turns not found, initializing empty list")
-                self.current_conversation.dialog_turns = []
-
-            # Safely append the dialog turn
-            self.current_conversation.dialog_turns.append(dialog_turn)
-            logger.info(f"Successfully added dialog turn, now have {len(self.current_conversation.dialog_turns)} turns")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error adding dialog turn: {str(e)}")
-            # Try to recover by creating a new conversation
-            try:
-                self.current_conversation = CustomConversation()
-                dialog_turn = DialogTurn(
-                    id=str(uuid4()),
-                    user_query=UserQuery(query_str=user_query),
-                    assistant_response=AssistantResponse(response_str=assistant_response),
-                )
-                self.current_conversation.dialog_turns.append(dialog_turn)
-                logger.info("Recovered from error by creating new conversation")
-                return True
-            except Exception as e2:
-                logger.error(f"Failed to recover from error: {str(e2)}")
-                return False
 
 system_prompt = r"""
 You are a code assistant which answers user questions on a Github Repo or a local repo.
@@ -215,33 +90,22 @@ class RAG(adal.Component):
     """RAG with one repo.
     If you want to load a new repos, call prepare_retriever(repo_path) first."""
 
-    def __init__(self, provider=None, model=None, use_dual_vector: bool = False, use_bm25: bool = False):
+    def __init__(self):
         """
         Initialize the RAG component.
-
-        Args:
-            provider: Model provider to use (google, openai, dashscope, siliconflow, deepseek). If None, uses default from config.
-            model: Model name to use with the provider. If None, uses default from config.
-            use_s3: Whether to use S3 for database storage (default: False)
         """
         super().__init__()
-
-        # Use provided provider or fall back to config default
-        if provider is None:
-            provider = configs.get("default_provider", "dashscope")
-        
-        # Use provided model or fall back to config default for the provider
-        if model is None and "providers" in configs and provider in configs["providers"]:
-            model = configs["providers"][provider].get("default_model")
-
-        self.provider = provider
-        self.model = model
-        self.use_dual_vector = use_dual_vector
-        self.use_bm25 = use_bm25
-
-        # Initialize components
-        self.memory = Memory()
-        self.embedder = get_embedder()
+        assert "generator" in configs, "configs must contain generator section"
+        generator_config = configs["generator"]
+        assert "provider" in generator_config, "generator_config must contain provider section"
+        assert "model" in generator_config, "generator_config must contain model section"
+        model = generator_config["model"]
+        assert "model_client" in generator_config, "generator_config must contain model_client section"
+        model_client_class = generator_config["model_client"]
+        model_client = model_client_class()
+        assert "model_kwargs" in generator_config, "generator_config must contain model_kwargs section"
+        model_kwargs = generator_config["model_kwargs"]
+        model_kwargs['model'] = model
 
         # Format instructions for natural language output (no structured parsing)
         format_instructions = """
@@ -255,10 +119,6 @@ IMPORTANT FORMATTING RULES:
 5. If you use code examples, make sure they are properly formatted with language-specific syntax highlighting
 6. Structure your answer logically with clear sections if the question is complex"""
 
-        # Get model configuration based on provider and model
-        from core.config import get_model_config
-        generator_config = get_model_config(self.provider, self.model)
-
         # Set up the main generator (no output processors to avoid JSON parsing issues)
         self.generator = adal.Generator(
             template=RAG_TEMPLATE,
@@ -268,8 +128,8 @@ IMPORTANT FORMATTING RULES:
                 "system_prompt": system_prompt,
                 "contexts": None,
             },
-            model_client=generator_config["model_client"](),
-            model_kwargs=generator_config["model_kwargs"],
+            model_client=model_client,
+            model_kwargs=model_kwargs,
         )
 
         self.retriever = None
@@ -278,7 +138,7 @@ IMPORTANT FORMATTING RULES:
 
     def initialize_db_manager(self, repo_path: str):
         """Initialize the database manager with local storage"""
-        self.db_manager = DatabaseManager(repo_path, self.use_dual_vector, self.use_bm25)
+        self.db_manager = DatabaseManager(repo_path)
         self.documents = []
 
     def _validate_and_filter_embeddings(self, documents: List[Document|DualVectorDocument]) -> List:
@@ -404,37 +264,19 @@ IMPORTANT FORMATTING RULES:
                     valid_documents.append(doc)
             return valid_documents
 
-    def prepare_retriever(self, repo_path: str,
-                      excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                      included_dirs: List[str] = None, included_files: List[str] = None, force_recreate_db: bool = False,
-                      code_extensions: List[str] = None, doc_extensions: List[str] = None):
+    def prepare_retriever(self, repo_path: str):
         """
         Prepare the retriever for a repository.
         Will load database from local storage if available.
 
         Args:
             repo_path: URL or local path to the repository
-            excluded_dirs: Optional list of directories to exclude from processing
-            excluded_files: Optional list of file patterns to exclude from processing
-            included_dirs: Optional list of directories to include exclusively
-            included_files: Optional list of file patterns to include exclusively
-            force_recreate_db: Whether to force recreate the database
-            code_extensions: Optional list of code file extensions to override config
-            doc_extensions: Optional list of documentation file extensions to override config
         """
         self.initialize_db_manager(repo_path)
 
         logger.info(f'🔍 Build up database...')
         # self.documents is a list of Document or DualVectorDocument
-        self.documents = self.db_manager.prepare_database(
-            excluded_dirs=excluded_dirs,
-            excluded_files=excluded_files,
-            included_dirs=included_dirs,
-            included_files=included_files,
-            force_recreate=force_recreate_db,
-            code_extensions=code_extensions,
-            doc_extensions=doc_extensions
-        )
+        self.documents = self.db_manager.prepare_database()
         logger.info(f"✅ Loaded {len(self.documents)} documents for retrieval")
         # Validate and filter embeddings to ensure consistent sizes
         self.documents = self._validate_and_filter_embeddings(self.documents)
@@ -442,36 +284,8 @@ IMPORTANT FORMATTING RULES:
         if not self.documents:
             raise ValueError("No valid documents with embeddings found. Cannot create retriever.")
 
-        try:
-            # Get hybrid configuration from embedder config
-            hybrid_config = configs.get('hybrid', {})
-            use_bm25 = hybrid_config.get('enabled', False)
-            
-            # Get BM25 parameters from hybrid.bm25 section
-            bm25_config = hybrid_config.get('bm25', {})
-            bm25_top_k = bm25_config.get('top_k', 100)
-            bm25_k1 = bm25_config.get('k1', 1.2)
-            bm25_b = bm25_config.get('b', 0.75)
-            
-            # Get retriever top_k
-            retriever_config = configs.get('retriever', {})
-            top_k = retriever_config.get('top_k', 20)
-            
-            # Use HybridRetriever which combines BM25 and FAISS
-            self.retriever = HybridRetriever(
-                documents=self.documents,
-                embedder=self.embedder,
-                use_bm25=use_bm25,
-                bm25_top_k=bm25_top_k,
-                bm25_k1=bm25_k1,
-                bm25_b=bm25_b,
-                top_k=top_k,
-                use_dual_vector=self.use_dual_vector
-            )
-            logger.info(f"✅ HybridRetriever created successfully (dual_vector={self.use_dual_vector}, BM25={'enabled' if self.use_bm25 else 'disabled'})")
-        except Exception as e:
-            logger.error(f"❌ Failed to create retriever: {e}")
-            raise
+        # Use HybridRetriever which combines BM25 and FAISS
+        self.retriever = HybridRetriever(documents=self.documents)
 
     def call(self, query: str) -> List[RetrieverOutput]:
         """
@@ -487,5 +301,4 @@ IMPORTANT FORMATTING RULES:
             return retrieved_docs
         except Exception as e:
             logger.error(f"Error in RAG call: {str(e)}")
-            # Return an empty RetrieverOutput to indicate an error
-            return [RetrieverOutput(documents=[])]
+            raise

@@ -75,12 +75,8 @@ class HuggingfaceClient(ModelClient):
             model_name: Name of the model to load
         """
         if self.model is None or self.model_name != model_name:
-            try:
-                self.model = SentenceTransformer(model_name, device=self.device)
-                self.model_name = model_name
-            except Exception as e:
-                log.error(f"Error loading model {model_name}: {e}")
-                raise
+            self.model = SentenceTransformer(model_name, device=self.device)
+            self.model_name = model_name
     
     def convert_inputs_to_api_kwargs(
         self,
@@ -178,13 +174,9 @@ class HuggingfaceClient(ModelClient):
             
         except Exception as e:
             log.error(f"Error parsing embedding response: {e}")
-            return EmbedderOutput(
-                data=[],
-                error=str(e),
-                raw_response=response
-            )
+            raise
     
-    def call(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED):
+    def call(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED, **kwargs):
         """Make a call to the HuggingFace model.
         
         Args:
@@ -195,7 +187,7 @@ class HuggingfaceClient(ModelClient):
             EmbedderOutput with embeddings
         """
         if model_type != ModelType.EMBEDDER:
-            raise ValueError(f"😭 Model type {model_type} is not supported. Only EMBEDDER is supported.")
+            raise ValueError(f"clients/huggingface_embedder_client.py:😭 Model type {model_type} is not supported. Only EMBEDDER is supported.")
         
         # Extract model name and texts from api_kwargs
         model_name = api_kwargs.get("model", "intfloat/multilingual-e5-large-instruct")
@@ -269,11 +261,7 @@ class HuggingfaceClient(ModelClient):
             
         except Exception as e:
             log.error(f"🤡 Error generating embeddings: {e}")
-            return EmbedderOutput(
-                data=[],
-                error=str(e),
-                raw_response=None
-            )
+            raise
     
     async def acall(self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED):
         """Async version of call (not implemented, falls back to sync)."""
@@ -385,7 +373,7 @@ class HuggingfaceEmbedder(DataComponent):
             )
         except Exception as e:
             log.error(f"Error parsing the embedding {response}: {e}")
-            return EmbedderOutput(raw_response=str(response), error=str(e))
+            raise
         output: EmbedderOutputType = EmbedderOutputType(raw_response=embedding_output)
         # data = embedding_output.data
         if self.output_processors:
@@ -395,6 +383,7 @@ class HuggingfaceEmbedder(DataComponent):
             except Exception as e:
                 log.error(f"Error processing the output: {e}")
                 output.error = str(e)
+                raise
         else:
             output.data = embedding_output.data
 
@@ -413,7 +402,7 @@ class HuggingfaceEmbedder(DataComponent):
             )
         except Exception as e:
             log.error(f"🤡 Error calling the model: {e}")
-            output = EmbedderOutput(error=str(e))
+            raise
         return output
 
     async def acall(
@@ -431,14 +420,14 @@ class HuggingfaceEmbedder(DataComponent):
             )
         except Exception as e:
             log.error(f"Error calling the model: {e}")
-            output = EmbedderOutput(error=str(e))
+            raise
 
         if response:
             try:
                 output = self._post_call(response)
             except Exception as e:
                 log.error(f"🤡 Error processing output: {e}")
-                output = EmbedderOutput(raw_response=str(response), error=str(e))
+                raise
         # add back the input
         output.input = [input] if isinstance(input, str) else input
         log.debug(f"Output from {self.__class__.__name__}: {output}")
