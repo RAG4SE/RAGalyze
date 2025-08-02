@@ -40,19 +40,20 @@ class HybridRetriever:
         self.documents = documents
         self.embedder = get_embedder()
         
-        embedder_config = configs["knowledge"]
-        self.use_dual_vector = embedder_config["sketch_filling"]
-        assert "hybrid" in embedder_config, "embedder_config must contain hybrid section"
-        assert "enabled" in embedder_config["hybrid"], "hybrid_config must contain enabled section"
-        self.use_bm25 = embedder_config["hybrid"]["enabled"]
-        assert "bm25" in embedder_config["hybrid"], "hybrid_config must contain bm25 section"
-        bm25_config = embedder_config["hybrid"]["bm25"]
+        knowledge_config = configs["knowledge"]
+        assert "embedder" in knowledge_config, "knowledge_config must contain embedder section"
+        self.use_dual_vector = knowledge_config["embedder"]["sketch_filling"]
+        assert "hybrid" in knowledge_config, "knowledge_config must contain hybrid section"
+        assert "enabled" in knowledge_config["hybrid"], "hybrid_config must contain enabled section"
+        self.use_bm25 = knowledge_config["hybrid"]["enabled"]
+        assert "bm25" in knowledge_config["hybrid"], "hybrid_config must contain bm25 section"
+        bm25_config = knowledge_config["hybrid"]["bm25"]
         assert (bm25_config is None) or ('top_k' in bm25_config and 'k1' in bm25_config and 'b' in bm25_config), "bm25_config must contain top_k, k1, and b parameters"
         self.bm25_top_k = bm25_config["top_k"]
         self.bm25_k1 = bm25_config["k1"]
         self.bm25_b = bm25_config["b"]
-        assert "retriever" in embedder_config, "embedder_config must contain retriever section"
-        retriever_config = embedder_config["retriever"]
+        assert "retriever" in knowledge_config, "embedder_config must contain retriever section"
+        retriever_config = knowledge_config["retriever"]
         assert "top_k" in retriever_config, "retriever_config must contain top_k section"
         self.top_k = retriever_config["top_k"]
         

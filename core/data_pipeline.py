@@ -407,7 +407,7 @@ def prepare_data_transformer() -> Tuple[adal.Sequential, str]:
         adal.Sequential: The data transformation pipeline
     """
     text_splitter_config = configs["knowledge"]['text_splitter']
-    use_dual_vector = configs["knowledge"]['sketch_filling']
+    use_dual_vector = configs["knowledge"]["embedder"]['sketch_filling']
     code_understanding_config = configs["knowledge"]['code_understanding']
     splitter = TextSplitter(**text_splitter_config)
     knowledge_config = configs["knowledge"]['embedder']['model_kwargs']
@@ -482,8 +482,9 @@ class DatabaseManager:
         
         assert "knowledge" in configs, "configs must contain knowledge section"
         knowledge_config = configs["knowledge"]
-        assert "sketch_filling" in knowledge_config, "knowledge_config must contain sketch_filling section"
-        self.use_dual_vector = knowledge_config["sketch_filling"]
+        assert "embedder" in knowledge_config, "knowledge_config must contain embedder section"
+        assert "sketch_filling" in knowledge_config["embedder"], "knowledge_config must contain sketch_filling section"
+        self.use_dual_vector = knowledge_config["embedder"]["sketch_filling"]
         
         assert "hybrid" in knowledge_config, "knowledge_config must contain hybrid section"
         assert "enabled" in knowledge_config["hybrid"], "hybrid_config must contain enabled section"
@@ -516,6 +517,9 @@ class DatabaseManager:
         if self.use_bm25:
             file_name += "-bm25"
         file_name = file_name.replace('/', '#')
+        embedding_provider = configs["knowledge"]["embedder"]["client_class"]
+        embedding_model = configs["knowledge"]["embedder"]["model"]
+        file_name += f"-{embedding_provider}-{embedding_model}"
         return file_name
 
     def prepare_database(self) -> List[Union[Document, DualVectorDocument]]: 
@@ -537,7 +541,7 @@ class DatabaseManager:
             List[Document]: List of Document objects
         """
 
-        force_recreate = configs["knowledge"]['force_embedding']
+        force_recreate = configs["knowledge"]["embedder"]["force_embedding"]
 
         # check the database
         if self.db_info and os.path.exists(self.db_info["db_file_path"]) and not force_recreate:

@@ -95,15 +95,6 @@ def query_repository(repo_path: str,
                 logger.info("🔄 Generator data is None, trying raw_response")
                 rag_answer = generator_result.raw_response
                 
-            # Format relevant document information
-            relevant_docs = []
-            for doc in retrieved_docs[:5]:  # Only return top 5 most relevant documents
-                doc_info = {
-                    "file_path": getattr(doc, 'meta_data', {}).get('file_path', 'Unknown'),
-                    "content_preview": (doc.text[:200] + "...") if len(doc.text) > 200 else doc.text
-                }
-                relevant_docs.append(doc_info)
-                
             # Extract answer text from various possible formats
             answer_text = ""
             
@@ -177,15 +168,13 @@ def query_repository(repo_path: str,
                 answer_text = str(rag_answer)
                 logger.warning(f"🔧 Generator returned unexpected format: {type(rag_answer)}, converted to string: {answer_text[:100]}...")
                 
-
-                
             # Clean and validate the answer text
             answer_text = answer_text.strip()
             if not answer_text:
                 logger.error("❌ Empty answer after processing")
                 return {
                     "response": "",
-                    "retrieved_documents": relevant_docs,
+                    "retrieved_documents": retrieved_docs,
                     "error_msg": "Empty answer generated"
                 }
                 
@@ -193,7 +182,7 @@ def query_repository(repo_path: str,
             
             return {
                 "response": answer_text,
-                "retrieved_documents": relevant_docs,
+                "retrieved_documents": retrieved_docs,
                 "error_msg": ""
             }
         else:
@@ -240,12 +229,13 @@ if __name__ == "__main__":
     
     if result["error_msg"]:
         print(f"Error: {result['error_msg']}")
-        sys.exit(1)
+        raise
     else:
         print("\n" + "="*50)
         print("RESPONSE:")
         print("="*50)
         # Convert escaped newlines to actual line breaks for better readability
+        print(result)
         formatted_response = result["response"].replace('\\n', '\n')
         print(formatted_response)
         
@@ -254,5 +244,6 @@ if __name__ == "__main__":
             print("RETRIEVED DOCUMENTS:")
             print("="*50)
             for i, doc in enumerate(result["retrieved_documents"], 1):
-                print(f"\n{i}. File: {doc['file_path']}")
-                print(f"   Preview: {doc['content_preview']}")
+                print(f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}")
+                # print(f"   Preview: {(doc.text[:200] + "...") if len(doc.text) > 200 else doc.text}")
+                print(f"{doc.text}")
