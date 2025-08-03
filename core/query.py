@@ -16,6 +16,7 @@ from rag.rag import RAG
 # Setup logging
 logger = get_tqdm_compatible_logger(__name__)
 
+
 def analyze_repository(repo_path: str) -> RAG:
     """
     Analyze a code repository and return a RAG instance.
@@ -79,124 +80,37 @@ def query_repository(repo_path: str,
         
         # Generate answer
         logger.info("🤖 Generating answer...")
-        
-        generator_result = rag.generator(
-            prompt_kwargs={
-                "input_str": question,
-                "contexts": retrieved_docs
-            }
-        )
-        
-        if generator_result and hasattr(generator_result, 'data'):
-            rag_answer = generator_result.data
-            
-            # If data is None or empty, try raw_response as fallback
-            if rag_answer is None and hasattr(generator_result, 'raw_response'):
-                logger.info("🔄 Generator data is None, trying raw_response")
-                rag_answer = generator_result.raw_response
-                
-            # Extract answer text from various possible formats
-            answer_text = ""
-            
-            # First check for actual ChatCompletion objects
-            if hasattr(rag_answer, 'choices') and len(rag_answer.choices) > 0 and hasattr(rag_answer.choices[0], 'message'):
-                # ChatCompletion object - extract the actual message content
-                try:
-                    answer_text = rag_answer.choices[0].message.content
-                    logger.info(f"✅ Generator returned ChatCompletion object, extracted message content: {answer_text[:100]}...")
-                except Exception as e:
-                    logger.error(f"❌ Failed to extract content from ChatCompletion: {e}")
-                    answer_text = str(rag_answer)
-                    raise
-            elif isinstance(rag_answer, str) and 'ChatCompletion' in rag_answer and 'content=' in rag_answer:
-                # String representation of ChatCompletion - extract content using regex
-                import re
-                try:
-                    # Extract content from string representation using regex
-                    content_match = re.search(r'content=["\']([^"\']*)["\'\)]', rag_answer)
-                    if content_match:
-                        answer_text = content_match.group(1)
-                    else:
-                        # Try alternative pattern for multiline content
-                        content_match = re.search(r'content="([^"]*(?:\\.[^"]*)*)"|content=\'([^\']*(?:\\.[^\']*)*)\'', rag_answer)
-                        if content_match:
-                            answer_text = content_match.group(1) or content_match.group(2)
-                        else:
-                            # Last resort: try to find content between quotes after 'content='
-                            content_start = rag_answer.find('content="')
-                            if content_start != -1:
-                                content_start += len('content="')
-                                # Find the matching closing quote, handling escaped quotes
-                                quote_count = 0
-                                content_end = content_start
-                                while content_end < len(rag_answer):
-                                    if rag_answer[content_end] == '"' and (content_end == 0 or rag_answer[content_end-1] != '\\'):
-                                        break
-                                    content_end += 1
-                                if content_end < len(rag_answer):
-                                    answer_text = rag_answer[content_start:content_end]
-                                    # Unescape common escape sequences
-                                    answer_text = answer_text.replace('\\n', '\n').replace('\\"', '"').replace('\\\'', '\'').replace('\\\\', '\\')
-                    
-                    if answer_text:
-                        logger.info(f"✅ Generator returned ChatCompletion string, extracted content: {answer_text[:100]}...")
-                    else:
-                        answer_text = rag_answer
-                        logger.warning(f"⚠️ Could not extract content from ChatCompletion string, using full string")
-                except Exception as e:
-                    logger.error(f"❌ Failed to extract content from ChatCompletion string: {e}")
-                    answer_text = rag_answer
-                    raise
-            elif isinstance(rag_answer, str):
-                # Raw string response (ideal case)
-                answer_text = rag_answer.strip()
-                logger.info(f"✅ Generator returned string answer: {answer_text[:100]}...")
-            elif hasattr(rag_answer, 'answer') and hasattr(rag_answer, 'rationale'):
-                # Structured RAGAnswer object (legacy case)
-                answer_text = str(rag_answer.answer) if rag_answer.answer else ""
-                logger.info(f"✅ Generator returned structured RAGAnswer object: {answer_text[:100]}...")
-            elif hasattr(rag_answer, 'content'):
-                # Some response objects have a content field
-                answer_text = str(rag_answer.content)
-                logger.info(f"✅ Generator returned object with content field: {answer_text[:100]}...")
-            elif hasattr(rag_answer, 'text'):
-                # Some response objects have a text field
-                answer_text = str(rag_answer.text)
-                logger.info(f"✅ Generator returned object with text field: {answer_text[:100]}...")
-            else:
-                # Fallback: convert whatever we got to string
-                answer_text = str(rag_answer)
-                logger.warning(f"🔧 Generator returned unexpected format: {type(rag_answer)}, converted to string: {answer_text[:100]}...")
-                
-            # Clean and validate the answer text
-            answer_text = answer_text.strip()
-            if not answer_text:
-                logger.error("❌ Empty answer after processing")
-                return {
-                    "response": "",
-                    "retrieved_documents": retrieved_docs,
-                    "error_msg": "Empty answer generated"
+        try:
+            generator_result = rag.generator(
+                prompt_kwargs={
+                    "input_str": question,
+                    "contexts": retrieved_docs
                 }
-                
-            logger.info(f"✅ Final answer length: {len(answer_text)} characters")
+            )
+        except Exception as e:
+            logger.error(f"Error calling generator: {e}")
+            raise 
+        
+        # Only use the content of the first choice
+        try:
+            rag_answer = generator_result.data.strip()
+        except Exception as e:
+            logger.error(f"Error catching generator result: {e}")
+            raise
             
-            return {
-                "response": answer_text,
-                "retrieved_documents": retrieved_docs,
-                "error_msg": ""
-            }
-        else:
-            return {
-                "response": "",
-                "retrieved_documents": [],
-                "error_msg": "Unable to generate answer"
-            }
-    else:
+        assert rag_answer, "Generator result is empty"
+
+        logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
+            
         return {
-            "response": "",
-            "retrieved_documents": [],
-            "error_msg": "Unable to find relevant documents"
+            "response": rag_answer,
+            "retrieved_documents": retrieved_docs,
+            "error_msg": ""
         }
+        
+    else:
+        logger.error("❌ No rag output retrieved")
+        raise
 
 def clear_cache():
     """Clear the RAG cache"""
@@ -235,7 +149,6 @@ if __name__ == "__main__":
         print("RESPONSE:")
         print("="*50)
         # Convert escaped newlines to actual line breaks for better readability
-        print(result)
         formatted_response = result["response"].replace('\\n', '\n')
         print(formatted_response)
         
@@ -245,5 +158,5 @@ if __name__ == "__main__":
             print("="*50)
             for i, doc in enumerate(result["retrieved_documents"], 1):
                 print(f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}")
-                # print(f"   Preview: {(doc.text[:200] + "...") if len(doc.text) > 200 else doc.text}")
-                print(f"{doc.text}")
+                print(f"   Preview: {(doc.text[:200] + "...") if len(doc.text) > 200 else doc.text}")
+                # print(f"{doc.text}")

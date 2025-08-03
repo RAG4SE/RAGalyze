@@ -76,55 +76,6 @@ def load_knowledge_config(configs: dict):
     # Set model client
     code_understanding_config["model_client"] = model_client
 
-def demonstrate_config_access(configs):
-    """
-    Demonstrate different ways to access configuration values.
-    """
-    # Access generator config
-    if "generator" in configs:
-        gen_cfg = configs["generator"]
-        
-        # Dictionary-style access
-        if "providers" in gen_cfg and "dashscope" in gen_cfg["providers"]:
-            dashscope_cfg = gen_cfg["providers"]["dashscope"]
-            print(f"Dashscope default model: {dashscope_cfg.get('default_model', 'Not specified')}")
-            print(f"Dashscope client class: {dashscope_cfg.get('client_class', 'Not specified')}")
-        
-        # Dot notation access
-        if hasattr(gen_cfg, 'providers') and hasattr(gen_cfg.providers, 'openai'):
-            openai_cfg = gen_cfg.providers.openai
-            print(f"OpenAI default model: {openai_cfg.get('default_model', 'Not specified')}")
-            if hasattr(openai_cfg, 'models') and hasattr(openai_cfg.models, 'gpt-4o'):
-                gpt4o_cfg = getattr(openai_cfg.models, 'gpt-4o')
-                print(f"GPT-4o temperature: {gpt4o_cfg.get('temperature', 'Not specified')}")
-    
-    # Access embedder config
-    if "embedder" in configs:
-        emb_cfg = configs["knowledge"]
-        print("\n--- Embedder Config Access ---")
-        print(f"Batch size: {emb_cfg.get('batch_size', 'Not specified')}")
-        print(f"Model: {emb_cfg.get('model', 'Not specified')}")
-        print(f"Dimensions: {emb_cfg.get('dimensions', 'Not specified')}")
-    
-    # Access repo config
-    if "repo" in configs:
-        repo_cfg = configs["repo"]
-        print("\n--- Repository Config Access ---")
-        print(f"Max size: {repo_cfg.get('max_size', 'Not specified')}")
-        if "excluded_dirs" in repo_cfg:
-            print(f"Excluded directories: {repo_cfg['excluded_dirs']}")
-        if "code_extensions" in repo_cfg:
-            print(f"Code extensions: {repo_cfg['code_extensions']}")
-    
-    # Access code understanding config
-    if "code_understanding" in configs:
-        code_cfg = configs["knowledge"]["code_understanding"]
-        print("\n--- Code Understanding Config Access ---")
-        if "retriever" in code_cfg:
-            print(f"Retriever top K: {code_cfg['retriever'].get('top_k', 'Not specified')}")
-        if "hybrid_search" in code_cfg:
-            print(f"Hybrid search enabled: {code_cfg['hybrid_search'].get('enabled', 'Not specified')}")
-
 
 def main():
     """

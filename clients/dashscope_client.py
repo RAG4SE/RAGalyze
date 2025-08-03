@@ -84,7 +84,7 @@ def parse_stream_response(completion: ChatCompletionChunk) -> str:
     """Parse the response of the stream API."""
     return completion.choices[0].delta.content
 
-
+#TODO: test handle_streaming_response
 async def handle_streaming_response(generator: Stream[ChatCompletionChunk]):
     """Handle the streaming response asynchronously."""
     async for completion in generator:
@@ -132,7 +132,10 @@ class DashScopeClient(ModelClient):
         self.async_client = None
         
         # Force use of get_first_message_content to ensure string output
-        self.chat_completion_parser = get_first_message_content
+        if chat_completion_parser is None:
+            self.chat_completion_parser = get_first_message_content
+        else:
+            self.chat_completion_parser = chat_completion_parser
         self._input_type = input_type
         self._api_kwargs = {}
 
@@ -187,76 +190,51 @@ class DashScopeClient(ModelClient):
         
         return client
 
+    #TODO: parse streaming response
+    """
+    This function is required in adalflow.core.generator.Generator._post_call
+    """
     def parse_chat_completion(
         self,
-        completion: Union[ChatCompletion, Generator[ChatCompletionChunk, None, None]],
+        completion: Union[ChatCompletion, Stream[ChatCompletionChunk]],
     ) -> "GeneratorOutput":
         """Parse the completion response to a GeneratorOutput."""
         # If the completion is already a GeneratorOutput, return it directly (prevent recursion)
-        if isinstance(completion, GeneratorOutput):
-            return completion
+        if not isinstance(completion, ChatCompletion):
+            raise ValueError(f"Invalid completion type: expected ChatCompletion, got {type(completion)}")
+
+        reply = self.chat_completion_parser(completion)
+
+        '''
+        Here is the _post_call function in adalflow.core.generator.Generator
         
-        # Check if it's a ChatCompletion object (non-streaming response)
-        if hasattr(completion, 'choices') and hasattr(completion, 'usage'):
-            # ALWAYS extract the string content directly
-            try:
-                # Direct extraction of message content
-                if (hasattr(completion, 'choices') and 
-                    len(completion.choices) > 0 and 
-                    hasattr(completion.choices[0], 'message') and 
-                    hasattr(completion.choices[0].message, 'content')):
-                    
-                    content = completion.choices[0].message.content
-                    if isinstance(content, str):
-                        parsed_data = content
-                    else:
-                        parsed_data = str(content)
-                else:
-                    # Fallback: convert entire completion to string
-                    parsed_data = str(completion)
-                    
-            except Exception as e:
-                # Ultimate fallback
-                parsed_data = str(completion)
-                raise
-            
-            return GeneratorOutput(
-                data=parsed_data,
-                usage=CompletionUsage(
-                    completion_tokens=completion.usage.completion_tokens,
-                    prompt_tokens=completion.usage.prompt_tokens,
-                    total_tokens=completion.usage.total_tokens,
-                ),
-                raw_response=str(completion),
-            )
-        else:
-            # Handle streaming response - collect all content parts into a single string
-            content_parts = []
-            usage_info = None
-            for chunk in completion:
-                if chunk.choices[0].delta.content:
-                    content_parts.append(chunk.choices[0].delta.content)
-                # Try to get usage info from the last chunk
-                if hasattr(chunk, 'usage') and chunk.usage:
-                    usage_info = chunk.usage
-            
-            # Join all content parts into a single string
-            full_content = ''.join(content_parts)
-            
-            # Create usage object
-            usage = None
-            if usage_info:
-                usage = CompletionUsage(
-                    completion_tokens=usage_info.completion_tokens,
-                    prompt_tokens=usage_info.prompt_tokens,
-                    total_tokens=usage_info.total_tokens,
-                )
-            
-            return GeneratorOutput(
-                data=full_content,
-                usage=usage,
-                raw_response="streaming"
-            )
+        def _post_call(self, completion: Any) -> GeneratorOutput:
+            r"""Get string completion and process it with the output_processors."""
+            # parse chat completion will only fill the raw_response
+            output: GeneratorOutput = self.model_client.parse_chat_completion(completion)
+            # Now adding the data field to the output
+            data = output.raw_response
+            if self.output_processors:
+                if data:
+                    try:
+                        data = self.output_processors(data)
+                        output.data = data
+                    except Exception as e:
+                        log.error(f"Error processing the output processors: {e}")
+                        output.error = str(e)
+
+            else:
+                output.data = data
+
+            return output
+        
+        If transforms output.raw_response to output.data, which will be used later for retrieving
+        the completion content. So we need to assign `reply` to GeneratorOutput's raw_response
+        '''
+
+        return GeneratorOutput(
+            raw_response=reply
+        )
 
     def track_completion_usage(
         self,
@@ -393,11 +371,8 @@ class DashScopeClient(ModelClient):
                 api_kwargs["extra_body"] = extra_body
 
             completion = self.sync_client.chat.completions.create(**api_kwargs)
-            
-            if api_kwargs.get("stream", False):
-                return handle_streaming_response(completion)
-            else:
-                return self.parse_chat_completion(completion)
+
+            return completion
         elif model_type == ModelType.EMBEDDER:
             # Extract input texts from api_kwargs
             texts = api_kwargs.get("input", [])
@@ -494,10 +469,7 @@ class DashScopeClient(ModelClient):
 
             completion = await self.async_client.chat.completions.create(**api_kwargs)
 
-            if api_kwargs.get("stream", False):
-                return handle_streaming_response(completion)
-            else:
-                return self.parse_chat_completion(completion)
+            return completion
         elif model_type == ModelType.EMBEDDER:
             # Extract input texts from api_kwargs
             texts = api_kwargs.get("input", [])

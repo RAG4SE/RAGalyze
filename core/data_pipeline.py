@@ -11,6 +11,7 @@ from rag.dual_vector_pipeline import DualVectorDocument
 from clients.huggingface_embedder_client import HuggingfaceClientToEmbeddings
 from clients.dashscope_client import DashScopeToEmbeddings
 from rag.dual_vector_pipeline import DualVectorToEmbeddings, CodeUnderstandingGenerator
+from core.dynamic_splitter_transformer import DynamicSplitterTransformer
 from configs import get_embedder, configs
 
 # The setting is from the observation that the maximum length of Solidity compiler's files is 919974
@@ -221,10 +222,6 @@ def read_all_documents(path: str):
         included_dirs = []
         included_files = []
 
-        logger.info(f"Using exclusion mode")
-        logger.info(f"Excluded directories: {excluded_dirs}")
-        logger.info(f"Excluded files: {excluded_files}")
-
     logger.info(f"Reading documents from {path}")
 
     def should_process_file(file_path: str, use_inclusion: bool, included_dirs: List[str], included_files: List[str],
@@ -399,18 +396,22 @@ def read_all_documents(path: str):
 
     return documents
 
-def prepare_data_transformer() -> Tuple[adal.Sequential, str]:
+def prepare_data_transformer() -> adal.Sequential:
     """
     Creates and returns the data transformation pipeline.
+    Uses dynamic splitter that automatically selects appropriate splitter
+    (code_splitter or text_splitter) based on document type.
 
     Returns:
         adal.Sequential: The data transformation pipeline
     """
-    text_splitter_config = configs["knowledge"]['text_splitter']
     use_dual_vector = configs["knowledge"]["embedder"]['sketch_filling']
     code_understanding_config = configs["knowledge"]['code_understanding']
-    splitter = TextSplitter(**text_splitter_config)
-    knowledge_config = configs["knowledge"]['embedder']['model_kwargs']
+    
+    # Use dynamic splitter that automatically selects appropriate splitter
+    splitter = DynamicSplitterTransformer()
+    
+    embedder_model_config = configs["knowledge"]['embedder']["model_kwargs"]
     embedder = get_embedder()
     if use_dual_vector:
         code_understanding_generator = CodeUnderstandingGenerator(**code_understanding_config)
@@ -418,7 +419,7 @@ def prepare_data_transformer() -> Tuple[adal.Sequential, str]:
         logger.info("Using DualVectorToEmbeddings transformer.")
     elif embedder.__class__.__name__ == "HuggingfaceEmbedder":
         # HuggingFace can use larger batch sizes
-        batch_size = knowledge_config.get("batch_size", 100)
+        batch_size = embedder_model_config["batch_size"]
         embedder_transformer = HuggingfaceClientToEmbeddings(
             embedder=embedder,
             batch_size=batch_size,
@@ -426,7 +427,7 @@ def prepare_data_transformer() -> Tuple[adal.Sequential, str]:
         logger.info(f"Using HuggingFace embedder with batch size: {batch_size}")
     elif embedder.__class__.__name__ == "DashScopeEmbedder":
         # DashScope API limits batch size to maximum of 10
-        batch_size = min(knowledge_config.get("batch_size", 10), 10)
+        batch_size = min(embedder_model_config["batch_size"], 10)
         embedder_transformer = DashScopeToEmbeddings(
             embedder=embedder, 
             batch_size=batch_size
@@ -519,7 +520,7 @@ class DatabaseManager:
         file_name = file_name.replace('/', '#')
         embedding_provider = configs["knowledge"]["embedder"]["client_class"]
         embedding_model = configs["knowledge"]["embedder"]["model"]
-        file_name += f"-{embedding_provider}-{embedding_model}"
+        file_name += f"-{embedding_provider}-{embedding_model}".replace('/', '#')
         return file_name
 
     def prepare_database(self) -> List[Union[Document, DualVectorDocument]]: 

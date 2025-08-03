@@ -1,30 +1,30 @@
-import trace
-import traceback
-import sys
+import tiktoken
 
-def level1():
-    level2()
-
-def level2():
-    level3()
-
-def level3():
+def count_tokens(file_path):
+    # Initialize tokenizer
+    enc = tiktoken.get_encoding("cl100k_base")  # Using OpenAI's tokenizer
+    
     try:
-        raise ValueError('测试错误')
-    except ValueError as e:
-        print(traceback.format_exc())
-        # raise Exception(traceback.format_exc())
+        # Read file contents
+        with open(file_path, 'r', encoding='utf-8') as file:
+            content = file.read()
+        
+        # Calculate tokens
+        tokens = enc.encode(content)
+        token_count = len(tokens)
+        
+        print(f"Number of tokens in {file_path}: {token_count}")
+        return token_count
+    
+    except FileNotFoundError:
+        print(f"Error: File {file_path} not found")
+        return None
+    except Exception as e:
+        print(f"Error reading file: {str(e)}")
+        return None
 
-level1()
-# try:
-# except Exception as e:
-#     print('=== 完整调用链测试 ===')
-#     print(traceback.format_exc())
-
-a = {
-    1: 2,
-    2: 3    
-}
-
-del a[1]
-print(a)
+# Example usage
+file_path = "/home/lyr/test_RAGalyze/analyze_repo.py"  # Replace with your file path
+count_tokens(file_path)
+file_path = "/home/lyr/test_RAGalyze/README.md"
+count_tokens(file_path)
