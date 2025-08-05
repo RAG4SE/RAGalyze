@@ -158,5 +158,5 @@ if __name__ == "__main__":
             print("="*50)
             for i, doc in enumerate(result["retrieved_documents"], 1):
                 print(f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}")
-                print(f"   Preview: {(doc.text[:200] + "...") if len(doc.text) > 200 else doc.text}")
+                print(f"   Preview: {(doc.text[:200] + '...') if len(doc.text) > 200 else doc.text}")
                 # print(f"{doc.text}")

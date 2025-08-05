@@ -739,7 +739,7 @@ class DashScopeBatchEmbedder(DataComponent):
         """
         Call operator interface, delegates to call method
         """
-        return self.call(input=input, model_kwargs=model_kwargs, force_recreate=force_recreate)
+        return self.call(input=input, model_kwargs=model_kwargs)
 
 
 class DashScopeToEmbeddings(DataComponent):

@@ -1,30 +1,16 @@
-import tiktoken
+import tree_sitter_python as tspython
+from tree_sitter import Language, Parser
 
-def count_tokens(file_path):
-    # Initialize tokenizer
-    enc = tiktoken.get_encoding("cl100k_base")  # Using OpenAI's tokenizer
-    
-    try:
-        # Read file contents
-        with open(file_path, 'r', encoding='utf-8') as file:
-            content = file.read()
-        
-        # Calculate tokens
-        tokens = enc.encode(content)
-        token_count = len(tokens)
-        
-        print(f"Number of tokens in {file_path}: {token_count}")
-        return token_count
-    
-    except FileNotFoundError:
-        print(f"Error: File {file_path} not found")
-        return None
-    except Exception as e:
-        print(f"Error reading file: {str(e)}")
-        return None
+parser = Parser(Language(tspython.language()))
+with open('/home/lyr/test_RAGalyze/1.py', 'r') as file:
+    content = file.read()
+    tree = parser.parse(bytes(content, 'utf8'))
 
-# Example usage
-file_path = "/home/lyr/test_RAGalyze/analyze_repo.py"  # Replace with your file path
-count_tokens(file_path)
-file_path = "/home/lyr/test_RAGalyze/README.md"
-count_tokens(file_path)
+node = tree.root_node
+
+def traverse(node):
+    print(node.type, node.start_point, node.end_point, node.start_byte, node.end_byte, node.text)
+    for child in node.children:
+        traverse(child)
+
+traverse(node)

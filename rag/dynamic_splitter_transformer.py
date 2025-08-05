@@ -3,7 +3,7 @@
 from typing import List, Union, Any
 from adalflow.core.types import Document
 from adalflow.core.component import Component
-from core.splitter_factory import get_splitter_factory
+from rag.splitter_factory import get_splitter_factory
 from logger.logging_config import get_tqdm_compatible_logger
 
 logger = get_tqdm_compatible_logger(__name__)
@@ -55,10 +55,7 @@ class DynamicSplitterTransformer(Component):
                 
             except Exception as e:
                 logger.error(f"Error splitting document {getattr(doc, 'meta_data', {}).get('file_path', 'unknown')}: {e}")
-                # Fallback: use text splitter
-                text_splitter = self.splitter_factory.get_splitter_by_type('text')
-                split_docs = text_splitter.call([doc])
-                result_documents.extend(split_docs)
+                raise
         
         logger.info(f"Processed {len(documents)} documents into {len(result_documents)} chunks")
         return result_documents

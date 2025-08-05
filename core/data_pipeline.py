@@ -11,7 +11,7 @@ from rag.dual_vector_pipeline import DualVectorDocument
 from clients.huggingface_embedder_client import HuggingfaceClientToEmbeddings
 from clients.dashscope_client import DashScopeToEmbeddings
 from rag.dual_vector_pipeline import DualVectorToEmbeddings, CodeUnderstandingGenerator
-from core.dynamic_splitter_transformer import DynamicSplitterTransformer
+from rag.dynamic_splitter_transformer import DynamicSplitterTransformer
 from configs import get_embedder, configs
 
 # The setting is from the observation that the maximum length of Solidity compiler's files is 919974

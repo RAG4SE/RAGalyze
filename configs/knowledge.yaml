@@ -6,10 +6,10 @@ defaults:
   - _self_
 
 embedder:
-  # client_class: DashScopeEmbedder
-  client_class: HuggingfaceEmbedder
-  # model: text-embedding-v4
-  model: intfloat/multilingual-e5-large-instruct
+  client_class: DashScopeEmbedder
+  # client_class: HuggingfaceEmbedder
+  model: text-embedding-v4
+  # model: intfloat/multilingual-e5-large-instruct
   model_kwargs:
     dimensions: 256
     encoding_format: float
@@ -36,12 +36,12 @@ hybrid:
 text_splitter:
   split_by: token
   chunk_size: 1024
-  chunk_overlap: 64
+  chunk_overlap: 128
 # Code splitter configuration for source code files
 code_splitter:
   split_by: token
   chunk_size: 1024
-  chunk_overlap: 64
+  chunk_overlap: 128
 
 
 code_understanding:

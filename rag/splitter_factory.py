@@ -1,10 +1,11 @@
 """Factory for creating appropriate text splitters based on document type."""
 
+from multiprocessing import Value
 import os
 from typing import Union, Dict, Any
 from adalflow.components.data_process import TextSplitter
-from core.smart_text_splitter import SmartTextSplitter
-from core.code_tokenizer import CodeTokenizer
+from adalflow.core.tokenizer import Tokenizer
+from rag.smart_text_splitter import SmartTextSplitter
 from configs import configs
 from logger.logging_config import get_tqdm_compatible_logger
 
@@ -24,7 +25,6 @@ class SplitterFactory:
         """Initialize the splitter factory."""
         self._text_splitter = None
         self._code_splitter = None
-        self._code_tokenizer = None
     
     def _get_text_splitter(self) -> SmartTextSplitter:
         """Get or create text splitter instance.
@@ -41,28 +41,7 @@ class SplitterFactory:
             logger.info(f"Created smart text splitter with config: {text_splitter_config}")
         return self._text_splitter
     
-    def _get_code_tokenizer(self) -> CodeTokenizer:
-        """Get or create code tokenizer instance.
-        
-        Returns:
-            CodeTokenizer: Configured code tokenizer
-        """
-        if self._code_tokenizer is None:
-            code_splitter_config = configs["knowledge"]['code_splitter']
-            tokenizer_config = code_splitter_config.get('tokenizer', {})
-            
-            # Extract tokenizer parameters
-            tokenizer_params = {
-                'name': tokenizer_config.get('name', 'cl100k_base'),
-                'preserve_code_structure': tokenizer_config.get('preserve_code_structure', True),
-                'remove_stop_words': tokenizer_config.get('remove_stop_words', False)
-            }
-            
-            self._code_tokenizer = CodeTokenizer(**tokenizer_params)
-            logger.info(f"Created code tokenizer with config: {tokenizer_params}")
-        return self._code_tokenizer
-    
-    def _get_code_splitter(self) -> SmartTextSplitter:
+    def _get_code_splitter(self, extension: str) -> SmartTextSplitter:
         """Get or create code splitter instance.
         
         Returns:
@@ -71,46 +50,39 @@ class SplitterFactory:
         if self._code_splitter is None:
             code_splitter_config = configs["knowledge"]['code_splitter'].copy()
             
-            # Remove tokenizer config as it's handled separately
-            tokenizer_config = code_splitter_config.pop('tokenizer', {})
-            
             # Add smart splitting parameters for code content
             code_splitter_config['content_type'] = 'code'
             code_splitter_config['smart_boundary_ratio'] = 0.75  # Slightly more aggressive for code
-            
+            code_splitter_config['file_extension'] = extension
             # Create the smart code splitter
             self._code_splitter = SmartTextSplitter(**code_splitter_config)
-            
-            # Set the custom tokenizer
-            code_tokenizer = self._get_code_tokenizer()
-            self._code_splitter.tokenizer = code_tokenizer
             
             logger.info(f"Created smart code splitter with config: {code_splitter_config}")
         return self._code_splitter
     
-    def detect_document_type(self, file_path: str) -> str:
-        """Detect document type based on file extension.
+    def detect_document_type(self, file_path: str) -> tuple[str, str]:
+        """Detect document type and extension based on file path.
         
         Args:
             file_path (str): Path to the file
             
         Returns:
-            str: 'code', 'text', or 'unknown'
+            tuple: (document_type, extension)
         """
         if not file_path:
-            return 'unknown'
+            # return 'unknown', ''
+            raise ValueError("file_path is required for document type detection")
         
         # Get file extension
         _, ext = os.path.splitext(file_path.lower())
         
         if ext in self.CODE_EXTENSIONS:
-            return 'code'
+            return 'code', ext
         elif ext in self.TEXT_EXTENSIONS:
-            return 'text'
+            return 'text', ext
         else:
             # For unknown extensions, try to detect based on content patterns
-            return 'unknown'
-    
+            raise ValueError(f"Unknown file extension: {ext}")
     def detect_content_type(self, content: str, file_path: str = "") -> str:
         """Detect content type based on file path and content analysis.
         
@@ -123,9 +95,13 @@ class SplitterFactory:
         """
         # First try file extension
         if file_path:
-            doc_type = self.detect_document_type(file_path)
+            doc_type, _ = self.detect_document_type(file_path)
             if doc_type != 'unknown':
                 return doc_type
+        
+        else:
+            #TODO: currently, file_path is required. The case where file_path == "" will be supported later.
+            raise ValueError("file_path is required for content type detection")
         
         # Fallback to content analysis
         if not content.strip():
@@ -182,40 +158,15 @@ class SplitterFactory:
         """
         if force_type:
             doc_type = force_type
+            _, ext = self.detect_document_type(file_path)
         else:
-            doc_type = self.detect_content_type(content, file_path)
+            doc_type, ext = self.detect_document_type(file_path)
+            if doc_type == 'unknown':
+                doc_type = self.detect_content_type(content, file_path)
+
+        splitter = self._get_code_splitter(ext) if doc_type == 'code' else self._get_text_splitter()
         
-        if doc_type == 'code':
-            logger.debug(f"Using code splitter for {file_path or 'content'}")
-            return self._get_code_splitter()
-        else:
-            # Default to text splitter for 'text' and 'unknown' types
-            logger.debug(f"Using text splitter for {file_path or 'content'} (type: {doc_type})")
-            return self._get_text_splitter()
-    
-    def get_splitter_by_type(self, splitter_type: str) -> SmartTextSplitter:
-        """Get splitter by explicit type.
-        
-        Args:
-            splitter_type (str): 'code' or 'text'
-            
-        Returns:
-            SmartTextSplitter: Requested splitter instance
-        """
-        if splitter_type == 'code':
-            return self._get_code_splitter()
-        elif splitter_type == 'text':
-            return self._get_text_splitter()
-        else:
-            raise ValueError(f"Unknown splitter type: {splitter_type}. Use 'code' or 'text'.")
-    
-    def get_available_splitter_types(self) -> list:
-        """Get list of available splitter types.
-        
-        Returns:
-            list: Available splitter types
-        """
-        return ['code', 'text']
+        return splitter
 
 
 # Global factory instance
