@@ -5,7 +5,7 @@ import os
 from typing import Union, Dict, Any
 from adalflow.components.data_process import TextSplitter
 from adalflow.core.tokenizer import Tokenizer
-from rag.smart_text_splitter import SmartTextSplitter
+from rag.splitter import *
 from configs import configs
 from logger.logging_config import get_tqdm_compatible_logger
 
@@ -21,12 +21,28 @@ class SplitterFactory:
     # File extensions that are considered text/documentation files
     TEXT_EXTENSIONS = configs['repo']['file_extensions']['doc_extensions']
     
+    # Markdown-specific extensions
+    MARKDOWN_EXTENSIONS = ['.md', '.markdown', '.mdown', '.mkd', '.mkdn']
+    
+    # JSON-specific extensions
+    JSON_EXTENSIONS = ['.json', '.jsonl', '.ndjson']
+    
+    # RST-specific extensions
+    RST_EXTENSIONS = ['.rst', '.rest']
+    
+    # YAML-specific extensions
+    YAML_EXTENSIONS = ['.yaml', '.yml']
+    
     def __init__(self):
         """Initialize the splitter factory."""
         self._text_splitter = None
         self._code_splitter = None
+        self._markdown_splitter = None
+        self._json_splitter = None
+        self._rst_splitter = None
+        self._yaml_splitter = None
     
-    def _get_text_splitter(self) -> SmartTextSplitter:
+    def _get_txt_splitter(self) -> TxtTextSplitter:
         """Get or create text splitter instance.
         
         Returns:
@@ -35,13 +51,12 @@ class SplitterFactory:
         if self._text_splitter is None:
             text_splitter_config = configs["knowledge"]['text_splitter'].copy()
             # Add smart splitting parameters for text content
-            text_splitter_config['content_type'] = 'text'
             text_splitter_config['smart_boundary_ratio'] = 0.8
-            self._text_splitter = SmartTextSplitter(**text_splitter_config)
+            self._text_splitter = TxtTextSplitter(**text_splitter_config)
             logger.info(f"Created smart text splitter with config: {text_splitter_config}")
         return self._text_splitter
     
-    def _get_code_splitter(self, extension: str) -> SmartTextSplitter:
+    def _get_code_splitter(self, extension: str) -> CodeSplitter:
         """Get or create code splitter instance.
         
         Returns:
@@ -51,11 +66,10 @@ class SplitterFactory:
             code_splitter_config = configs["knowledge"]['code_splitter'].copy()
             
             # Add smart splitting parameters for code content
-            code_splitter_config['content_type'] = 'code'
             code_splitter_config['smart_boundary_ratio'] = 0.75  # Slightly more aggressive for code
             code_splitter_config['file_extension'] = extension
             # Create the smart code splitter
-            self._code_splitter = SmartTextSplitter(**code_splitter_config)
+            self._code_splitter = CodeSplitter(**code_splitter_config)
             
             logger.info(f"Created smart code splitter with config: {code_splitter_config}")
         return self._code_splitter
@@ -78,6 +92,14 @@ class SplitterFactory:
         
         if ext in self.CODE_EXTENSIONS:
             return 'code', ext
+        elif ext in self.MARKDOWN_EXTENSIONS:
+            return 'markdown', ext
+        elif ext in self.JSON_EXTENSIONS:
+            return 'json', ext
+        elif ext in self.RST_EXTENSIONS:
+            return 'rst', ext
+        elif ext in self.YAML_EXTENSIONS:
+            return 'yaml', ext
         elif ext in self.TEXT_EXTENSIONS:
             return 'text', ext
         else:
@@ -124,8 +146,40 @@ class SplitterFactory:
             'http://', 'https://', '[', '](', '**', '__', '*', '_'
         ]
         
+        # Markdown-specific indicators
+        markdown_indicators = [
+            '# ', '## ', '### ', '#### ', '##### ', '###### ',
+            '```', '~~~', '[', '](', '**', '__', '*', '_',
+            '- [ ]', '- [x]', '> ', '---', '***', '| '
+        ]
+        
+        # JSON-specific indicators
+        json_indicators = [
+            '{', '}', '[', ']', '":', '",', 'null', 'true', 'false',
+            '"id":', '"name":', '"value":', '"data":', '"type":'
+        ]
+        
+        # RST-specific indicators
+        rst_indicators = [
+            '.. ', ':::', '::', '====', '----', '~~~~', '^^^^',
+            '.. code-block::', '.. note::', '.. warning::', '.. image::',
+            '.. toctree::', '.. automodule::', '.. autoclass::', '.. autofunction::'
+        ]
+        
+        # YAML-specific indicators
+        yaml_indicators = [
+            '---', '...', '- ', ': ', '|', '>', '&', '*',
+            'apiVersion:', 'kind:', 'metadata:', 'spec:', 'data:',
+            'version:', 'services:', 'volumes:', 'networks:',
+            'environment:', 'ports:', 'image:', 'build:'
+        ]
+        
         code_score = sum(1 for indicator in code_indicators if indicator in content_lower)
         text_score = sum(1 for indicator in text_indicators if indicator in content_lower)
+        markdown_score = sum(1 for indicator in markdown_indicators if indicator in content_lower)
+        json_score = sum(1 for indicator in json_indicators if indicator in content_lower)
+        rst_score = sum(1 for indicator in rst_indicators if indicator in content_lower)
+        yaml_score = sum(1 for indicator in yaml_indicators if indicator in content_lower)
         
         # Calculate ratios
         total_chars = len(content)
@@ -137,36 +191,59 @@ class SplitterFactory:
             if brace_ratio > 0.01 or semicolon_ratio > 0.02:
                 code_score += 2
         
-        if code_score > text_score:
+        # Determine content type based on scores
+        max_score = max(code_score, text_score, markdown_score, json_score, rst_score, yaml_score)
+        
+        if max_score == 0:
+            return 'unknown'
+        elif yaml_score == max_score and yaml_score > 0:
+            return 'yaml'
+        elif rst_score == max_score and rst_score > 0:
+            return 'rst'
+        elif json_score == max_score and json_score > 0:
+            return 'json'
+        elif markdown_score == max_score and markdown_score > 0:
+            return 'markdown'
+        elif code_score == max_score:
             return 'code'
-        elif text_score > code_score:
+        elif text_score == max_score:
             return 'text'
         else:
             return 'unknown'
     
     def get_splitter(self, content: str = "", file_path: str = "", 
-                    force_type: str = None) -> SmartTextSplitter:
+                    force_type: str = None):
         """Get appropriate splitter based on content and file path.
         
         Args:
             content (str): File content (optional)
             file_path (str): File path (optional)
-            force_type (str): Force specific splitter type ('code' or 'text')
+            force_type (str): Force specific splitter type ('code', 'text', or 'markdown')
             
         Returns:
-            SmartTextSplitter: Appropriate splitter instance
+            TextSplitter: Appropriate splitter instance (SmartTextSplitter or MarkdownTextSplitter)
         """
         if force_type:
             doc_type = force_type
-            _, ext = self.detect_document_type(file_path)
+            _, ext = self.detect_document_type(file_path) if file_path else ('unknown', '')
         else:
             doc_type, ext = self.detect_document_type(file_path)
             if doc_type == 'unknown':
                 doc_type = self.detect_content_type(content, file_path)
 
-        splitter = self._get_code_splitter(ext) if doc_type == 'code' else self._get_text_splitter()
-        
-        return splitter
+        # Return appropriate splitter based on document type
+        if doc_type == 'code':
+            return self._get_code_splitter(ext)
+        elif doc_type == 'markdown':
+            return self._get_markdown_splitter()
+        elif doc_type == 'json':
+            return self._get_json_splitter()
+        elif doc_type == 'rst':
+            return self._get_rst_splitter()
+        elif doc_type == 'yaml':
+            return self._get_yaml_splitter()
+        else:  # 'text' or fallback
+            return self._get_txt_splitter()
 
 
 # Global factory instance

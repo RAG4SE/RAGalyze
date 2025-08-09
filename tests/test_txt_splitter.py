@@ -1,0 +1,324 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Comprehensive test suite for TxtTextSplitter functionality.
+Merged from test_overlap_debug.py, test_overlap_detection.py, and test_smart_text_splitter.py
+"""
+
+import sys
+sys.path.append('/home/lyr/RAGalyze')
+
+from rag.splitter import TxtTextSplitter
+
+def test_overlap_debug():
+    """Debug the overlap detection in detail."""
+    
+    splitter = TxtTextSplitter(
+        chunk_size=50,
+        chunk_overlap=15,
+        split_by='token',
+    )
+    
+    # Test text with clear sentence boundaries
+    test_text = (
+        "First sentence here. Second sentence follows. Third sentence ends. "
+        "Fourth sentence continues. Fifth sentence completes the test. "
+        "Sixth sentence adds more content. Seventh sentence extends further. "
+        "Eighth sentence provides additional text. Ninth sentence continues on. "
+        "Tenth sentence reaches the end."
+    )
+    
+    print(f"Test text: {repr(test_text)}")
+    print(f"Text length: {len(test_text)} characters")
+    print()
+    
+    # Simulate what happens in the merging logic
+    splits = splitter.tokenizer.encode(test_text)
+    print(f"Total tokens: {len(splits)}")
+    
+    # Simulate first chunk processing
+    chunk_size = 50
+    chunk_overlap = 15
+    idx = 0
+    
+    print("\n=== First Chunk Processing ===")
+    chunk_end = min(idx + chunk_size, len(splits))
+    chunk_tokens = splits[idx:chunk_end]
+    chunk_text_bytes = splitter.tokenizer.decode(chunk_tokens).encode('utf-8')
+    
+    print(f"Initial chunk tokens: {len(chunk_tokens)}")
+    print(f"Initial chunk text: {repr(chunk_text_bytes.decode('utf-8'))}")
+    
+    # Apply boundary detection
+    if chunk_end < len(splits) and chunk_end - idx >= splitter.smart_boundary_threshold:
+        search_start_pos = int(len(chunk_text_bytes) * splitter.smart_boundary_ratio)
+        print(f"Search start position: {search_start_pos}")
+        
+        smart_boundary_pos = splitter._find_boundary(
+            chunk_text_bytes, search_start_pos, len(chunk_text_bytes)
+        )
+        print(f"Smart boundary position: {smart_boundary_pos}")
+        
+        if smart_boundary_pos < len(chunk_text_bytes):
+            boundary_text = chunk_text_bytes[:smart_boundary_pos].decode('utf-8')
+            boundary_tokens = splitter.tokenizer.encode(boundary_text)
+            chunk_end = idx + len(boundary_tokens)
+            chunk_text_bytes = boundary_text.encode('utf-8')
+            
+            print(f"Adjusted chunk text: {repr(boundary_text)}")
+            print(f"Adjusted chunk tokens: {len(boundary_tokens)}")
+    
+    first_chunk_text = chunk_text_bytes.decode('utf-8')
+    print(f"Final first chunk: {repr(first_chunk_text)}")
+    
+    # Now simulate overlap calculation for second chunk
+    print("\n=== Second Chunk Overlap Calculation ===")
+    actual_chunk_tokens = splitter.tokenizer.encode(chunk_text_bytes.decode('utf-8'))
+    num_non_overlap_tokens = len(actual_chunk_tokens) - chunk_overlap
+    
+    print(f"Actual chunk tokens: {len(actual_chunk_tokens)}")
+    print(f"Non-overlap tokens: {num_non_overlap_tokens}")
+    
+    if num_non_overlap_tokens > 0 and chunk_end < len(splits):
+        bytetext_before_overlap = splitter.tokenizer.decode(actual_chunk_tokens[:num_non_overlap_tokens]).encode('utf-8')
+        desired_start_byte = len(bytetext_before_overlap)
+        
+        print(f"Text before overlap: {repr(bytetext_before_overlap.decode('utf-8'))}")
+        print(f"Desired start byte: {desired_start_byte}")
+        print(f"Character at desired start: {repr(first_chunk_text[desired_start_byte])}")
+        
+        best_start_byte = splitter._find_overlap_start(chunk_text_bytes, desired_start_byte)
+        print(f"Best start byte: {best_start_byte}")
+        
+        if best_start_byte < len(chunk_text_bytes):
+            new_overlap_text = chunk_text_bytes[best_start_byte:].decode('utf-8')
+            print(f"New overlap text: {repr(new_overlap_text)}")
+            print(f"Character at overlap start: {repr(new_overlap_text[0] if new_overlap_text else 'EMPTY')}")
+            
+            new_overlap_tokens_count = len(splitter.tokenizer.encode(new_overlap_text))
+            adjusted_overlap = new_overlap_tokens_count
+            print(f"Adjusted overlap tokens: {adjusted_overlap}")
+            
+            # New logic: find the token that starts with the overlap text
+            overlap_start_text = chunk_text_bytes[best_start_byte:].decode('utf-8')
+            next_idx = chunk_end - adjusted_overlap  # fallback
+            print(f"Looking for overlap text: {repr(overlap_start_text[:50])}")
+            
+            # Search through tokens to find the one that matches the overlap start
+            for token_idx in range(idx, min(len(splits), chunk_end + 5)):
+                # Decode from this token to the end to see if it matches our overlap start
+                remaining_tokens = splits[token_idx:]
+                remaining_text = splitter.tokenizer.decode(remaining_tokens)
+                
+                # Check if this token position gives us the overlap text we want
+                # Strip leading whitespace for comparison since tokenizer may add spaces
+                if remaining_text.lstrip().startswith(overlap_start_text.lstrip()[:min(50, len(overlap_start_text.lstrip()))]):
+                    next_idx = token_idx
+                    print(f"Found matching token at position {token_idx}: {repr(splitter.tokenizer.decode([splits[token_idx]]))}")
+                    break
+            else:
+                print("No matching token found, using fallback calculation")
+        else:
+            adjusted_overlap = 0
+            next_idx = chunk_end - adjusted_overlap
+            print("No overlap adjustment")
+    else:
+        adjusted_overlap = 0
+        next_idx = chunk_end - adjusted_overlap
+        print("No overlap calculation needed")
+    
+    print(f"Next chunk starts at token: {next_idx}")
+    
+    # Debug: show what's around token 34
+    print(f"\n=== Token Analysis ===")
+    for i in range(max(0, next_idx-2), min(len(splits), next_idx+3)):
+        token_text = splitter.tokenizer.decode([splits[i]])
+        marker = " <-- START" if i == next_idx else ""
+        print(f"Token {i}: {repr(token_text)}{marker}")
+    
+    # Show what the second chunk would look like
+    if next_idx < len(splits):
+        second_chunk_end = min(next_idx + chunk_size, len(splits))
+        second_chunk_tokens = splits[next_idx:second_chunk_end]
+        second_chunk_text = splitter.tokenizer.decode(second_chunk_tokens)
+        print(f"\nSecond chunk text: {repr(second_chunk_text)}")
+        print(f"Second chunk starts with: {repr(second_chunk_text[0] if second_chunk_text else 'EMPTY')}")
+
+def test_overlap_detection():
+    """Test the new NLP overlap detection functionality."""
+    
+    splitter = TxtTextSplitter(
+        chunk_size=50,
+        chunk_overlap=15,
+        split_by='token',
+    )
+    
+    # Test text with clear sentence boundaries
+    test_text = (
+        "First sentence here. Second sentence follows. Third sentence ends. "
+        "Fourth sentence continues. Fifth sentence completes the test. "
+        "Sixth sentence adds more content. Seventh sentence extends further. "
+        "Eighth sentence provides additional text. Ninth sentence continues on. "
+        "Tenth sentence reaches the end."
+    )
+    
+    print(f"Test text: {repr(test_text)}")
+    print(f"Text length: {len(test_text)} characters")
+    print()
+    
+    # Test the overlap detection directly
+    text_bytes = test_text.encode('utf-8')
+    
+    # Test different desired start positions
+    test_positions = [50, 100, 150, 200]
+    
+    for pos in test_positions:
+        if pos < len(text_bytes):
+            print(f"Testing overlap detection at position {pos}:")
+            print(f"  Context: {repr(test_text[pos:])}")
+            
+            overlap_start = splitter._find_nlp_overlap_start(text_bytes, pos)
+            print(f"  Detected overlap start: {overlap_start}")
+            
+            if overlap_start < len(test_text):
+                print(f"  Text from overlap start: {repr(test_text[overlap_start:])}")
+                
+                # Check if it starts properly
+                if test_text[overlap_start].isupper() or test_text[overlap_start].isdigit():
+                    print(f"  ✅ Overlap starts with proper sentence beginning")
+                else:
+                    print(f"  ❌ Overlap does not start with proper sentence beginning")
+            print()
+    
+    # Now test full splitting
+    print("=== Full Splitting Test ===")
+    chunks = splitter.split_text(test_text)
+    
+    print(f"Generated {len(chunks)} chunks:")
+    for i, chunk in enumerate(chunks, 1):
+        content = chunk.text if hasattr(chunk, 'text') else str(chunk)
+        print(f"\nChunk {i}:")
+        print(f"  Length: {len(content)} characters")
+        print(f"  Content: {repr(content)}")
+        
+        # Check boundary preservation
+        starts_properly = content[0].isupper() or content[0].isdigit() if content else False
+        ends_properly = content[-1] in '.!?' if content else False
+        
+        print(f"  Starts properly: {starts_properly}")
+        print(f"  Ends properly: {ends_properly}")
+        
+        if starts_properly and ends_properly:
+            print(f"  ✅ Chunk {i} preserves sentence boundaries")
+        else:
+            print(f"  ❌ Chunk {i} does not preserve sentence boundaries")
+
+def test_boundary_detection():
+    """Test the smart boundary detection directly."""
+    
+    splitter = TxtTextSplitter(
+        chunk_size=50,
+        chunk_overlap=15,
+        split_by='token',
+    )
+    
+    # Test text with clear sentence boundaries
+    test_text = (
+        "First sentence here. Second sentence follows. Third sentence ends. "
+        "Fourth sentence continues. Fifth sentence completes the test. "
+        "Sixth sentence adds more content. Seventh sentence extends further. "
+        "Eighth sentence provides additional text. Ninth sentence continues on. "
+        "Tenth sentence reaches the end."
+    )
+    
+    print(f"Test text: {repr(test_text)}")
+    print(f"Text length: {len(test_text)} characters")
+    print()
+    
+    # Test the boundary detection directly
+    text_bytes = test_text.encode('utf-8')
+    
+    # Test different ranges to see what boundaries are found
+    test_ranges = [
+        (0, 100),   # Should find boundary around sentence end
+        (50, 150),  # Should find boundary around sentence end
+        (100, 200), # Should find boundary around sentence end
+        (150, 250), # Should find boundary around sentence end
+    ]
+    
+    for start_pos, max_pos in test_ranges:
+        if max_pos <= len(text_bytes):
+            print(f"Testing boundary detection in range [{start_pos}:{max_pos}]:")
+            print(f"  Text in range: {repr(test_text[start_pos:max_pos])}")
+            
+            # Test with 80% ratio (like in the actual code)
+            search_start = start_pos + int((max_pos - start_pos) * 0.8)
+            print(f"  Search start (80%): {search_start}")
+            print(f"  Search text: {repr(test_text[search_start:max_pos])}")
+            
+            boundary = splitter._find_boundary(text_bytes, search_start, max_pos)
+            print(f"  Found boundary at: {boundary}")
+            
+            if boundary < len(test_text):
+                print(f"  Character at boundary: {repr(test_text[boundary])}")
+                print(f"  Text ending at boundary: {repr(test_text[start_pos:boundary])}")
+                
+                # Check if it ends properly
+                if boundary > start_pos:
+                    ending_char = test_text[boundary-1]
+                    if ending_char in '.!?':
+                        print(f"  ✅ Boundary ends with proper punctuation: '{ending_char}'")
+                    else:
+                        print(f"  ❌ Boundary does not end with proper punctuation: '{ending_char}'")
+            print()
+    
+    # Now test the actual splitting to see what happens
+    print("=== Actual Splitting Test ===")
+    chunks = splitter.split_text(test_text)
+    
+    print(f"Generated {len(chunks)} chunks:")
+    for i, chunk in enumerate(chunks, 1):
+        content = chunk.text if hasattr(chunk, 'text') else str(chunk)
+        print(f"\nChunk {i}:")
+        print(f"  Length: {len(content)} characters")
+        print(f"  Content: {repr(content)}")
+        
+        # Check boundary preservation
+        starts_properly = content[0].isupper() or content[0].isdigit() if content else False
+        ends_properly = content[-1] in '.!?' if content else False
+        
+        print(f"  Starts properly: {starts_properly}")
+        print(f"  Ends properly: {ends_properly}")
+        
+        if starts_properly and ends_properly:
+            print(f"  ✅ Chunk {i} preserves sentence boundaries")
+        else:
+            print(f"  ❌ Chunk {i} does not preserve sentence boundaries")
+
+def run_all_tests():
+    """Run all TxtTextSplitter tests."""
+    print("="*80)
+    print("COMPREHENSIVE TXTTEXTSPLITTER TEST SUITE")
+    print("="*80)
+    
+    print("\n" + "="*50)
+    print("TEST 1: OVERLAP DEBUG")
+    print("="*50)
+    test_overlap_debug()
+    
+    print("\n" + "="*50)
+    print("TEST 2: OVERLAP DETECTION")
+    print("="*50)
+    test_overlap_detection()
+    
+    print("\n" + "="*50)
+    print("TEST 3: BOUNDARY DETECTION")
+    print("="*50)
+    test_boundary_detection()
+    
+    print("\n" + "="*80)
+    print("ALL TESTS COMPLETED")
+    print("="*80)
+
+if __name__ == "__main__":
+    run_all_tests()
