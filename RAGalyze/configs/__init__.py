@@ -1,5 +1,5 @@
-from .compose_hydra import load_all_configs_programmatically
-configs = load_all_configs_programmatically()
+from .compose_hydra import load_all_configs
+configs = load_all_configs()
 
 import adalflow as adal
 

@@ -4,7 +4,7 @@ import re
 from typing import List, Optional, Dict, Literal, Any
 from adalflow.components.data_process import TextSplitter
 from adalflow.core.types import Document
-from logger.logging_config import get_tqdm_compatible_logger
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
 
 # NLP libraries for intelligent text boundary detection
 try:
@@ -76,9 +76,9 @@ class TxtTextSplitter(TextSplitter):
     def __getstate__(self):
         """Exclude non-serializable attributes from pickling."""
         state = self.__dict__.copy()
-        # Remove the non-serializable 'parsers' attribute
-        if 'parsers' in state:
-            del state['parsers']
+        # Remove the non-serializable 'nlp_model' attribute
+        if 'nlp_model' in state:
+            del state['nlp_model']
         return state
 
     def __setstate__(self, state):

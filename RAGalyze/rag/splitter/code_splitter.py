@@ -4,7 +4,7 @@ import re
 from typing import List, Optional, Dict, Literal, Any
 from adalflow.components.data_process import TextSplitter
 from adalflow.core.types import Document
-from logger.logging_config import get_tqdm_compatible_logger
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
 
 try:
     from tree_sitter import Language, Parser
@@ -180,15 +180,20 @@ class CodeSplitter(TextSplitter):
     def __getstate__(self):
         """Exclude non-serializable attributes from pickling."""
         state = self.__dict__.copy()
-        # Remove the non-serializable 'parsers' attribute
+        # Remove the non-serializable tree_sitter.Parser objects
         if 'parsers' in state:
             del state['parsers']
+        if 'parser' in state:
+            del state['parser']
+        # Remove the non-serializable tree_sitter.Tree object
+        if 'tree' in state:
+            del state['tree']
         return state
 
     def __setstate__(self, state):
         """Re-initialize non-serializable attributes after unpickling."""
         self.__dict__.update(state)
-        # Re-initialize the 'parsers' attribute
+        # Re-initialize the tree_sitter.Parser objects
         self.parsers = {}
         if TREE_SITTER_AVAILABLE:
             self._init_parsers()

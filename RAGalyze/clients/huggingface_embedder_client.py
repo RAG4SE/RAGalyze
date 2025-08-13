@@ -1,7 +1,6 @@
 """GPU-accelerated HuggingFace ModelClient."""
 
 import os
-from logger.logging_config import get_tqdm_compatible_logger
 from typing import Dict, List, Any, Optional
 import numpy as np
 import torch
@@ -28,7 +27,7 @@ from adalflow.core.types import (
 import adalflow.core.functional as F
 
 # Configure logging
-from logger.logging_config import setup_logging
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
 
 # # Disable tqdm progress bars
 # os.environ["TQDM_DISABLE"] = "1"

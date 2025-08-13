@@ -1,14 +1,16 @@
-from configs import configs
-from logger.logging_config import get_tqdm_compatible_logger
 from dataclasses import dataclass
 from typing import List, Dict
 from uuid import uuid4
+
 import adalflow as adal
 from adalflow.core.types import RetrieverOutput
 from adalflow.core.types import Document
-from rag.hybrid_retriever import HybridRetriever
-from core.data_pipeline import DatabaseManager
-from rag.dual_vector import DualVectorDocument
+
+from RAGalyze.configs import configs
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
+from RAGalyze.rag.hybrid_retriever import HybridRetriever
+from RAGalyze.rag.data_pipeline import DatabaseManager
+from RAGalyze.rag.dual_vector import DualVectorDocument
 
 # Configure logging
 logger = get_tqdm_compatible_logger(__name__)

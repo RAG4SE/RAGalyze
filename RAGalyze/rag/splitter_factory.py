@@ -1,13 +1,10 @@
 """Factory for creating appropriate text splitters based on document type."""
 
-from multiprocessing import Value
 import os
-from typing import Union, Dict, Any
-from adalflow.components.data_process import TextSplitter
-from adalflow.core.tokenizer import Tokenizer
-from rag.splitter import *
-from configs import configs
-from logger.logging_config import get_tqdm_compatible_logger
+
+from RAGalyze.rag.splitter import *
+from RAGalyze.configs import configs
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
 
 logger = get_tqdm_compatible_logger(__name__)
 
@@ -21,26 +18,10 @@ class SplitterFactory:
     # File extensions that are considered text/documentation files
     TEXT_EXTENSIONS = configs['repo']['file_extensions']['doc_extensions']
     
-    # Markdown-specific extensions
-    MARKDOWN_EXTENSIONS = ['.md', '.markdown', '.mdown', '.mkd', '.mkdn']
-    
-    # JSON-specific extensions
-    JSON_EXTENSIONS = ['.json', '.jsonl', '.ndjson']
-    
-    # RST-specific extensions
-    RST_EXTENSIONS = ['.rst', '.rest']
-    
-    # YAML-specific extensions
-    YAML_EXTENSIONS = ['.yaml', '.yml']
-    
     def __init__(self):
         """Initialize the splitter factory."""
         self._text_splitter = None
         self._code_splitter = None
-        self._markdown_splitter = None
-        self._json_splitter = None
-        self._rst_splitter = None
-        self._yaml_splitter = None
     
     def _get_txt_splitter(self) -> TxtTextSplitter:
         """Get or create text splitter instance.
@@ -92,14 +73,6 @@ class SplitterFactory:
         
         if ext in self.CODE_EXTENSIONS:
             return 'code', ext
-        elif ext in self.MARKDOWN_EXTENSIONS:
-            return 'markdown', ext
-        elif ext in self.JSON_EXTENSIONS:
-            return 'json', ext
-        elif ext in self.RST_EXTENSIONS:
-            return 'rst', ext
-        elif ext in self.YAML_EXTENSIONS:
-            return 'yaml', ext
         elif ext in self.TEXT_EXTENSIONS:
             return 'text', ext
         else:
@@ -234,14 +207,6 @@ class SplitterFactory:
         # Return appropriate splitter based on document type
         if doc_type == 'code':
             return self._get_code_splitter(ext)
-        elif doc_type == 'markdown':
-            return self._get_markdown_splitter()
-        elif doc_type == 'json':
-            return self._get_json_splitter()
-        elif doc_type == 'rst':
-            return self._get_rst_splitter()
-        elif doc_type == 'yaml':
-            return self._get_yaml_splitter()
         else:  # 'text' or fallback
             return self._get_txt_splitter()
 

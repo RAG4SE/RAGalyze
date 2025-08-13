@@ -1,15 +1,16 @@
 import os
 import adalflow as adal
-from configs import configs
-from logger.logging_config import get_tqdm_compatible_logger
 import logging
 from typing import List, Optional, Union
-from rag.dual_vector import DualVectorDocument
 
 from adalflow.core.types import Document, ModelType, RetrieverOutput, RetrieverOutputType
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
-from clients.dashscope_client import DashScopeClient
 from adalflow.core.component import DataComponent
+
+from RAGalyze.clients.dashscope_client import DashScopeClient
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
+from RAGalyze.configs import configs
+from RAGalyze.rag.dual_vector import DualVectorDocument
 
 logger = get_tqdm_compatible_logger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)

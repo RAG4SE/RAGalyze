@@ -10,23 +10,22 @@ from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
 #! Though the following imports are not directly used, they are stored in globals() and will be used implicitly. So DO NOT REMOVE THEM!!
-from clients.huggingface_embedder_client import HuggingfaceClient, HuggingfaceEmbedder
-from clients.dashscope_client import DashScopeClient, DashScopeEmbedder
+from RAGalyze.clients.huggingface_embedder_client import HuggingfaceClient, HuggingfaceEmbedder
+from RAGalyze.clients.dashscope_client import DashScopeClient, DashScopeEmbedder
 from adalflow import GoogleGenAIClient
 
-def load_all_configs_programmatically():
+def load_all_configs():
     """
     Load all YAML configurations programmatically using Hydra's compose API.
     """
     
     # Get absolute path to configs directory
-    config_dir = os.path.abspath("configs")
-    
+    config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__)))
+    print(f"config_dir: {config_dir}")
     # Initialize Hydra with the configs directory
     with initialize_config_dir(config_dir=config_dir, version_base=None):
         # Get list of available config files
         config_files = [f.stem for f in Path(config_dir).glob("*.yaml")]
-        
         # Load each configuration
         all_configs = {}
         for config_name in config_files:
@@ -86,7 +85,7 @@ def main():
     
     try:
         # Load all configurations
-        all_configs = load_all_configs_programmatically()
+        all_configs = load_all_configs()
         print(all_configs)
 
     except Exception as e:

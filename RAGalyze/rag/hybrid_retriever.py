@@ -1,12 +1,14 @@
-from configs import get_embedder, configs
-from logger.logging_config import get_tqdm_compatible_logger
 import re
 from typing import List, Optional, Union, Dict, Any
 from rank_bm25 import BM25Okapi
+
 from adalflow.core.types import RetrieverOutput, Document
-from rag.dual_vector import DualVectorDocument
-from rag.dual_vector_pipeline import DualVectorRetriever
-from rag.single_retriever import SingleVectorRetriever
+
+from RAGalyze.configs import get_embedder, configs
+from RAGalyze.rag.dual_vector import DualVectorDocument
+from RAGalyze.rag.dual_vector_pipeline import DualVectorRetriever
+from RAGalyze.rag.single_retriever import SingleVectorRetriever
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
 
 logger = get_tqdm_compatible_logger(__name__)
 

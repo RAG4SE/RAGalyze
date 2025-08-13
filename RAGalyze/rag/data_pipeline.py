@@ -1,18 +1,19 @@
-import adalflow as adal
-from adalflow.core.types import Document, List
-from adalflow.components.data_process import TextSplitter
 import os
 from typing import List, Optional, Tuple, Union
-from logger.logging_config import get_tqdm_compatible_logger
 import glob
+
+import adalflow as adal
+from adalflow.core.types import Document, List
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
-from rag.dual_vector_pipeline import DualVectorDocument
-from clients.huggingface_embedder_client import HuggingfaceClientToEmbeddings
-from clients.dashscope_client import DashScopeToEmbeddings
-from rag.dual_vector_pipeline import DualVectorToEmbeddings, CodeUnderstandingGenerator
-from rag.dynamic_splitter_transformer import DynamicSplitterTransformer
-from configs import get_embedder, configs
+
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
+from RAGalyze.clients.huggingface_embedder_client import HuggingfaceClientToEmbeddings
+from RAGalyze.clients.dashscope_client import DashScopeToEmbeddings
+from RAGalyze.rag.dual_vector_pipeline import DualVectorDocument
+from RAGalyze.rag.dual_vector_pipeline import DualVectorToEmbeddings, CodeUnderstandingGenerator
+from RAGalyze.rag.dynamic_splitter_transformer import DynamicSplitterTransformer
+from RAGalyze.configs import get_embedder, configs
 
 # The setting is from the observation that the maximum length of Solidity compiler's files is 919974
 MAX_EMBEDDING_LENGTH = 1000000

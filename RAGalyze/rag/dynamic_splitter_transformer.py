@@ -1,10 +1,12 @@
 """Dynamic splitter transformer that selects appropriate splitter based on document type."""
 
 from typing import List, Union, Any
+
 from adalflow.core.types import Document
 from adalflow.core.component import Component
-from rag.splitter_factory import get_splitter_factory
-from logger.logging_config import get_tqdm_compatible_logger
+
+from RAGalyze.rag.splitter_factory import get_splitter_factory
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
 
 logger = get_tqdm_compatible_logger(__name__)
 

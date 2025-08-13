@@ -1,7 +1,6 @@
 """Dashscope (Alibaba Cloud) ModelClient integration."""
 
 import os
-import pickle
 from typing import (
     Dict,
     Optional,
@@ -14,7 +13,6 @@ from typing import (
     Sequence,
 )
 
-from logger.logging_config import get_tqdm_compatible_logger
 import backoff
 from copy import deepcopy
 from tqdm import tqdm
@@ -57,6 +55,7 @@ from adalflow.core.embedder import (
 import adalflow.core.functional as F
 from adalflow.components.model_client.utils import parse_embedding_response
 
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
 # # Disable tqdm progress bars
 # os.environ["TQDM_DISABLE"] = "1"
 

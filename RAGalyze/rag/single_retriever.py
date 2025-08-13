@@ -1,7 +1,9 @@
 from typing import List, Optional
+
 from adalflow.core.types import Document, RetrieverOutput, RetrieverOutputType
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever, FAISSRetrieverQueriesType
-from logger.logging_config import get_tqdm_compatible_logger
+
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
 
 logger = get_tqdm_compatible_logger(__name__)
 

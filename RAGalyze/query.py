@@ -5,13 +5,14 @@ RAGalyze Query Module
 
 import os
 import sys
-from logger.logging_config import get_tqdm_compatible_logger
+from RAGalyze.logger.logging_config import get_tqdm_compatible_logger
 from typing import Dict, List, Optional, Any
 # Add the parent directory to Python path to import core modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import traceback
+from omegaconf import DictConfig, OmegaConf
 
-from rag.rag import RAG
+from RAGalyze.rag.rag import RAG
 
 # Setup logging
 logger = get_tqdm_compatible_logger(__name__)
@@ -49,6 +50,7 @@ def analyze_repository(repo_path: str) -> RAG:
     logger.info(f"✅ Analysis complete for: {repo_path}")
 
     return rag
+
 
 def query_repository(repo_path: str, 
                     question: str) -> Dict[str, Any]:
