@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepwiki_cli"
+version = "0.1.0"
+description = "Repository Analysis and Query Library with RAG capabilities"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Haoyang Ma", email = "haoyanghkust@gmail.com"},
+]
+keywords = ["deepwiki", "rag", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "adalflow",
+    "omegaconf",
+    "hydra-core",
+    "faiss-cpu",
+    "tqdm",
+    "pathlib",
+    # Add other dependencies as needed
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+    "mypy",
+    "build",
+    "twine",
+]
+
+[project.urls]
+Homepage = "https://github.com/RAG4SE/deepwiki-cli"
+Documentation = "https://github.com/RAG4SE/deepwiki-cli#readme"
+Repository = "https://github.com/RAG4SE/deepwiki-cli"
+"Bug Tracker" = "https://github.com/RAG4SE/deepwiki-cli/issues"
+
+[project.scripts]
+deepwiki = "deepwiki_cli.query:hydra_wrapped_query_repository"
+
+[tool.setuptools]
+packages = ["deepwiki_cli", "deepwiki_cli.configs", "deepwiki_cli.rag", "deepwiki_cli.clients", "deepwiki_cli.logger"]
+
+[tool.setuptools.package-data]
+"deepwiki_cli" = ["configs/*.yaml", "configs/*.yml"]

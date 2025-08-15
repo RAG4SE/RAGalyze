@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include requirements.txt
+recursive-include configs *.yaml *.yml
+recursive-include ragalyze/configs *.yaml *.yml
+global-exclude __pycache__
+global-exclude *.py[co]

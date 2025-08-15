@@ -1,45 +1,107 @@
-# RAGalyze 🚀
+# DeepWiki CLI
 
-A powerful RAG (Retrieval-Augmented Generation) system with advanced text splitting capabilities.
-
-## Installation
-
-### 1. Install Python Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Install System Dependencies
-
-#### Install Pandoc (Required for RST document processing)
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get update
-sudo apt-get install -y pandoc
-```
-
-**macOS:**
-```bash
-brew install pandoc
-```
-
-**Windows:**
-- Download and install from [Pandoc releases](https://github.com/jgm/pandoc/releases)
-- Or use chocolatey: `choco install pandoc`
-
-**Note:** Pandoc is required for the `UnstructuredRstTextSplitter` to work properly. It's used by the `unstructured` library to convert RST documents to HTML for parsing.
+Repository Analysis and Query CLI Tool with RAG (Retrieval-Augmented Generation) capabilities.
 
 ## Features
 
-- **Advanced Text Splitting**: Support for multiple document formats (Markdown, RST, JSON, YAML, Code, etc.)
-- **Intelligent RST Processing**: Uses `unstructured` library with Pandoc for semantic RST document splitting
-- **Hybrid Retrieval**: Combines multiple retrieval strategies for better results
-- **Configurable Pipeline**: Flexible configuration system with Hydra
+- **Repository Analysis**: Analyze code repositories and extract meaningful information
+- **RAG-powered Q&A**: Ask questions about your codebase and get intelligent answers
+- **Dual Usage**: Use as a Python library or command-line tool
+- **Configurable**: Flexible configuration system using Hydra
+- **Advanced Retrieval**: Supports dual-vector embedding (code + semantic interpretation) and hybrid search (BM25 + FAISS) for enhanced precision
 
-## TODO
-1. Support hybrid text splitting for markdown
+## Installation
+
+### From PyPI
+
+```bash
+pip install deepwiki_cli
+```
+
+### From Source
+
+```bash
+git clone git@github.com:RAG4SE/deepwiki-cli.git
+cd deepwiki-cli
+pip install .
+
+```
+
+## A Quick Start
+
+### Set up API keys of LLM providers
+
+DeepWiki-cli requires API keys from LLM providers to function properly. The tool has been thoroughly tested with the following model configurations:
+
+**Embedding Models:**
+- Huggingface: `intfloat/multilingual-e5-large-instruct`
+- Dashscope: `text-embedding-v4`
+
+**Question Answering Models:**
+- Dashscope: `qwen-plus`, `qwen-max`, `qwen-turbo`
+- Google: `gemini-2.5-flash-preview-05-20`
+
+**Code Understanding Model (for dual-vector embedding):**
+- Dashscope: `qwen3-32b`
+
+> **Note**: Support for additional mainstream models and providers is planned for future releases.
+
+You can refer to the following coarse-grained table to get the corresponding API keys and store them into your env.
+
+| Provider | Required Environment Variables | How to Get API Key |
+|----------|-------------------------------|-------------------|
+| **Google Gemini** | `GOOGLE_API_KEY` | [Get API Key](https://aistudio.google.com/app/apikey) |
+| **OpenAI** | `OPENAI_API_KEY` | [Get API Key](https://platform.openai.com/api-keys) |
+| **DeepSeek** | `DEEPSEEK_API_KEY` | [Get API Key](https://platform.deepseek.com/api_keys) |
+| **Dashscope (Qwen)** | `DASHSCOPE_API_KEY`, `DASHSCOPE_WORKSPACE_ID` (optional) | [Get API Key and WorkSpace](https://bailian.console.aliyun.com/?spm=a2c4g.11186623.0.0.6ebe48238qeoit&tab=api#/api)  |
+| **SiliconFlow** | `SILICONFLOW_API_KEY` | [Get API Key](https://cloud.siliconflow.cn/i/api-keys) |
+
+### As a Command-Line Tool
+
+After installation, you can use the `deepwiki` command:
+
+```bash
+# Using Hydra syntax
+deepwiki repo_path=/path/to/repository question="What does this project do?"
+```
+
+### As a Python Library
+
+```python
+from deepwiki_cli import *
+
+repo_path = "/path/to/repository"
+question = "What does this project do?"
+
+# Basic usage
+result = query_repository(
+    repo_path=repo_path,
+    question=question
+)
+
+print_result(result)
+save_query_results(result, repo_path, question)
+
+# Load default DictConfig
+dict_config = load_default_config()
+# Add custom config
+# Use qwen-plus instead of the default qwen-coder to reply
+dict_config.generator.model = "qwen-plus"
+# Disable the use of bm25
+dict_config.rag.hybrid.enabled = False
+# Disable semantic interpretation in dual-vector embedding, only embed code snippets
+dict_config.rag.embedder.sketch_filling = False
+# Modify the global dict-type configs
+configs = load_all_configs(dict_config)
+
+result = query_repository(
+    repo_path=repo_path,
+    question=question,
+)
+
+print_result(result)
+save_query_results(result, repo_path, question)
+```
 
 ## Acknowledgements
 

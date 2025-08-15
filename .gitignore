@@ -6,3 +6,11 @@ __pycache__/
 logs/
 .vercel/
 outputs/
+*.ipynb
+test*.*
+build/
+*.so
+log/
+dist/
+*.egg-info/
+reply/
