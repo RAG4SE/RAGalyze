@@ -1,12 +1,10 @@
-from .compose_hydra import load_all_configs
-
-configs = load_all_configs()
+from .compose_hydra import load_all_configs, load_default_config, configs
 
 import adalflow as adal
 
 
 def get_embedder() -> adal.Embedder:
-    embedder_config = configs["rag"]["embedder"]
+    embedder_config = configs()["rag"]["embedder"]
     model_client_class = embedder_config["model_client"]
     model_kwargs = embedder_config[
         "model_kwargs"

@@ -106,8 +106,8 @@ class RAG(adal.Component):
         Initialize the RAG component.
         """
         super().__init__()
-        assert "generator" in configs, "configs must contain generator section"
-        generator_config = configs["generator"]
+        assert "generator" in configs(), "configs must contain generator section"
+        generator_config = configs()["generator"]
         assert (
             "provider" in generator_config
         ), "generator_config must contain provider section"

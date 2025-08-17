@@ -2,6 +2,9 @@ import logging
 import os
 from pathlib import Path
 
+# Silence adalflow logging
+logging.getLogger("adalflow").setLevel(logging.CRITICAL)
+
 RED = "\033[31m"
 GREEN = "\033[32m"
 BLUE = "\033[34m"

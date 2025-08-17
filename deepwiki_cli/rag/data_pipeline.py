@@ -217,12 +217,12 @@ def read_all_documents(path: str):
         list: A list of Document objects with metadata.
     """
     documents = []
-    included_dirs = configs["repo"]["file_filters"]["included_dirs"]
-    included_files = configs["repo"]["file_filters"]["included_files"]
-    excluded_dirs = configs["repo"]["file_filters"]["excluded_dirs"]
-    excluded_files = configs["repo"]["file_filters"]["excluded_files"]
-    code_extensions = configs["repo"]["file_extensions"]["code_extensions"]
-    doc_extensions = configs["repo"]["file_extensions"]["doc_extensions"]
+    included_dirs = configs()["repo"]["file_filters"]["included_dirs"]
+    included_files = configs()["repo"]["file_filters"]["included_files"]
+    excluded_dirs = configs()["repo"]["file_filters"]["excluded_dirs"]
+    excluded_files = configs()["repo"]["file_filters"]["excluded_files"]
+    code_extensions = configs()["repo"]["file_extensions"]["code_extensions"]
+    doc_extensions = configs()["repo"]["file_extensions"]["doc_extensions"]
 
     # Determine filtering mode: inclusion or exclusion
     use_inclusion_mode = (included_dirs is not None and len(included_dirs) > 0) or (
@@ -460,13 +460,13 @@ def prepare_data_transformer() -> adal.Sequential:
     Returns:
         adal.Sequential: The data transformation pipeline
     """
-    use_dual_vector = configs["rag"]["embedder"]["sketch_filling"]
-    code_understanding_config = configs["rag"]["code_understanding"]
+    use_dual_vector = configs()["rag"]["embedder"]["sketch_filling"]
+    code_understanding_config = configs()["rag"]["code_understanding"]
 
     # Use dynamic splitter that automatically selects appropriate splitter
     splitter = DynamicSplitterTransformer()
 
-    embedder_model_config = configs["rag"]["embedder"]["model_kwargs"]
+    embedder_model_config = configs()["rag"]["embedder"]["model_kwargs"]
     embedder = get_embedder()
     if use_dual_vector:
         code_understanding_generator = CodeUnderstandingGenerator(
@@ -541,8 +541,8 @@ class DatabaseManager:
         self.data_transformer = None
         self.repo_path = repo_path
 
-        assert "rag" in configs, "configs must contain rag section"
-        rag_config = configs["rag"]
+        assert "rag" in configs(), "configs() must contain rag section"
+        rag_config = configs()["rag"]
         assert "embedder" in rag_config, "rag_config must contain embedder section"
         assert (
             "sketch_filling" in rag_config["embedder"]
@@ -583,8 +583,8 @@ class DatabaseManager:
         if self.use_bm25:
             file_name += "-bm25"
         file_name = file_name.replace("/", "#")
-        embedding_provider = configs["rag"]["embedder"]["client_class"]
-        embedding_model = configs["rag"]["embedder"]["model"]
+        embedding_provider = configs()["rag"]["embedder"]["client_class"]
+        embedding_model = configs()["rag"]["embedder"]["model"]
         file_name += f"-{embedding_provider}-{embedding_model}".replace("/", "#")
         return file_name
 
@@ -607,7 +607,7 @@ class DatabaseManager:
             List[Document]: List of Document objects
         """
 
-        force_recreate = configs["rag"]["embedder"]["force_embedding"]
+        force_recreate = configs()["rag"]["embedder"]["force_embedding"]
 
         # check the database
         if (

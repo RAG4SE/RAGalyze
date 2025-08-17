@@ -1,10 +1,15 @@
 """Smart text splitter that finds appropriate stopping points near chunk boundaries."""
 
-import re
-from typing import List, Optional, Dict, Literal, Any
+from typing import List, Literal
 from adalflow.components.data_process import TextSplitter
+from adalflow.components.data_process.text_splitter import (
+    DocumentSplitterInputType,
+    DocumentSplitterOutputType,
+)
 from adalflow.core.types import Document
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
+from copy import deepcopy
+from tqdm import tqdm
 
 try:
     from tree_sitter import Language, Parser
@@ -177,7 +182,7 @@ class CodeSplitter(TextSplitter):
 
         assert (
             split_by == "word" or split_by == "token"
-        ), "CodeSplitter only supports split_by='word' or split_by='token'"
+        ), f"CodeSplitter only supports split_by='word' or split_by='token', but got {split_by}"
 
         super().__init__(split_by, chunk_size, chunk_overlap, batch_size)
         self.smart_boundary_ratio = smart_boundary_ratio
@@ -194,9 +199,22 @@ class CodeSplitter(TextSplitter):
                 "Tree-sitter not available. Code splitting will use fallback method."
             )
 
-        logger.info(
-            f"Initialized CodeSplitter with smart_boundary_ratio={smart_boundary_ratio}, file_extension={file_extension}"
-        )
+    def get_key(self) -> str:
+        """Generate a unique key for this splitter configuration.
+
+        Returns:
+            str: Unique key representing this splitter's configuration
+        """
+        key_params = [
+            f"split_by:{self.split_by}",
+            f"batch_size:{self.batch_size}",
+            f"separator:{self.separators[self.split_by]}",
+            f"chunk_size:{self.chunk_size}",
+            f"chunk_overlap:{self.chunk_overlap}",
+            f"smart_boundary_ratio:{self.smart_boundary_ratio}",
+            f"file_extension:{self.file_extension}",
+        ]
+        return f"{self.__class__.__name__}({','.join(key_params)})"
 
     def __getstate__(self):
         """Exclude non-serializable attributes from pickling."""
@@ -522,10 +540,10 @@ class CodeSplitter(TextSplitter):
             # Calculate the end position for this chunk
             chunk_end = min(idx + chunk_size, len(splits))
             prev_chunk_bytes = (
-                separator.join(splits[:idx]).encode("utf-8") if idx > 0 else b""
+                separator.join(splits[:idx]).encode("utf-8", errors="ignore") if idx > 0 else b""
             )
             chunk_text = separator.join(splits[idx:chunk_end])
-            chunk_text_bytes = chunk_text.encode("utf-8")
+            chunk_text_bytes = chunk_text.encode("utf-8", errors="ignore")
             # If this is not the last chunk and we have room for smart boundary detection
             if chunk_end < len(splits):
                 # Find smart boundary in the last portion of the chunk
@@ -546,7 +564,7 @@ class CodeSplitter(TextSplitter):
                     )
                     chunk_end = idx + len(boundary_text.split(separator))
                     # Update chunk_text_bytes to reflect the boundary adjustment
-                    chunk_text_bytes = boundary_text.encode("utf-8")
+                    chunk_text_bytes = boundary_text.encode("utf-8", errors="ignore")
 
                     logger.debug(
                         f"Found smart boundary at position {smart_boundary_pos} (token {chunk_end})"
@@ -571,7 +589,7 @@ class CodeSplitter(TextSplitter):
             if num_non_overlap_words > 0 and chunk_end < len(splits):
                 bytetext_before_overlap = separator.join(
                     actual_chunk_words[:num_non_overlap_words]
-                ).encode("utf-8")
+                ).encode("utf-8", errors="ignore")
                 desired_start_byte = len(bytetext_before_overlap)
                 best_start_byte = self._find_prev_code_boundary_with_treesitter(
                     self.bytes, desired_start_byte + len(prev_chunk_bytes)
@@ -599,9 +617,6 @@ class CodeSplitter(TextSplitter):
             ), f"next_idx ({next_idx}) must be greater than idx ({idx})"
             idx = next_idx
 
-        logger.info(
-            f"Smart splitting created {len(chunks)} chunks from {len(splits)} tokens"
-        )
         return chunks
 
     def _merge_units_to_chunks_by_tokens(
@@ -617,9 +632,9 @@ class CodeSplitter(TextSplitter):
             chunk_end = min(idx + chunk_size, len(splits))
             chunk_tokens = splits[idx:chunk_end]
             prev_chunk_bytes = (
-                self.tokenizer.decode(splits[:idx]).encode("utf-8") if idx > 0 else b""
+                self.tokenizer.decode(splits[:idx]).encode("utf-8", errors="ignore") if idx > 0 else b""
             )
-            chunk_text_bytes = self.tokenizer.decode(chunk_tokens).encode("utf-8")
+            chunk_text_bytes = self.tokenizer.decode(chunk_tokens).encode("utf-8", errors="ignore")
             # If this is not the last chunk and we have room for smart boundary detection
             if (
                 chunk_end < len(splits)
@@ -645,7 +660,7 @@ class CodeSplitter(TextSplitter):
                     boundary_tokens = self.tokenizer.encode(boundary_text)
                     chunk_end = idx + len(boundary_tokens)
                     # Update chunk_text_bytes to reflect the boundary adjustment
-                    chunk_text_bytes = boundary_text.encode("utf-8")
+                    chunk_text_bytes = boundary_text.encode("utf-8", errors="ignore")
 
                     logger.debug(
                         f"Found smart boundary at position {smart_boundary_pos} (token {chunk_end})"
@@ -665,7 +680,7 @@ class CodeSplitter(TextSplitter):
             if num_non_overlap_tokens > 0 and chunk_end < len(splits):
                 bytetext_before_overlap = self.tokenizer.decode(
                     actual_chunk_tokens[:num_non_overlap_tokens]
-                ).encode("utf-8")
+                ).encode("utf-8", errors="ignore")
                 desired_start_byte = len(bytetext_before_overlap)
 
                 best_start_byte = self._find_prev_code_boundary_with_treesitter(
@@ -748,20 +763,74 @@ class CodeSplitter(TextSplitter):
         Initialize parser
         Split the text into chunks using the smart boundary detection.
         """
-        language = self.SUFFIX_TO_LANG[self.file_extension]
-        self.language = language
+        self.language = self.SUFFIX_TO_LANG[self.file_extension]
         self.text = text
-        self.bytes = text.encode("utf-8")
-        self.parser = self.parsers[language]
-        self.tree = self.parser.parse(text.encode("utf-8"))
-
-        # Build a list of nodes sorted by end byte position
-        def collect_nodes(node):
-            nodes = []
-            if self._is_statement_node(node, language):
-                nodes.append(node)
-            for child in node.children:
-                nodes.extend(collect_nodes(child))
-            return nodes
+        self.bytes = text.encode("utf-8", errors="ignore")
+        self.parser = self.parsers[self.language]
+        self.tree = self.parser.parse(self.bytes)
 
         return super().split_text(text)
+
+    def call(self, documents: DocumentSplitterInputType) -> DocumentSplitterOutputType:
+        """
+        Process the splitting task on a list of documents in batch.
+
+        Batch processes a list of documents, splitting each document's text according to the configured
+        split_by, chunk size, and chunk overlap.
+
+        Compared with TextSplitter.call, this method remvoes redundant logging and handles errors in split_text.
+
+        Args:
+            documents (List[Document]): A list of Document objects to process.
+
+        Returns:
+            List[Document]: A list of new Document objects, each containing a chunk of text from the original documents.
+
+        Raises:
+            TypeError: If 'documents' is not a list or contains non-Document objects.
+            ValueError: If any document's text is None.
+        """
+
+        if not isinstance(documents, list) or any(
+            not isinstance(doc, Document) for doc in documents
+        ):
+            raise TypeError("Input should be a list of Documents.")
+
+        split_docs = []
+        # Using range and batch_size to create batches
+        for start_idx in tqdm(
+            range(0, len(documents), self.batch_size),
+            desc="Splitting Documents in Batches",
+        ):
+            batch_docs = documents[start_idx : start_idx + self.batch_size]
+
+            for doc in batch_docs:
+                if not isinstance(doc, Document):
+                    raise TypeError(
+                        f"Each item in documents should be an instance of Document, but got {type(doc).__name__}."
+                    )
+
+                if doc.text is None:
+                    raise ValueError(f"Text should not be None. Doc id: {doc.id}")
+
+                try:
+                    text_splits = self.split_text(doc.text)
+                except Exception as e:
+                    logger.warning(f"Error splitting document {doc.id}: {e}")
+                    continue
+
+                meta_data = deepcopy(doc.meta_data)
+
+                split_docs.extend(
+                    [
+                        Document(
+                            text=txt,
+                            meta_data=meta_data,
+                            parent_doc_id=f"{doc.id}",
+                            order=i,
+                            vector=[],
+                        )
+                        for i, txt in enumerate(text_splits)
+                    ]
+                )
+        return split_docs

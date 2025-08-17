@@ -2,6 +2,8 @@
 
 import os
 
+from adalflow.components.data_process import TextSplitter
+
 from deepwiki_cli.rag.splitter import *
 from deepwiki_cli.configs import configs
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
@@ -12,16 +14,15 @@ logger = get_tqdm_compatible_logger(__name__)
 class SplitterFactory:
     """Factory class for creating appropriate splitters based on document type."""
 
-    # File extensions that are considered code files
-    CODE_EXTENSIONS = configs["repo"]["file_extensions"]["code_extensions"]
-
-    # File extensions that are considered text/documentation files
-    TEXT_EXTENSIONS = configs["repo"]["file_extensions"]["doc_extensions"]
 
     def __init__(self):
         """Initialize the splitter factory."""
         self._text_splitter = None
         self._code_splitter = None
+        # File extensions that are considered code files
+        self.CODE_EXTENSIONS = configs()["repo"]["file_extensions"]["code_extensions"]
+        # File extensions that are considered text/documentation files
+        self.TEXT_EXTENSIONS = configs()["repo"]["file_extensions"]["doc_extensions"]
 
     def _get_txt_splitter(self) -> TxtTextSplitter:
         """Get or create text splitter instance.
@@ -30,13 +31,10 @@ class SplitterFactory:
             SmartTextSplitter: Configured smart text splitter
         """
         if self._text_splitter is None:
-            text_splitter_config = configs["rag"]["text_splitter"].copy()
+            text_splitter_config = configs()["rag"]["text_splitter"].copy()
             # Add smart splitting parameters for text content
             text_splitter_config["smart_boundary_ratio"] = 0.8
             self._text_splitter = TxtTextSplitter(**text_splitter_config)
-            logger.info(
-                f"Created smart text splitter with config: {text_splitter_config}"
-            )
         return self._text_splitter
 
     def _get_code_splitter(self, extension: str) -> CodeSplitter:
@@ -46,7 +44,7 @@ class SplitterFactory:
             SmartTextSplitter: Configured smart code splitter with custom tokenizer
         """
         if self._code_splitter is None:
-            code_splitter_config = configs["rag"]["code_splitter"].copy()
+            code_splitter_config = configs()["rag"]["code_splitter"].copy()
 
             # Add smart splitting parameters for code content
             code_splitter_config["smart_boundary_ratio"] = (
@@ -56,9 +54,6 @@ class SplitterFactory:
             # Create the smart code splitter
             self._code_splitter = CodeSplitter(**code_splitter_config)
 
-            logger.info(
-                f"Created smart code splitter with config: {code_splitter_config}"
-            )
         return self._code_splitter
 
     def detect_document_type(self, file_path: str) -> tuple[str, str]:

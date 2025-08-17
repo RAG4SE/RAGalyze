@@ -16,7 +16,11 @@ from deepwiki_cli.clients.huggingface_embedder_client import (
 )
 from deepwiki_cli.clients.dashscope_client import DashScopeClient, DashScopeEmbedder
 from adalflow import GoogleGenAIClient
+from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
 
+global_configs = None
+# Setup logging
+logger = get_tqdm_compatible_logger(__name__)
 
 def load_default_config() -> DictConfig:
     """
@@ -25,13 +29,22 @@ def load_default_config() -> DictConfig:
     with initialize(config_path=".", version_base=None):
         return compose(config_name="main")
 
-def load_all_configs(cfg: DictConfig = None) -> dict:
+def load_all_configs(cfg: DictConfig = None):
     if cfg is None:
         cfg = load_default_config()
     all_configs = OmegaConf.to_container(cfg, resolve=True)
     load_generator_config(all_configs)
     load_rag_config(all_configs)
-    return all_configs
+    global global_configs
+    global_configs = all_configs
+
+
+def configs():
+    if global_configs is None:
+        raise ValueError("May use global_configs before loading all configs. Probably deepwiki_cli has incorrect initialization.")
+        # logger.warning("May use global_configs before loading all configs. Probably deepwiki_cli has incorrect initialization.")
+        # load_all_configs()
+    return global_configs
 
 
 PROVIDER_NAME_TO_CLASS = {

@@ -7,10 +7,9 @@ logs/
 .vercel/
 outputs/
 *.ipynb
-test*.*
 build/
-*.so
 log/
 dist/
 *.egg-info/
 reply/
+.pytest_cache/

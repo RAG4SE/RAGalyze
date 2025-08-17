@@ -45,7 +45,7 @@ class CodeUnderstandingGenerator:
         Initializes the code understanding generator.
 
         """
-        code_understanding_generator_config = configs["rag"]["code_understanding"]
+        code_understanding_generator_config = configs()["rag"]["code_understanding"]
         assert (
             "model" in code_understanding_generator_config
         ), f"rag/dual_vector_pipeline.py:model not found in code_understanding_generator_config"

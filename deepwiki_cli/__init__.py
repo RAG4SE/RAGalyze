@@ -11,7 +11,7 @@ from .query import (
     save_query_results,
     print_result,
 )
-from .configs.compose_hydra import load_all_configs, load_default_config
+from .configs import load_all_configs, load_default_config, configs
 
 __all__ = [
     "query_repository",

@@ -1,9 +1,11 @@
 """Dynamic splitter transformer that selects appropriate splitter based on document type."""
 
+import logging
 from typing import List, Union, Any
 
 from adalflow.core.types import Document
 from adalflow.core.component import Component
+from tqdm import tqdm
 
 from deepwiki_cli.rag.splitter_factory import get_splitter_factory
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
@@ -21,7 +23,7 @@ class DynamicSplitterTransformer(Component):
         logger.info("Initialized DynamicSplitterTransformer")
 
     def call(self, documents: List[Document]) -> List[Document]:
-        """Process documents with appropriate splitters.
+        """Process documents with appropriate splitters using batch optimization.
 
         Args:
             documents (List[Document]): Input documents
@@ -32,38 +34,63 @@ class DynamicSplitterTransformer(Component):
         if not documents:
             return []
 
-        result_documents = []
+        # Step 1: Group documents by splitter type
+        splitter_groups = (
+            {}
+        )  # key: splitter_key, value: {'splitter': splitter, 'docs': [docs]}
 
-        for doc in documents:
+        for doc in tqdm(documents, desc="Grouping documents by splitter type"):
             try:
                 # Get appropriate splitter for this document
+                file_path = getattr(doc, "meta_data", {}).get("file_path", "")
                 splitter = self.splitter_factory.get_splitter(
                     content=doc.text,
-                    file_path=getattr(doc, "meta_data", {}).get("file_path", ""),
+                    file_path=file_path,
                 )
 
-                # Split the document
-                split_docs = splitter.call([doc])
-                result_documents.extend(split_docs)
+                # Create splitter key
+                splitter_key = splitter.get_key()
 
-                # Log splitting info
-                file_path = getattr(doc, "meta_data", {}).get("file_path", "unknown")
-                doc_type = self.splitter_factory.detect_content_type(
-                    doc.text, file_path
-                )
-                logger.debug(
-                    f"Split {file_path} (type: {doc_type}) into {len(split_docs)} chunks"
-                )
+                # Group documents by splitter
+                if splitter_key not in splitter_groups:
+                    splitter_groups[splitter_key] = {
+                        "splitter": splitter,
+                        "docs": [],
+                    }
+
+                splitter_groups[splitter_key]["docs"].append(doc)
 
             except Exception as e:
                 logger.error(
-                    f"Error splitting document {getattr(doc, 'meta_data', {}).get('file_path', 'unknown')}: {e}"
+                    f"Error analyzing document {getattr(doc, 'meta_data', {}).get('file_path', 'unknown')}: {e}"
                 )
                 raise
 
+        # Step 2: Process each splitter group in batch
+        result_documents = []
+        logger.info(f"Found {len(splitter_groups)} unique splitter configurations")
+
+        for splitter_key, group_info in splitter_groups.items():
+            logger.info(f"Processing splitter group {splitter_key}")
+            splitter = group_info["splitter"]
+            docs = group_info["docs"]
+
+            try:
+                # Batch split all documents for this splitter
+                split_docs = splitter.call(docs)
+                result_documents.extend(split_docs)
+
+            except Exception as e:
+                # Skip this unsplittable document
+                logger.warning(
+                    f"Error processing splitter group {splitter_key}: {e}"
+                )
+                continue
+
         logger.info(
-            f"Processed {len(documents)} documents into {len(result_documents)} chunks"
+            f"Processed {len(documents)} documents into {len(result_documents)} chunks using {len(splitter_groups)} splitter groups"
         )
+
         return result_documents
 
     def __call__(self, documents: List[Document]) -> List[Document]:

@@ -69,6 +69,7 @@ deepwiki repo_path=/path/to/repository question="What does this project do?"
 
 ```python
 from deepwiki_cli import *
+from deepwiki_cli import configs
 
 repo_path = "/path/to/repository"
 question = "What does this project do?"
@@ -92,7 +93,7 @@ dict_config.rag.hybrid.enabled = False
 # Disable semantic interpretation in dual-vector embedding, only embed code snippets
 dict_config.rag.embedder.sketch_filling = False
 # Modify the global dict-type configs
-configs = load_all_configs(dict_config)
+configs.configs = load_all_configs(dict_config)
 
 result = query_repository(
     repo_path=repo_path,

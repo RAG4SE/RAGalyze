@@ -732,11 +732,11 @@ class DashScopeBatchEmbedder(DataComponent):
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
-        if self.batch_size > 25:
+        if self.batch_size > 10:
             log.warning(
-                f"DashScope batch embedder initialization, batch size: {self.batch_size}, note that DashScope batch embedding size cannot exceed 25, automatically set to 25"
+                f"DashScope batch embedder initialization, batch size: {self.batch_size}, note that DashScope batch embedding size cannot exceed 25, automatically set to 10"
             )
-            self.batch_size = 25
+            self.batch_size = 10
 
     def call(
         self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}

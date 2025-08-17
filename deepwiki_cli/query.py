@@ -5,17 +5,15 @@ RAGalyze Query Module
 
 import os
 import sys
-from typing import Dict, List, Optional, Any
+from typing import Dict, Any
 from pathlib import Path
-import traceback
 from datetime import datetime
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 import hydra
-from hydra import compose, initialize_config_dir, initialize
 
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
 from deepwiki_cli.rag.rag import RAG
-from deepwiki_cli.configs import configs, load_all_configs
+from deepwiki_cli.configs import *
 
 # Setup logging
 logger = get_tqdm_compatible_logger(__name__)
@@ -209,19 +207,14 @@ def print_result(result: Dict[str, Any]) -> None:
 @hydra.main(version_base=None, config_path="configs", config_name="main")
 def hydra_wrapped_query_repository(cfg: DictConfig) -> None:
 
-    assert cfg.repo and cfg.question, "repo and question must be set"
-    print(cfg.keys())
-    configs = load_all_configs(cfg)
-
-    print(configs)
-    import sys
-    sys.exit(1)
-
+    assert cfg.repo_path and cfg.question, "repo and question must be set"
+    # print("force_embedding:", configs()["rag"]["embedder"]["force_embedding"])
+    load_all_configs(cfg)
     try:
-        result = query_repository(repo_path=cfg.repo, question=cfg.question)
+        result = query_repository(repo_path=cfg.repo_path, question=cfg.question)
 
         # Save results to reply folder
-        output_dir = save_query_results(result, cfg.repo, cfg.question)
+        output_dir = save_query_results(result, cfg.repo_path, cfg.question)
 
         print_result(result)
 

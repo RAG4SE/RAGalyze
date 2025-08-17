@@ -41,7 +41,7 @@ class HybridRetriever:
         self.documents = documents
         self.embedder = get_embedder()
 
-        rag_config = configs["rag"]
+        rag_config = configs()["rag"]
         assert "embedder" in rag_config, "rag_config must contain embedder section"
         self.use_dual_vector = rag_config["embedder"]["sketch_filling"]
         assert "hybrid" in rag_config, "rag_config must contain hybrid section"

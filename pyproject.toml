@@ -56,7 +56,7 @@ Repository = "https://github.com/RAG4SE/deepwiki-cli"
 deepwiki = "deepwiki_cli.query:hydra_wrapped_query_repository"
 
 [tool.setuptools]
-packages = ["deepwiki_cli", "deepwiki_cli.configs", "deepwiki_cli.rag", "deepwiki_cli.clients", "deepwiki_cli.logger"]
+packages = ["deepwiki_cli", "deepwiki_cli.configs", "deepwiki_cli.rag", "deepwiki_cli.rag.splitter", "deepwiki_cli.clients", "deepwiki_cli.logger"]
 
 [tool.setuptools.package-data]
 "deepwiki_cli" = ["configs/*.yaml", "configs/*.yml"]
