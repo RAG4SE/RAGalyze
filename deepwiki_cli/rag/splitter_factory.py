@@ -44,7 +44,7 @@ class SplitterFactory:
             SmartTextSplitter: Configured smart code splitter with custom tokenizer
         """
         if self._code_splitter is None:
-            code_splitter_config = configs()["rag"]["code_splitter"].copy()
+            code_splitter_config = configs()["rag"]["dynamic_splitter"]["code_splitter"].copy()
 
             # Add smart splitting parameters for code content
             code_splitter_config["smart_boundary_ratio"] = (
