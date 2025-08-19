@@ -22,7 +22,7 @@ def test_splitter_imports():
     print("Testing splitter imports...")
 
     try:
-        from deepwiki_cli.rag.splitter.txt_splitter import TxtTextSplitter
+        from deepwiki_cli.rag.splitter.natural_language_splitter import NaturalLanguageSplitter
         from deepwiki_cli.rag.splitter.code_splitter import CodeSplitter
 
         print("✅ Splitter imports successful")
@@ -38,11 +38,11 @@ def test_basic_functionality():
     print("Testing basic functionality...")
 
     try:
-        from deepwiki_cli.rag.splitter.txt_splitter import TxtTextSplitter
+        from deepwiki_cli.rag.splitter.natural_language_splitter import NaturalLanguageSplitter
         from adalflow.core.types import Document
 
         # Test word splitting
-        splitter = TxtTextSplitter(split_by="word", chunk_size=5, chunk_overlap=1)
+        splitter = NaturalLanguageSplitter(split_by="word", chunk_size=5, chunk_overlap=1)
         doc = Document(text="This is a test document with multiple words", id="test")
         result = splitter.call([doc])
 

@@ -1,2 +1,2 @@
 from .code_splitter import CodeSplitter
-from .txt_splitter import TxtTextSplitter
+from .natural_language_splitter import NaturalLanguageSplitter

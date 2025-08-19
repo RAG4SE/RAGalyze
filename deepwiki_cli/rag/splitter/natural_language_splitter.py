@@ -32,7 +32,7 @@ except ImportError:
 logger = get_tqdm_compatible_logger(__name__)
 
 
-class TxtTextSplitter(TextSplitter):
+class NaturalLanguageSplitter(TextSplitter):
 
     def __init__(
         self,
@@ -45,7 +45,7 @@ class TxtTextSplitter(TextSplitter):
         file_extension: str = None,
     ):
         """
-        Initialize TxtTextSplitter.
+        Initialize NaturalLanguageSplitter.
 
         Args:
             split_by: Same as TextSplitter
@@ -59,7 +59,7 @@ class TxtTextSplitter(TextSplitter):
 
         assert (
             split_by == "word" or split_by == "token"
-        ), f"TxtTextSplitter only supports split_by='word' or split_by='token', but got {split_by}"
+        ), f"NaturalLanguageSplitter only supports split_by='word' or split_by='token', but got {split_by}"
 
         # Set default separators if None - TextSplitter expects a dict
         if separators is None:
@@ -83,7 +83,7 @@ class TxtTextSplitter(TextSplitter):
             self._init_nlp_model()
 
         logger.info(
-            f"Initialized TxtTextSplitter with smart_boundary_ratio={smart_boundary_ratio}, file_extension={file_extension}"
+            f"Initialized NaturalLanguageSplitter with smart_boundary_ratio={smart_boundary_ratio}, file_extension={file_extension}"
         )
 
     def get_key(self) -> str:

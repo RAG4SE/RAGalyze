@@ -22,19 +22,24 @@ rag:
       k1: 1.2
       b: 0.75
   
-  # Dynamic splitter configuration - automatically selects appropriate splitter
-  use_dynamic_splitter: true
- 
-  # Text splitter configuration for natural language documents
   text_splitter:
-    split_by: word
-    chunk_size: 256
-    chunk_overlap: 32
-  # Code splitter configuration for source code files
-  code_splitter:
-    split_by: word
-    chunk_size: 256
-    chunk_overlap: 32
+      split_by: token
+      chunk_size: 256
+      chunk_overlap: 32
+
+  # Dynamic splitter configuration - automatically selects appropriate splitter
+  dynamic_splitter:
+    enabled: true
+    # Text splitter configuration for natural language documents
+    natural_language_splitter:
+      split_by: word
+      chunk_size: 256
+      chunk_overlap: 32
+    # Code splitter configuration for source code files
+    code_splitter:
+      split_by: word
+      chunk_size: 256
+      chunk_overlap: 32
 
   code_understanding:
     provider: dashscope

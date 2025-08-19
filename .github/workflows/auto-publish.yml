@@ -114,7 +114,7 @@ jobs:
       run: |
         pip install dist/*.whl
         python -c "from deepwiki_cli import query_repository; print('✅ Package import test passed')"
-        python -c "from deepwiki_cli.rag.splitter.txt_splitter import TxtTextSplitter; print('✅ TxtTextSplitter import test passed')"
+        python -c "from deepwiki_cli.rag.splitter.natural_language_splitter import NaturalLanguageSplitter; print('✅ NaturalLanguageSplitter import test passed')"
     
     - name: Publish to TestPyPI first
       if: steps.version_check.outputs.version_changed == 'true' && steps.pypi_check.outputs.exists_on_pypi == 'false'

@@ -465,7 +465,7 @@ def prepare_data_transformer() -> adal.Sequential:
     """
     Creates and returns the data transformation pipeline.
     Uses dynamic splitter that automatically selects appropriate splitter
-    (code_splitter or text_splitter) based on document type.
+    (code_splitter or natural_language_splitter) based on document type.
 
     Returns:
         adal.Sequential: The data transformation pipeline
@@ -473,7 +473,7 @@ def prepare_data_transformer() -> adal.Sequential:
     use_dual_vector = configs()["rag"]["embedder"]["sketch_filling"]
     code_understanding_config = configs()["rag"]["code_understanding"]
 
-    if configs()["rag"]["use_dynamic_splitter"]:
+    if configs()["rag"]["dynamic_splitter"]["enabled"]:
         # Use dynamic splitter that automatically selects appropriate splitter
         splitter = DynamicSplitterTransformer()
     else:

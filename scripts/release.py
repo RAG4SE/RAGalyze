@@ -70,7 +70,7 @@ def test_package():
     # Test imports
     test_commands = [
         "python -c \"from deepwiki_cli import query_repository; print('Core import successful')\"",
-        "python -c \"from deepwiki_cli.rag.splitter.txt_splitter import TxtTextSplitter; print('TxtTextSplitter import successful')\"",
+        "python -c \"from deepwiki_cli.rag.splitter.natural_language_splitter import NaturalLanguageSplitter; print('NaturalLanguageSplitter import successful')\"",
         "python -c \"from deepwiki_cli.rag.splitter.code_splitter import CodeSplitter; print('CodeSplitter import successful')\"",
     ]
 

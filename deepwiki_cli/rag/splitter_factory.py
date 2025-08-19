@@ -17,25 +17,25 @@ class SplitterFactory:
 
     def __init__(self):
         """Initialize the splitter factory."""
-        self._text_splitter = None
+        self._natural_language_splitter = None
         self._code_splitter = None
         # File extensions that are considered code files
         self.CODE_EXTENSIONS = configs()["repo"]["file_extensions"]["code_extensions"]
         # File extensions that are considered text/documentation files
         self.TEXT_EXTENSIONS = configs()["repo"]["file_extensions"]["doc_extensions"]
 
-    def _get_txt_splitter(self) -> TxtTextSplitter:
+    def _get_txt_splitter(self) -> NaturalLanguageSplitter:
         """Get or create text splitter instance.
 
         Returns:
             SmartTextSplitter: Configured smart text splitter
         """
-        if self._text_splitter is None:
-            text_splitter_config = configs()["rag"]["text_splitter"].copy()
+        if self._natural_language_splitter is None:
+            natural_language_splitter_config = configs()["rag"]["dynamic_splitter"]["natural_language_splitter"].copy()
             # Add smart splitting parameters for text content
-            text_splitter_config["smart_boundary_ratio"] = 0.8
-            self._text_splitter = TxtTextSplitter(**text_splitter_config)
-        return self._text_splitter
+            natural_language_splitter_config["smart_boundary_ratio"] = 0.8
+            self._natural_language_splitter = NaturalLanguageSplitter(**natural_language_splitter_config)
+        return self._natural_language_splitter
 
     def _get_code_splitter(self, extension: str) -> CodeSplitter:
         """Get or create code splitter instance.

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Comprehensive test suite for TxtTextSplitter functionality.
+Comprehensive test suite for NaturalLanguageSplitter functionality.
 Merged from test_overlap_debug.py, test_overlap_detection.py, and test_smart_text_splitter.py
 """
 
 import sys
 sys.path.append('/home/lyr/RAGalyze')
 
-from rag.splitter import TxtTextSplitter
+from rag.splitter import NaturalLanguageSplitter
 
 def test_overlap_debug():
     """Debug the overlap detection in detail."""
     
-    splitter = TxtTextSplitter(
+    splitter = NaturalLanguageSplitter(
         chunk_size=50,
         chunk_overlap=15,
         split_by='word',
@@ -147,7 +147,7 @@ def test_overlap_debug():
 def test_overlap_detection():
     """Test the new NLP overlap detection functionality."""
     
-    splitter = TxtTextSplitter(
+    splitter = NaturalLanguageSplitter(
         chunk_size=50,
         chunk_overlap=15,
         split_by='word',
@@ -216,7 +216,7 @@ def test_overlap_detection():
 def test_boundary_detection():
     """Test the smart boundary detection directly."""
     
-    splitter = TxtTextSplitter(
+    splitter = NaturalLanguageSplitter(
         chunk_size=50,
         chunk_overlap=15,
         split_by='word',
@@ -296,9 +296,9 @@ def test_boundary_detection():
             print(f"  ❌ Chunk {i} does not preserve sentence boundaries")
 
 def run_all_tests():
-    """Run all TxtTextSplitter tests."""
+    """Run all NaturalLanguageSplitter tests."""
     print("="*80)
-    print("COMPREHENSIVE TXTTEXTSPLITTER TEST SUITE")
+    print("COMPREHENSIVE NaturalLanguageSplitter TEST SUITE")
     print("="*80)
     
     print("\n" + "="*50)
