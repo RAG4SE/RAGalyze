@@ -160,6 +160,9 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
     # Analyze repository
     rag = analyze_repository(repo_path=repo_path)
 
+    if question == "":
+        return None
+
     logger.info(f"🔍 Processing question: {question}")
 
     # Call RAG system to retrieve documents
@@ -245,11 +248,15 @@ def print_result(result: Dict[str, Any]) -> None:
 @hydra.main(version_base=None, config_path="configs", config_name="main")
 def hydra_wrapped_query_repository(cfg: DictConfig) -> None:
 
-    assert cfg.repo_path and cfg.question, "repo and question must be set"
+    assert cfg.repo_path, "repo_path must be set"
     # print("force_embedding:", configs()["rag"]["embedder"]["force_embedding"])
     load_all_configs(cfg)
     try:
         result = query_repository(repo_path=cfg.repo_path, question=cfg.question)
+
+        if result is None:
+            logger.warning("❌ No question provided, only embedding the repository")
+            return
 
         # Save results to reply folder
         output_dir = save_query_results(result, cfg.repo_path, cfg.question)

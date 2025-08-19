@@ -21,7 +21,10 @@ rag:
       top_k: 100
       k1: 1.2
       b: 0.75
-
+  
+  # Dynamic splitter configuration - automatically selects appropriate splitter
+  use_dynamic_splitter: true
+ 
   # Text splitter configuration for natural language documents
   text_splitter:
     split_by: word
@@ -36,7 +39,7 @@ rag:
   code_understanding:
     provider: dashscope
     client_class: DashScopeClient
-    model: qwen3-32b
+    model: qwen3-8b
     model_kwargs:
       temperature: 0.7
       top_p: 0.8

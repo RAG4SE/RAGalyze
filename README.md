@@ -58,11 +58,16 @@ You can refer to the following coarse-grained table to get the corresponding API
 
 ### As a Command-Line Tool
 
-After installation, you can use the `deepwiki` command:
+After installation, you can use the `deepwiki` command to query about a local codebase:
 
 ```bash
-# Using Hydra syntax
 deepwiki repo_path=/path/to/repository question="What does this project do?"
+```
+
+Or, you can only embed the codebase with the following command:
+
+```bash
+deepwiki repo_path=/path/to/repository
 ```
 
 ### As a Python Library
@@ -102,6 +107,17 @@ result = query_repository(
 
 print_result(result)
 save_query_results(result, repo_path, question)
+```
+
+Similar to the second use of `deepwiki` command, you can also use deepwiki_cli library to only embed to codebase
+
+```python
+from deepwiki_cli import *
+
+repo_path = "/path/to/repository"
+
+analyze_repository(repo_path=repo_path)
+
 ```
 
 ## Acknowledgements

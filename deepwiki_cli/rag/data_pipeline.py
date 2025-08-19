@@ -1,11 +1,14 @@
 import os
 from typing import List, Optional, Tuple, Union
 import glob
+import re
+import fnmatch
 
 import adalflow as adal
 from adalflow.core.types import Document, List
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
+from adalflow.components.data_process import TextSplitter
 
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
 from deepwiki_cli.clients.huggingface_embedder_client import (
@@ -248,7 +251,7 @@ def read_all_documents(path: str):
         included_dirs = []
         included_files = []
 
-    logger.info(f"Reading documents from {path}")
+    logger.info(f"Reading documents from {path}, use_inclusion_mode: {use_inclusion_mode}")
 
     def should_process_file(
         file_path: str,
@@ -260,20 +263,29 @@ def read_all_documents(path: str):
     ) -> bool:
         """
         Determine if a file should be processed based on inclusion/exclusion rules.
+        Supports glob patterns and regular expressions for matching.
 
         Args:
             file_path (str): The file path to check
             use_inclusion (bool): Whether to use inclusion mode
-            included_dirs (List[str]): List of directories to include
-            included_files (List[str]): List of files to include
-            excluded_dirs (List[str]): List of directories to exclude
-            excluded_files (List[str]): List of files to exclude
+            included_dirs (List[str]): List of directories to include (supports glob patterns)
+            included_files (List[str]): List of files to include (supports glob patterns)
+            excluded_dirs (List[str]): List of directories to exclude (supports glob patterns)
+            excluded_files (List[str]): List of files to exclude (supports glob patterns)
 
         Returns:
             bool: True if the file should be processed, False otherwise
         """
-        file_path_parts = os.path.normpath(file_path).split(os.sep)
+        # Normalize the file path for consistent matching
+        normalized_path = os.path.normpath(file_path).replace("\\", "/")
         file_name = os.path.basename(file_path)
+        
+        def matches_pattern(text: str, pattern: str) -> bool:
+            """Check if text matches a glob pattern."""
+            if fnmatch.fnmatch(text, pattern):
+                return True
+
+            return False
 
         if use_inclusion:
             # Inclusion mode: file must be in included directories or match included files
@@ -282,15 +294,14 @@ def read_all_documents(path: str):
             # Check if file is in an included directory
             if included_dirs:
                 for included in included_dirs:
-                    clean_included = included.strip("./").rstrip("/")
-                    if clean_included in file_path_parts:
+                    if matches_pattern(normalized_path, included):
                         is_included = True
                         break
 
             # Check if file matches included file patterns
             if not is_included and included_files:
                 for included_file in included_files:
-                    if file_name == included_file or file_name.endswith(included_file):
+                    if matches_pattern(file_name, included_file) or matches_pattern(normalized_path, included_file):
                         is_included = True
                         break
 
@@ -311,18 +322,17 @@ def read_all_documents(path: str):
 
             # Check if file is in an excluded directory
             for excluded in excluded_dirs:
-                clean_excluded = excluded.strip("./").rstrip("/")
-                if clean_excluded in file_path_parts:
+                if matches_pattern(normalized_path, excluded):
                     is_excluded = True
                     break
 
             # Check if file matches excluded file patterns
             if not is_excluded:
                 for excluded_file in excluded_files:
-                    if file_name == excluded_file:
+                    if matches_pattern(file_name, excluded_file) or matches_pattern(normalized_path, excluded_file):
                         is_excluded = True
                         break
-
+            
             return not is_excluded
 
     # Process code files first
@@ -446,7 +456,7 @@ def read_all_documents(path: str):
             except Exception as e:
                 logger.error(f"Error processing {file_path}: {e}")
 
-    logger.info(f"Found {len(documents)} documents")
+    logger.info(f"Found {len(documents)} files to be processed")
 
     return documents
 
@@ -463,8 +473,11 @@ def prepare_data_transformer() -> adal.Sequential:
     use_dual_vector = configs()["rag"]["embedder"]["sketch_filling"]
     code_understanding_config = configs()["rag"]["code_understanding"]
 
-    # Use dynamic splitter that automatically selects appropriate splitter
-    splitter = DynamicSplitterTransformer()
+    if configs()["rag"]["use_dynamic_splitter"]:
+        # Use dynamic splitter that automatically selects appropriate splitter
+        splitter = DynamicSplitterTransformer()
+    else:
+        splitter = TextSplitter(**configs()["rag"]["text_splitter"])
 
     embedder_model_config = configs()["rag"]["embedder"]["model_kwargs"]
     embedder = get_embedder()
