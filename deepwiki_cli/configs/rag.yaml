@@ -9,7 +9,7 @@ rag:
       encoding_format: float
       batch_size: 10
 
-    sketch_filling: false
+    sketch_filling: true
     force_embedding: false
 
   retriever:

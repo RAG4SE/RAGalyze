@@ -14,6 +14,7 @@ import hydra
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
 from deepwiki_cli.rag.rag import RAG
 from deepwiki_cli.configs import *
+from deepwiki_cli.rag.dual_vector_pipeline import DualVectorDocument
 
 # Setup logging
 logger = get_tqdm_compatible_logger(__name__)
@@ -61,12 +62,26 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
             f.write("RETRIEVED DOCUMENTS\n")
             f.write("=" * 50 + "\n")
             for i, doc in enumerate(result["retrieved_documents"], 1):
-                f.write(
-                    f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}\n"
-                )
-                f.write("Full Content:\n")
-                f.write(doc.text + "\n")
-                f.write("=" * 80 + "\n")
+                if isinstance(doc, DualVectorDocument):
+                    f.write(
+                        f"\n{i}. File: {getattr(doc.original_doc, 'meta_data', {}).get('file_path', 'Unknown')}\n"
+                    )
+                    f.write("Full Content:\n")
+                    f.write(doc.original_doc.text + "\n")
+                    understanding_text = getattr(doc, "understanding_text", "")
+                    if understanding_text:
+                        f.write("Code Understanding:\n")
+                        f.write("---\n")
+                        f.write(understanding_text + "\n")
+                        f.write("---\n\n")
+                    f.write("=" * 80 + "\n")
+                else:
+                    f.write(
+                        f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}\n"
+                    )
+
+                    f.write("Full Content:\n")
+                    f.write(doc.text + "\n")
 
     # Save metadata
     metadata_file = output_dir / "metadata.txt"
@@ -80,6 +95,17 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
         f.write(
             f"Retrieved Documents Count: {len(result.get('retrieved_documents', []))}\n"
         )
+
+        # Count documents with understanding text
+        docs_with_understanding = 0
+        if result.get("retrieved_documents"):
+            for doc in result["retrieved_documents"]:
+                understanding_text = getattr(doc, "meta_data", {}).get(
+                    "understanding_text", ""
+                )
+                if understanding_text:
+                    docs_with_understanding += 1
+        f.write(f"Documents with Code Understanding: {docs_with_understanding}\n")
 
     return str(output_dir)
 
@@ -149,8 +175,12 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
         # Generate answer
         logger.info("🤖 Generating answer...")
         try:
+            if isinstance(retrieved_docs[0], DualVectorDocument):
+                contexts = [doc.original_doc for doc in retrieved_docs]
+            else:
+                contexts = retrieved_docs
             generator_result = rag.generator(
-                prompt_kwargs={"input_str": question, "contexts": retrieved_docs}
+                prompt_kwargs={"input_str": question, "contexts": contexts}
             )
         except Exception as e:
             logger.error(f"Error calling generator: {e}")
@@ -195,12 +225,20 @@ def print_result(result: Dict[str, Any]) -> None:
             print("RETRIEVED DOCUMENTS:")
             print("=" * 50)
             for i, doc in enumerate(result["retrieved_documents"], 1):
-                print(
-                    f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}"
-                )
-                print(
-                    f"   Preview: {(doc.text[:200] + '...') if len(doc.text) > 200 else doc.text}"
-                )
+                if isinstance(doc, DualVectorDocument):
+                    print(
+                        f"\n{i}. File: {getattr(doc.original_doc, 'meta_data', {}).get('file_path', 'Unknown')}"
+                    )
+                    print(
+                        f"   Preview: {(doc.original_doc.text[:200] + '...') if len(doc.original_doc.text) > 200 else doc.original_doc.text}"
+                    )
+                else:
+                    print(
+                        f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}"
+                    )
+                    print(
+                        f"   Preview: {(doc.text[:200] + '...') if len(doc.text) > 200 else doc.text}"
+                    )
         print("For more details, please check the reply folder")
 
 

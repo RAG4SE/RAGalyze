@@ -1,8 +1,9 @@
 import os
-import adalflow as adal
 import logging
 from typing import List, Optional, Union
+from openai.types.chat import ChatCompletion
 
+import adalflow as adal
 from adalflow.core.types import (
     Document,
     ModelType,
@@ -28,6 +29,15 @@ Focus on the following aspects:
 2.  **Inputs**: What are the key inputs, arguments, or parameters?
 3.  **Outputs**: What does the code return or produce?
 4.  **Key Logic**: Briefly describe the core logic or algorithm.
+
+Keep the summary in plain language and easy to understand for someone with technical background but not necessarily familiar with this specific code.
+Do not get lost in implementation details. Provide a "bird's-eye view" of the code.
+The summary should be in English and as concise as possible.
+"""
+
+CODE_UNDERSTANDING_SYSTEM_PROMPT = """
+You are an expert programmer and a master of code analysis.
+Your task is to provide a concise, high-level summary of the given code snippet.
 
 Keep the summary in plain language and easy to understand for someone with technical background but not necessarily familiar with this specific code.
 Do not get lost in implementation details. Provide a "bird's-eye view" of the code.
@@ -113,8 +123,9 @@ class CodeUnderstandingGenerator:
             )
 
             # Extract content from GeneratorOutput data field
-            summary = result.data if hasattr(result, "data") else str(result)
-            logger.debug(f"Successfully generated understanding for {file_path}")
+            assert isinstance(result, ChatCompletion), f"result is not a ChatCompletion: {type(result)}"
+            summary = result.choices[0].message.content
+
             return summary.strip()
 
         except Exception as e:
@@ -329,7 +340,7 @@ class DualVectorRetriever:
         ):
             if chunk_id in self.doc_map:
                 dual_doc = self.doc_map[chunk_id]
-                top_k_docs.append(dual_doc.original_doc)
+                top_k_docs.append(dual_doc)
                 doc_indices.append(idx)
                 doc_scores.append(combined_scores[chunk_id])
 
