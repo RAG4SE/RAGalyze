@@ -16,6 +16,7 @@ from typing import (
 import backoff
 from copy import deepcopy
 from tqdm import tqdm
+import adalflow as adal
 
 # optional import
 from adalflow.utils.lazy_import import safe_import, OptionalPackages
@@ -56,9 +57,6 @@ import adalflow.core.functional as F
 from adalflow.components.model_client.utils import parse_embedding_response
 
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
-
-# # Disable tqdm progress bars
-# os.environ["TQDM_DISABLE"] = "1"
 
 log = get_tqdm_compatible_logger(__name__)
 
@@ -135,7 +133,7 @@ class DashScopeClient(ModelClient):
             self._env_base_url_name, "https://dashscope.aliyuncs.com/compatible-mode/v1"
         )
         self.sync_client = self.init_sync_client()
-        self.async_client = None
+        self.async_client = self.init_async_client()
 
         # Force use of get_first_message_content to ensure string output
         if chat_completion_parser is None:
@@ -361,6 +359,199 @@ class DashScopeClient(ModelClient):
                 f"clients/dashscope_client.py:model_type {model_type} is not supported"
             )
 
+    def chat(self, api_kwargs: Dict = {}):
+        if not api_kwargs.get("stream", False):
+            # For non-streaming, enable_thinking must be false.
+            # Pass it via extra_body to avoid TypeError from openai client validation.
+            extra_body = api_kwargs.get("extra_body", {})
+            extra_body["enable_thinking"] = False
+            api_kwargs["extra_body"] = extra_body
+
+        completion = self.sync_client.chat.completions.create(**api_kwargs)
+
+        return completion
+
+    async def achat(self, api_kwargs: Dict = {}):
+        """Async version of chat method."""
+        if not api_kwargs.get("stream", False):
+            # For non-streaming, enable_thinking must be false.
+            # Pass it via extra_body to avoid TypeError from openai client validation.
+            extra_body = api_kwargs.get("extra_body", {})
+            extra_body["enable_thinking"] = False
+            api_kwargs["extra_body"] = extra_body
+
+        completion = await self.async_client.chat.completions.create(**api_kwargs)
+
+        return completion
+
+    def embeddings(self, api_kwargs: Dict = {}):
+        # Extract input texts from api_kwargs
+        texts = api_kwargs.get("input", [])
+
+        if not texts:
+            log.warning("😭 No input texts provided")
+            return EmbedderOutput(
+                data=[], error="No input texts provided", raw_response=None
+            )
+
+        # Ensure texts is a list
+        if isinstance(texts, str):
+            texts = [texts]
+
+        # Filter out empty or None texts - following HuggingFace client pattern
+        valid_texts = []
+        valid_indices = []
+        for i, text in enumerate(texts):
+            if text and isinstance(text, str) and text.strip():
+                valid_texts.append(text)
+                valid_indices.append(i)
+            else:
+                log.warning(
+                    f"🔍 Skipping empty or invalid text at index {i}: type={type(text)}, length={len(text) if hasattr(text, '__len__') else 'N/A'}, repr={repr(text)[:100]}"
+                )
+
+        if not valid_texts:
+            log.error("😭 No valid texts found after filtering")
+            return EmbedderOutput(
+                data=[],
+                error="No valid texts found after filtering",
+                raw_response=None,
+            )
+
+        if len(valid_texts) != len(texts):
+            filtered_count = len(texts) - len(valid_texts)
+            log.warning(
+                f"🔍 Filtered out {filtered_count} empty/invalid texts out of {len(texts)} total texts"
+            )
+
+        # Create modified api_kwargs with only valid texts
+        filtered_api_kwargs = api_kwargs.copy()
+        filtered_api_kwargs["input"] = valid_texts
+
+        response = self.sync_client.embeddings.create(**filtered_api_kwargs)
+        result = self.parse_embedding_response(response)
+
+        # If we filtered texts, we need to create embeddings for the original indices
+        if len(valid_texts) != len(texts):
+            # Get the correct embedding dimension from the first valid embedding
+            embedding_dim = None  # Must be determined from a successful response
+            if (
+                result.data
+                and len(result.data) > 0
+                and hasattr(result.data[0], "embedding")
+            ):
+                embedding_dim = len(result.data[0].embedding)
+
+            final_data = []
+            valid_idx = 0
+            for i in range(len(texts)):
+                if i in valid_indices:
+                    # Use the embedding from valid texts
+                    final_data.append(result.data[valid_idx])
+                    valid_idx += 1
+                else:
+                    # Create zero embedding for filtered texts with correct dimension
+                    log.warning(
+                        f"🔍 Creating zero embedding for filtered text at index {i}"
+                    )
+                    final_data.append(
+                        Embedding(
+                            embedding=[0.0] * embedding_dim,  # Use correct embedding dimension
+                            index=i,
+                        )
+                    )
+
+            result = EmbedderOutput(
+                data=final_data, error=None, raw_response=result.raw_response
+            )
+
+        return result
+
+    async def aembeddings(self, api_kwargs: Dict = {}):
+        """Async version of embeddings method."""
+        # Extract input texts from api_kwargs
+        texts = api_kwargs.get("input", [])
+
+        if not texts:
+            log.warning("😭 No input texts provided")
+            return EmbedderOutput(
+                data=[], error="No input texts provided", raw_response=None
+            )
+
+        # Ensure texts is a list
+        if isinstance(texts, str):
+            texts = [texts]
+
+        # Filter out empty or None texts - following HuggingFace client pattern
+        valid_texts = []
+        valid_indices = []
+        for i, text in enumerate(texts):
+            if text and isinstance(text, str) and text.strip():
+                valid_texts.append(text)
+                valid_indices.append(i)
+            else:
+                log.warning(
+                    f"🔍 Skipping empty or invalid text at index {i}: type={type(text)}, length={len(text) if hasattr(text, '__len__') else 'N/A'}, repr={repr(text)[:100]}"
+                )
+
+        if not valid_texts:
+            log.error("😭 No valid texts found after filtering")
+            return EmbedderOutput(
+                data=[],
+                error="No valid texts found after filtering",
+                raw_response=None,
+            )
+
+        if len(valid_texts) != len(texts):
+            filtered_count = len(texts) - len(valid_texts)
+            log.warning(
+                f"🔍 Filtered out {filtered_count} empty/invalid texts out of {len(texts)} total texts"
+            )
+
+        # Create modified api_kwargs with only valid texts
+        filtered_api_kwargs = api_kwargs.copy()
+        filtered_api_kwargs["input"] = valid_texts
+
+        response = await self.async_client.embeddings.create(**filtered_api_kwargs)
+        result = self.parse_embedding_response(response)
+
+        # If we filtered texts, we need to create embeddings for the original indices
+        if len(valid_texts) != len(texts):
+            # Get the correct embedding dimension from the first valid embedding
+            embedding_dim = None  # Must be determined from a successful response
+            if (
+                result.data
+                and len(result.data) > 0
+                and hasattr(result.data[0], "embedding")
+            ):
+                embedding_dim = len(result.data[0].embedding)
+
+            final_data = []
+            valid_idx = 0
+            for i in range(len(texts)):
+                if i in valid_indices:
+                    # Use the embedding from valid texts
+                    final_data.append(result.data[valid_idx])
+                    valid_idx += 1
+                else:
+                    # Create zero embedding for filtered texts with correct dimension
+                    log.warning(
+                        f"🔍 Creating zero embedding for filtered text at index {i}"
+                    )
+                    final_data.append(
+                        Embedding(
+                            embedding=[0.0] * embedding_dim,  # Use correct embedding dimension
+                            index=i,
+                        )
+                    )
+
+            result = EmbedderOutput(
+                data=final_data, error=None, raw_response=result.raw_response
+            )
+
+        return result
+
+
     @backoff.on_exception(
         backoff.expo,
         (
@@ -380,99 +571,9 @@ class DashScopeClient(ModelClient):
     ):
         """Call the Dashscope API."""
         if model_type == ModelType.LLM:
-            if not api_kwargs.get("stream", False):
-                # For non-streaming, enable_thinking must be false.
-                # Pass it via extra_body to avoid TypeError from openai client validation.
-                extra_body = api_kwargs.get("extra_body", {})
-                extra_body["enable_thinking"] = False
-                api_kwargs["extra_body"] = extra_body
-
-            completion = self.sync_client.chat.completions.create(**api_kwargs)
-
-            return completion
+            return self.chat(api_kwargs)
         elif model_type == ModelType.EMBEDDER:
-            # Extract input texts from api_kwargs
-            texts = api_kwargs.get("input", [])
-
-            if not texts:
-                log.warning("😭 No input texts provided")
-                return EmbedderOutput(
-                    data=[], error="No input texts provided", raw_response=None
-                )
-
-            # Ensure texts is a list
-            if isinstance(texts, str):
-                texts = [texts]
-
-            # Filter out empty or None texts - following HuggingFace client pattern
-            valid_texts = []
-            valid_indices = []
-            for i, text in enumerate(texts):
-                if text and isinstance(text, str) and text.strip():
-                    valid_texts.append(text)
-                    valid_indices.append(i)
-                else:
-                    log.warning(
-                        f"🔍 Skipping empty or invalid text at index {i}: type={type(text)}, length={len(text) if hasattr(text, '__len__') else 'N/A'}, repr={repr(text)[:100]}"
-                    )
-
-            if not valid_texts:
-                log.error("😭 No valid texts found after filtering")
-                return EmbedderOutput(
-                    data=[],
-                    error="No valid texts found after filtering",
-                    raw_response=None,
-                )
-
-            if len(valid_texts) != len(texts):
-                filtered_count = len(texts) - len(valid_texts)
-                log.warning(
-                    f"🔍 Filtered out {filtered_count} empty/invalid texts out of {len(texts)} total texts"
-                )
-
-            # Create modified api_kwargs with only valid texts
-            filtered_api_kwargs = api_kwargs.copy()
-            filtered_api_kwargs["input"] = valid_texts
-
-            response = self.sync_client.embeddings.create(**filtered_api_kwargs)
-            result = self.parse_embedding_response(response)
-
-            # If we filtered texts, we need to create embeddings for the original indices
-            if len(valid_texts) != len(texts):
-                # Get the correct embedding dimension from the first valid embedding
-                embedding_dim = None  # Must be determined from a successful response
-                if (
-                    result.data
-                    and len(result.data) > 0
-                    and hasattr(result.data[0], "embedding")
-                ):
-                    embedding_dim = len(result.data[0].embedding)
-
-                final_data = []
-                valid_idx = 0
-                for i in range(len(texts)):
-                    if i in valid_indices:
-                        # Use the embedding from valid texts
-                        final_data.append(result.data[valid_idx])
-                        valid_idx += 1
-                    else:
-                        # Create zero embedding for filtered texts with correct dimension
-                        log.warning(
-                            f"🔍 Creating zero embedding for filtered text at index {i}"
-                        )
-                        final_data.append(
-                            Embedding(
-                                embedding=[0.0]
-                                * embedding_dim,  # Use correct embedding dimension
-                                index=i,
-                            )
-                        )
-
-                result = EmbedderOutput(
-                    data=final_data, error=None, raw_response=result.raw_response
-                )
-
-            return result
+            return self.embeddings(api_kwargs)
         else:
             raise ValueError(f"model_type {model_type} is not supported")
 
@@ -491,121 +592,11 @@ class DashScopeClient(ModelClient):
         self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED
     ):
         """Async call to the Dashscope API."""
-        if not self.async_client:
-            self.async_client = self.init_async_client()
 
         if model_type == ModelType.LLM:
-            if not api_kwargs.get("stream", False):
-                # For non-streaming, enable_thinking must be false.
-                extra_body = api_kwargs.get("extra_body", {})
-                extra_body["enable_thinking"] = False
-                api_kwargs["extra_body"] = extra_body
-
-            completion = await self.async_client.chat.completions.create(**api_kwargs)
-
-            return completion
+            return await self.achat(api_kwargs)
         elif model_type == ModelType.EMBEDDER:
-            # Extract input texts from api_kwargs
-            texts = api_kwargs.get("input", [])
-
-            if not texts:
-                log.warning("😭 No input texts provided")
-                return EmbedderOutput(
-                    data=[], error="No input texts provided", raw_response=None
-                )
-
-            # Ensure texts is a list
-            if isinstance(texts, str):
-                texts = [texts]
-
-            # Filter out empty or None texts - following HuggingFace client pattern
-            valid_texts = []
-            valid_indices = []
-            for i, text in enumerate(texts):
-                if text and isinstance(text, str) and text.strip():
-                    valid_texts.append(text)
-                    valid_indices.append(i)
-                else:
-                    log.warning(
-                        f"🔍 Skipping empty or invalid text at index {i}: type={type(text)}, length={len(text) if hasattr(text, '__len__') else 'N/A'}, repr={repr(text)[:100]}"
-                    )
-
-            if not valid_texts:
-                log.error("😭 No valid texts found after filtering")
-                return EmbedderOutput(
-                    data=[],
-                    error="No valid texts found after filtering",
-                    raw_response=None,
-                )
-
-            if len(valid_texts) != len(texts):
-                filtered_count = len(texts) - len(valid_texts)
-                log.warning(
-                    f"🔍 Filtered out {filtered_count} empty/invalid texts out of {len(texts)} total texts"
-                )
-
-            # Create modified api_kwargs with only valid texts
-            filtered_api_kwargs = api_kwargs.copy()
-            filtered_api_kwargs["input"] = valid_texts
-
-            log.info(
-                f"🔍 DashScope async embedding API call with {len(valid_texts)} valid texts out of {len(texts)} total"
-            )
-
-            try:
-                response = await self.async_client.embeddings.create(
-                    **filtered_api_kwargs
-                )
-                log.info(
-                    f"🔍 DashScope async API call successful, response type: {type(response)}"
-                )
-                result = self.parse_embedding_response(response)
-
-                # If we filtered texts, we need to create embeddings for the original indices
-                if len(valid_texts) != len(texts):
-                    log.info(
-                        f"🔍 Creating embeddings for {len(texts)} original positions"
-                    )
-
-                    # Get the correct embedding dimension from the first valid embedding
-                    embedding_dim = 256  # Default fallback based on config
-                    if (
-                        result.data
-                        and len(result.data) > 0
-                        and hasattr(result.data[0], "embedding")
-                    ):
-                        embedding_dim = len(result.data[0].embedding)
-                        log.info(f"🔍 Using embedding dimension: {embedding_dim}")
-
-                    final_data = []
-                    valid_idx = 0
-                    for i in range(len(texts)):
-                        if i in valid_indices:
-                            # Use the embedding from valid texts
-                            final_data.append(result.data[valid_idx])
-                            valid_idx += 1
-                        else:
-                            # Create zero embedding for filtered texts with correct dimension
-                            log.warning(
-                                f"🔍 Creating zero embedding for filtered text at index {i}"
-                            )
-                            final_data.append(
-                                Embedding(
-                                    embedding=[0.0]
-                                    * embedding_dim,  # Use correct embedding dimension
-                                    index=i,
-                                )
-                            )
-
-                    result = EmbedderOutput(
-                        data=final_data, error=None, raw_response=result.raw_response
-                    )
-
-                return result
-
-            except Exception as e:
-                log.error(f"🔍 DashScope async API call failed: {e}")
-                raise
+            return await self.aembeddings(api_kwargs)
         else:
             raise ValueError(f"model_type {model_type} is not supported")
 
@@ -644,10 +635,10 @@ class DashScopeClient(ModelClient):
         self.__dict__.update(state)
         # Re-initialize the clients after unpickling
         self.sync_client = self.init_sync_client()
-        self.async_client = None  # It will be lazily initialized when acall is used
+        self.async_client = self.init_async_client()  # It will be lazily initialized when acall is used
 
 
-class DashScopeEmbedder(DataComponent):
+class DashScopeEmbedder(adal.Embedder):
     r"""
     A user-facing component that orchestrates an embedder model via the DashScope model client and output processors.
 
@@ -658,8 +649,6 @@ class DashScopeEmbedder(DataComponent):
     """
 
     model_type: ModelType = ModelType.EMBEDDER
-    model_client: ModelClient
-    output_processors: Optional[DataComponent]
 
     def __init__(
         self,
@@ -668,14 +657,11 @@ class DashScopeEmbedder(DataComponent):
         output_processors: Optional[DataComponent] = None,
     ) -> None:
 
-        super().__init__(model_kwargs=model_kwargs)
+        super().__init__(model_client=DashScopeClient(), model_kwargs=model_kwargs, output_processors=output_processors)
         if not isinstance(model_kwargs, Dict):
             raise TypeError(
                 f"clients/dashscope_client.py:{type(self).__name__} requires a dictionary for model_kwargs, not a string"
             )
-        self.model_kwargs = model_kwargs.copy()
-        self.model_client = DashScopeClient()
-        self.output_processors = output_processors
 
     def call(
         self,
@@ -725,13 +711,11 @@ class DashScopeEmbedder(DataComponent):
 
 
 # Batch Embedding Components for DashScope
-class DashScopeBatchEmbedder(DataComponent):
+class DashScopeBatchEmbedder(adal.BatchEmbedder):
     """Batch embedder specifically designed for DashScope API"""
 
     def __init__(self, embedder, batch_size: int = 100) -> None:
-        super().__init__(batch_size=batch_size)
-        self.embedder = embedder
-        self.batch_size = batch_size
+        super().__init__(embedder=embedder, batch_size=batch_size)
         if self.batch_size > 10:
             log.warning(
                 f"DashScope batch embedder initialization, batch size: {self.batch_size}, note that DashScope batch embedding size cannot exceed 25, automatically set to 10"
@@ -771,7 +755,6 @@ class DashScopeBatchEmbedder(DataComponent):
             batch_input = input[i : min(i + self.batch_size, n)]
 
             try:
-                # Use correct calling method: directly call embedder instance
                 batch_output = self.embedder(
                     input=batch_input, model_kwargs=model_kwargs
                 )
@@ -814,107 +797,3 @@ class DashScopeBatchEmbedder(DataComponent):
         Call operator interface, delegates to call method
         """
         return self.call(input=input, model_kwargs=model_kwargs)
-
-
-class DashScopeToEmbeddings(DataComponent):
-    """Component that converts document sequences to embedding vector sequences, specifically optimized for DashScope API"""
-
-    def __init__(self, embedder, batch_size: int = 100) -> None:
-        super().__init__(batch_size=batch_size)
-        self.embedder = embedder
-        self.batch_size = batch_size
-        self.batch_embedder = DashScopeBatchEmbedder(
-            embedder=embedder, batch_size=batch_size
-        )
-
-    def __call__(self, input: List[Document]) -> List[Document]:
-        """
-        Process list of documents, generating embedding vectors for each document
-
-        Args:
-            input: List of input documents
-
-        Returns:
-            List of documents containing embedding vectors
-        """
-        output = deepcopy(input)
-
-        # Convert to text list
-        embedder_input: List[str] = [chunk.text for chunk in output]
-
-        log.info(f"Starting to process embeddings for {len(embedder_input)} documents")
-
-        # Batch process embeddings
-        outputs: List[EmbedderOutput] = self.batch_embedder(input=embedder_input)
-
-        # Validate output
-        total_embeddings = 0
-        error_batches = 0
-
-        for batch_output in outputs:
-            if batch_output.error:
-                error_batches += 1
-                log.error(f"Found error batch: {batch_output.error}")
-            elif batch_output.data:
-                total_embeddings += len(batch_output.data)
-
-        log.info(
-            f"Embedding statistics: total {total_embeddings} valid embeddings, {error_batches} error batches"
-        )
-
-        # Assign embedding vectors back to documents
-        doc_idx = 0
-        for batch_idx, batch_output in tqdm(
-            enumerate(outputs),
-            desc="Assigning embedding vectors to documents",
-            disable=False,
-        ):
-            if batch_output.error:
-                # Create empty vectors for documents in error batches
-                batch_size_actual = min(self.batch_size, len(output) - doc_idx)
-                log.warning(
-                    f"Creating empty vectors for {batch_size_actual} documents in batch {batch_idx}"
-                )
-
-                for i in range(batch_size_actual):
-                    if doc_idx < len(output):
-                        output[doc_idx].vector = []
-                        doc_idx += 1
-            else:
-                # Assign normal embedding vectors
-                for embedding in batch_output.data:
-                    if doc_idx < len(output):
-                        if hasattr(embedding, "embedding"):
-                            output[doc_idx].vector = embedding.embedding
-                        else:
-                            log.warning(
-                                f"Invalid embedding format for document {doc_idx}"
-                            )
-                            output[doc_idx].vector = []
-                        doc_idx += 1
-
-        # Validate results
-        valid_count = 0
-        empty_count = 0
-
-        for doc in output:
-            if hasattr(doc, "vector") and doc.vector and len(doc.vector) > 0:
-                valid_count += 1
-            else:
-                empty_count += 1
-
-        log.info(
-            f"Embedding results: {valid_count} valid vectors, {empty_count} empty vectors"
-        )
-
-        if valid_count == 0:
-            log.error("❌ All documents have empty embedding vectors!")
-        elif empty_count > 0:
-            log.warning(f"⚠️ Found {empty_count} empty embedding vectors")
-        else:
-            log.info("✅ All documents successfully generated embedding vectors")
-
-        return output
-
-    def _extra_repr(self) -> str:
-        return f"batch_size={self.batch_size}"
