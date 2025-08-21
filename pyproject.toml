@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deepwiki_cli"
-version = "0.2.1"
+version = "0.2.3"
 description = "Repository Analysis and Query Library with RAG capabilities"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -63,7 +63,7 @@ Repository = "https://github.com/RAG4SE/deepwiki-cli"
 deepwiki = "deepwiki_cli.query:hydra_wrapped_query_repository"
 
 [tool.setuptools]
-packages = ["deepwiki_cli", "deepwiki_cli.configs", "deepwiki_cli.rag", "deepwiki_cli.rag.splitter", "deepwiki_cli.clients", "deepwiki_cli.logger"]
+packages = ["deepwiki_cli", "deepwiki_cli.configs", "deepwiki_cli.rag", "deepwiki_cli.rag.splitter", "deepwiki_cli.clients", "deepwiki_cli.logger", "deepwiki_cli.core"]
 
 [tool.setuptools.package-data]
 "deepwiki_cli" = ["configs/*.yaml", "configs/*.yml"]
