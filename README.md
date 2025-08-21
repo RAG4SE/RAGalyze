@@ -64,6 +64,8 @@ After installation, you can use the `deepwiki` command to query about a local co
 deepwiki repo_path=/path/to/repository question="What does this project do?"
 ```
 
+**Important Note**: If your question contains commas, please escape them with a backslash before the comma. Otherwise, hydra will crash this execution due to its quirk.
+
 Or, you can only embed the codebase with the following command:
 
 ```bash
