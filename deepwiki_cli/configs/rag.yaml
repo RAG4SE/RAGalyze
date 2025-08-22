@@ -30,6 +30,7 @@ rag:
   # Dynamic splitter configuration - automatically selects appropriate splitter
   dynamic_splitter:
     enabled: false
+    parallel: true
     # If batch_size is None, use all available CPU cores. Otherwise, use the specified batch size.
     # Each batch will be processed in parallel.
     batch_size: null

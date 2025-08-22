@@ -8,6 +8,7 @@ from adalflow.components.data_process.text_splitter import (
 )
 from adalflow.core.types import Document
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
+from deepwiki_cli.rag.splitter.utf8 import find_safe_utf8_boundary
 from copy import deepcopy
 from tqdm import tqdm
 
@@ -82,10 +83,6 @@ class NaturalLanguageSplitter(TextSplitter):
         if SPACY_AVAILABLE:
             self._init_nlp_model()
 
-        logger.info(
-            f"Initialized NaturalLanguageSplitter with smart_boundary_ratio={smart_boundary_ratio}, file_extension={file_extension}"
-        )
-
     def get_key(self) -> str:
         """Generate a unique key for this splitter configuration.
 
@@ -124,13 +121,11 @@ class NaturalLanguageSplitter(TextSplitter):
         try:
             # Try to load a small English model first
             self.nlp_model = spacy.load("en_core_web_sm")
-            logger.info("Loaded spaCy English model for text boundary detection")
         except OSError:
             try:
                 # Fallback to blank English model with sentencizer
                 self.nlp_model = English()
                 self.nlp_model.add_pipe("sentencizer")
-                logger.info("Loaded spaCy blank English model with sentencizer")
             except Exception as e:
                 logger.error(f"Failed to initialize spaCy model: {e}")
                 self.nlp_model = None
@@ -147,9 +142,6 @@ class NaturalLanguageSplitter(TextSplitter):
             if nlp_boundary is not None:
                 return nlp_boundary
 
-        logger.warning(
-            "Cannot find semantic boundary, fallback to line-based boundary detection"
-        )
         # Fallback to line-based boundary detection
         return self._find_line_boundary(text, start_pos, max_pos)
 
@@ -163,7 +155,7 @@ class NaturalLanguageSplitter(TextSplitter):
         """Find sentence boundary using NLP tools."""
         try:
             # Convert bytes to string for NLP processing
-            text_str = text.decode("utf-8", errors="ignore")
+            text_str = text.decode("utf-8")
             search_text = text_str[start_pos:max_pos]
 
             if not search_text.strip():
@@ -242,7 +234,7 @@ class NaturalLanguageSplitter(TextSplitter):
         """Find appropriate sentence start position for overlap using NLP tools."""
         try:
             # Convert bytes to string for NLP processing
-            text_str = text.decode("utf-8", errors="ignore")
+            text_str = text.decode("utf-8")
 
             # Search in a reasonable range around the desired position
             search_start = desired_start_byte
@@ -351,27 +343,6 @@ class NaturalLanguageSplitter(TextSplitter):
         # If no line endings found, return max_pos
         return max_pos
 
-    # def split_text(self, text: str) -> List[str]:
-    #     """
-    #     Splits the provided text into chunks.
-
-    #     Splits based on the specified split_by, chunk size, and chunk overlap settings.
-
-    #     Compared with TextSplitter.split_text, this method remvoes redundant logging.
-
-    #     Args:
-    #         text (str): The text to split.
-
-    #     Returns:
-    #         List[str]: A list of text chunks.
-    #     """
-    #     separator = self.separators[self.split_by]
-    #     splits = self._split_text_into_units(text, separator)
-    #     chunks = self._merge_units_to_chunks(
-    #         splits, self.chunk_size, self.chunk_overlap, separator
-    #     )
-    #     return chunks
-
     def _find_boundary(self, text: bytes, start_pos: int, max_pos: int) -> int:
         """Find a smart boundary position within the given range.
 
@@ -408,7 +379,7 @@ class NaturalLanguageSplitter(TextSplitter):
             # Calculate the end position for this chunk
             chunk_end = min(idx + chunk_size, len(splits))
             chunk_text = separator.join(splits[idx:chunk_end])
-            chunk_text_bytes = chunk_text.encode("utf-8", errors="ignore")
+            chunk_text_bytes = chunk_text.encode("utf-8")
 
             # If this is not the last chunk and we have room for smart boundary detection
             if (
@@ -422,18 +393,19 @@ class NaturalLanguageSplitter(TextSplitter):
                 smart_boundary_pos = self._find_boundary(
                     chunk_text_bytes, search_start_pos, len(chunk_text_bytes)
                 )
+                
+                # Ensure we're at a safe UTF-8 boundary
+                smart_boundary_pos = find_safe_utf8_boundary(chunk_text_bytes, smart_boundary_pos)
 
                 # If we found a good boundary, adjust the chunk end
                 if smart_boundary_pos < len(chunk_text_bytes):
                     # Re-encode to find the word boundary
-                    boundary_text = chunk_text_bytes[:smart_boundary_pos].decode(
-                        "utf-8"
-                    )
+                    boundary_text = chunk_text_bytes[:smart_boundary_pos].decode("utf-8")
                     boundary_words = boundary_text.split(separator)
                     chunk_end = idx + len(boundary_words)
                     # Update chunk_text_bytes to reflect the boundary adjustment
                     chunk_text = separator.join(splits[idx:chunk_end])
-                    chunk_text_bytes = chunk_text.encode("utf-8", errors="ignore")
+                    chunk_text_bytes = chunk_text.encode("utf-8")
 
                     logger.debug(
                         f"Found smart boundary at position {smart_boundary_pos} (word {chunk_end})"
@@ -458,12 +430,16 @@ class NaturalLanguageSplitter(TextSplitter):
                     if num_non_overlap_words > chunk_overlap:
                         bytetext_before_overlap = separator.join(
                             splits[idx : idx + num_non_overlap_words]
-                        ).encode("utf-8", errors="ignore")
+                        ).encode("utf-8")
                         desired_start_byte = len(bytetext_before_overlap)
 
                         best_start_byte = self._find_overlap_start(
                             chunk_text_bytes, desired_start_byte
                         )
+                        
+                        # Ensure we're at a safe UTF-8 boundary
+                        best_start_byte = find_safe_utf8_boundary(chunk_text_bytes, best_start_byte)
+                        
                         if best_start_byte < len(chunk_text_bytes):
                             new_overlap_text = chunk_text_bytes[
                                 best_start_byte:
@@ -520,7 +496,7 @@ class NaturalLanguageSplitter(TextSplitter):
             # Calculate the end position for this chunk
             chunk_end = min(idx + chunk_size, len(splits))
             chunk_tokens = splits[idx:chunk_end]
-            chunk_text_bytes = self.tokenizer.decode(chunk_tokens).encode("utf-8", errors="ignore")
+            chunk_text_bytes = self.tokenizer.decode(chunk_tokens).encode("utf-8")
             # If this is not the last chunk and we have room for smart boundary detection
             if (
                 chunk_end < len(splits)
@@ -533,17 +509,18 @@ class NaturalLanguageSplitter(TextSplitter):
                 smart_boundary_pos = self._find_boundary(
                     chunk_text_bytes, search_start_pos, len(chunk_text_bytes)
                 )
+                
+                # Ensure we're at a safe UTF-8 boundary
+                smart_boundary_pos = find_safe_utf8_boundary(chunk_text_bytes, smart_boundary_pos)
 
                 # If we found a good boundary, adjust the chunk end
                 if smart_boundary_pos < len(chunk_text_bytes):
                     # Re-encode to find the token boundary
-                    boundary_text = chunk_text_bytes[:smart_boundary_pos].decode(
-                        "utf-8"
-                    )
+                    boundary_text = chunk_text_bytes[:smart_boundary_pos].decode("utf-8")
                     boundary_tokens = self.tokenizer.encode(boundary_text)
                     chunk_end = idx + len(boundary_tokens)
                     # Update chunk_text_bytes to reflect the boundary adjustment
-                    chunk_text_bytes = boundary_text.encode("utf-8", errors="ignore")
+                    chunk_text_bytes = boundary_text.encode("utf-8")
 
                     logger.debug(
                         f"Found smart boundary at position {smart_boundary_pos} (token {chunk_end})"
@@ -566,16 +543,18 @@ class NaturalLanguageSplitter(TextSplitter):
             if num_non_overlap_tokens > 0 and chunk_end < len(splits):
                 bytetext_before_overlap = self.tokenizer.decode(
                     actual_chunk_tokens[:num_non_overlap_tokens]
-                ).encode("utf-8", errors="ignore")
+                ).encode("utf-8")
                 desired_start_byte = len(bytetext_before_overlap)
 
                 best_start_byte = self._find_overlap_start(
                     chunk_text_bytes, desired_start_byte
                 )
+                
+                # Ensure we're at a safe UTF-8 boundary
+                best_start_byte = find_safe_utf8_boundary(chunk_text_bytes, best_start_byte)
+                
                 if best_start_byte < len(chunk_text_bytes):
-                    new_overlap_text = chunk_text_bytes[best_start_byte:].decode(
-                        "utf-8"
-                    )
+                    new_overlap_text = chunk_text_bytes[best_start_byte:].decode("utf-8")
                     new_overlap_tokens_count = len(
                         self.tokenizer.encode(new_overlap_text)
                     )
@@ -583,9 +562,7 @@ class NaturalLanguageSplitter(TextSplitter):
 
                     # Calculate next_idx based on the smart overlap position
                     # Find the token position in the original splits that corresponds to the overlap start
-                    overlap_start_text = chunk_text_bytes[best_start_byte:].decode(
-                        "utf-8"
-                    )
+                    overlap_start_text = chunk_text_bytes[best_start_byte:].decode("utf-8")
 
                     # Find the token that starts with the overlap text
                     next_idx = chunk_end - adjusted_overlap  # fallback
@@ -613,7 +590,7 @@ class NaturalLanguageSplitter(TextSplitter):
                 next_idx = chunk_end - adjusted_overlap
             assert (
                 next_idx > idx
-            ), f"next_idx ({next_idx}) must be greater than idx ({idx})"
+            ), f"next_idx ({next_idx}) must be greater than idx ({idx})."
             idx = next_idx
 
         return chunks
@@ -645,10 +622,7 @@ class NaturalLanguageSplitter(TextSplitter):
 
         split_docs = []
         # Using range and batch_size to create batches
-        for start_idx in tqdm(
-            range(0, len(documents), self.batch_size),
-            desc="Splitting Documents in Batches",
-        ):
+        for start_idx in range(0, len(documents), self.batch_size):
             batch_docs = documents[start_idx : start_idx + self.batch_size]
 
             for doc in batch_docs:
@@ -663,8 +637,9 @@ class NaturalLanguageSplitter(TextSplitter):
                 try:
                     text_splits = self.split_text(doc.text)
                 except Exception as e:
-                    logger.warning(f"Error splitting document {doc.id}: {e}")
-                    continue
+                    logger.error(f"Error splitting document {doc.id}: {e}")
+                    raise
+                    
                 meta_data = deepcopy(doc.meta_data)
 
                 split_docs.extend(

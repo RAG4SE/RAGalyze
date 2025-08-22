@@ -386,7 +386,10 @@ def prepare_data_transformer() -> adal.Sequential:
 
     if configs()["rag"]["dynamic_splitter"]["enabled"]:
         # Use dynamic splitter that automatically selects appropriate splitter
-        splitter = DynamicSplitterTransformer(batch_size=configs()["rag"]["dynamic_splitter"]["batch_size"])
+        splitter = DynamicSplitterTransformer(
+            batch_size=configs()["rag"]["dynamic_splitter"]["batch_size"],
+            parallel=configs()["rag"]["dynamic_splitter"]["parallel"]
+        )
     else:
         splitter = TextSplitter(**configs()["rag"]["text_splitter"])
 

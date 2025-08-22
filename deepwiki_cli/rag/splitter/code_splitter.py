@@ -8,6 +8,7 @@ from adalflow.components.data_process.text_splitter import (
 )
 from adalflow.core.types import Document
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
+from deepwiki_cli.rag.splitter.utf8 import find_safe_utf8_boundary
 from copy import deepcopy
 from tqdm import tqdm
 
@@ -264,9 +265,9 @@ class CodeSplitter(TextSplitter):
             language = Language(lang_module.language())
             parser = Parser(language)
             self.parsers[lang_name] = parser
-            logger.info(f"Initialized tree-sitter parser for {lang_name}")
         except Exception as e:
-            logger.warning(f"Failed to initialize parser for {lang_name}: {e}")
+            logger.error(f"Failed to initialize parser for {lang_name}: {e}")
+            raise
 
     def _is_statement_node(self, node, language: str) -> bool:
         """
@@ -556,14 +557,16 @@ class CodeSplitter(TextSplitter):
                     len(chunk_text_bytes) + len(prev_chunk_bytes),
                 )
                 smart_boundary_pos -= len(prev_chunk_bytes)
+                
+                # Ensure we're at a safe UTF-8 boundary
+                smart_boundary_pos = find_safe_utf8_boundary(chunk_text_bytes, smart_boundary_pos)
+                
                 # If we found a good boundary, adjust the chunk end
                 if smart_boundary_pos < len(chunk_text_bytes):
-                    # Re-encode to find the token boundary
                     boundary_text = chunk_text_bytes[:smart_boundary_pos].decode(
                         "utf-8"
                     )
                     chunk_end = idx + len(boundary_text.split(separator))
-                    # Update chunk_text_bytes to reflect the boundary adjustment
                     chunk_text_bytes = boundary_text.encode("utf-8", errors="ignore")
 
                     logger.debug(
@@ -581,8 +584,6 @@ class CodeSplitter(TextSplitter):
                     chunk_text = chunk_text_bytes.decode("utf-8")
                 chunks.append(chunk_text)
 
-            # Smart overlap calculation
-            # Use the actual chunk tokens that were used (may be adjusted by boundary detection)
             actual_chunk_words = chunk_text_bytes.decode("utf-8").split(separator)
             num_non_overlap_words = len(actual_chunk_words) - chunk_overlap
 
@@ -595,26 +596,25 @@ class CodeSplitter(TextSplitter):
                     self.bytes, desired_start_byte + len(prev_chunk_bytes)
                 )
                 best_start_byte -= len(prev_chunk_bytes)
+                
+                # Ensure we're at a safe UTF-8 boundary
+                best_start_byte = find_safe_utf8_boundary(chunk_text_bytes, best_start_byte)
 
-                if best_start_byte < len(chunk_text_bytes):
+                if 0 < best_start_byte < len(chunk_text_bytes):
                     new_overlap_text = chunk_text_bytes[best_start_byte:].decode(
                         "utf-8"
                     )
                     new_overlap_words_count = len(new_overlap_text.split(separator))
                     adjusted_overlap = new_overlap_words_count
 
-                    # Find the token that starts with the overlap text
-                    next_idx = chunk_end - adjusted_overlap  # fallback
-
                 else:
                     adjusted_overlap = 0
-                    next_idx = chunk_end - adjusted_overlap
             else:
                 adjusted_overlap = 0
-                next_idx = chunk_end - adjusted_overlap
+            next_idx = chunk_end - adjusted_overlap
             assert (
                 next_idx > idx
-            ), f"next_idx ({next_idx}) must be greater than idx ({idx})"
+            ), f"next_idx ({next_idx}) must be greater than idx ({idx}), given that len(splits) is {len(splits)}, chunk_end is {chunk_end}, adjusted_overlap is {adjusted_overlap}. best_start_byte is {best_start_byte}, {chunk_text_bytes[0:best_start_byte]}, {new_overlap_text}"
             idx = next_idx
 
         return chunks
@@ -632,9 +632,9 @@ class CodeSplitter(TextSplitter):
             chunk_end = min(idx + chunk_size, len(splits))
             chunk_tokens = splits[idx:chunk_end]
             prev_chunk_bytes = (
-                self.tokenizer.decode(splits[:idx]).encode("utf-8", errors="ignore") if idx > 0 else b""
+                self.tokenizer.decode(splits[:idx]).encode("utf-8") if idx > 0 else b""
             )
-            chunk_text_bytes = self.tokenizer.decode(chunk_tokens).encode("utf-8", errors="ignore")
+            chunk_text_bytes = self.tokenizer.decode(chunk_tokens).encode("utf-8")
             # If this is not the last chunk and we have room for smart boundary detection
             if (
                 chunk_end < len(splits)
@@ -650,6 +650,9 @@ class CodeSplitter(TextSplitter):
                     len(chunk_text_bytes) + len(prev_chunk_bytes),
                 )
                 smart_boundary_pos -= len(prev_chunk_bytes)
+                
+                # Ensure we're at a safe UTF-8 boundary
+                smart_boundary_pos = find_safe_utf8_boundary(chunk_text_bytes, smart_boundary_pos)
 
                 # If we found a good boundary, adjust the chunk end
                 if smart_boundary_pos < len(chunk_text_bytes):
@@ -680,13 +683,17 @@ class CodeSplitter(TextSplitter):
             if num_non_overlap_tokens > 0 and chunk_end < len(splits):
                 bytetext_before_overlap = self.tokenizer.decode(
                     actual_chunk_tokens[:num_non_overlap_tokens]
-                ).encode("utf-8", errors="ignore")
+                ).encode("utf-8")
                 desired_start_byte = len(bytetext_before_overlap)
 
                 best_start_byte = self._find_prev_code_boundary_with_treesitter(
                     self.bytes, desired_start_byte + len(prev_chunk_bytes)
                 )
                 best_start_byte -= len(prev_chunk_bytes)
+                
+                # Ensure we're at a safe UTF-8 boundary
+                best_start_byte = find_safe_utf8_boundary(chunk_text_bytes, best_start_byte)
+                
                 if best_start_byte < len(chunk_text_bytes):
                     new_overlap_text = chunk_text_bytes[best_start_byte:].decode(
                         "utf-8"
@@ -728,7 +735,7 @@ class CodeSplitter(TextSplitter):
                 next_idx = chunk_end - adjusted_overlap
             assert (
                 next_idx > idx
-            ), f"next_idx ({next_idx}) must be greater than idx ({idx})"
+            ), f"next_idx ({next_idx}) must be greater than idx ({idx}), given that len(splits) is {len(splits)}"
             idx = next_idx
 
         logger.info(
@@ -794,10 +801,7 @@ class CodeSplitter(TextSplitter):
 
         split_docs = []
         # Using range and batch_size to create batches
-        for start_idx in tqdm(
-            range(0, len(documents), self.batch_size),
-            desc="Splitting Documents in Batches",
-        ):
+        for start_idx in range(0, len(documents), self.batch_size):
             batch_docs = documents[start_idx : start_idx + self.batch_size]
 
             for doc in batch_docs:
@@ -812,8 +816,8 @@ class CodeSplitter(TextSplitter):
                 try:
                     text_splits = self.split_text(doc.text)
                 except Exception as e:
-                    logger.warning(f"Error splitting document {doc.id}: {e}")
-                    continue
+                    logger.error(f"Error splitting document {doc.id}: {e}")
+                    raise
 
                 meta_data = deepcopy(doc.meta_data)
 

@@ -17,8 +17,6 @@ class SplitterFactory:
 
     def __init__(self):
         """Initialize the splitter factory."""
-        self._natural_language_splitter = None
-        self._code_splitter = None
         # File extensions that are considered code files
         self.CODE_EXTENSIONS = configs()["repo"]["file_extensions"]["code_extensions"]
         # File extensions that are considered text/documentation files
@@ -30,12 +28,11 @@ class SplitterFactory:
         Returns:
             SmartTextSplitter: Configured smart text splitter
         """
-        if self._natural_language_splitter is None:
-            natural_language_splitter_config = configs()["rag"]["dynamic_splitter"]["natural_language_splitter"].copy()
-            # Add smart splitting parameters for text content
-            natural_language_splitter_config["smart_boundary_ratio"] = 0.8
-            self._natural_language_splitter = NaturalLanguageSplitter(**natural_language_splitter_config)
-        return self._natural_language_splitter
+        natural_language_splitter_config = configs()["rag"]["dynamic_splitter"]["natural_language_splitter"].copy()
+        # Add smart splitting parameters for text content
+        natural_language_splitter_config["smart_boundary_ratio"] = 0.8
+        _natural_language_splitter = NaturalLanguageSplitter(**natural_language_splitter_config)
+        return _natural_language_splitter
 
     def _get_code_splitter(self, extension: str) -> CodeSplitter:
         """Get or create code splitter instance.
@@ -43,18 +40,17 @@ class SplitterFactory:
         Returns:
             SmartTextSplitter: Configured smart code splitter with custom tokenizer
         """
-        if self._code_splitter is None:
-            code_splitter_config = configs()["rag"]["dynamic_splitter"]["code_splitter"].copy()
+        code_splitter_config = configs()["rag"]["dynamic_splitter"]["code_splitter"].copy()
 
-            # Add smart splitting parameters for code content
-            code_splitter_config["smart_boundary_ratio"] = (
-                0.75  # Slightly more aggressive for code
-            )
-            code_splitter_config["file_extension"] = extension
-            # Create the smart code splitter
-            self._code_splitter = CodeSplitter(**code_splitter_config)
+        # Add smart splitting parameters for code content
+        code_splitter_config["smart_boundary_ratio"] = (
+            0.75  # Slightly more aggressive for code
+        )
+        code_splitter_config["file_extension"] = extension
+        # Create the smart code splitter
+        _code_splitter = CodeSplitter(**code_splitter_config)
+        return _code_splitter
 
-        return self._code_splitter
 
     def detect_document_type(self, file_path: str) -> tuple[str, str]:
         """Detect document type and extension based on file path.
