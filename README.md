@@ -90,6 +90,8 @@ from deepwiki_cli import configs
 repo_path = "/path/to/repository"
 question = "What does this project do?"
 
+# Load default config
+configs.configs = load_all_configs(load_default_config())
 # Basic usage
 result = query_repository(
     repo_path=repo_path,
@@ -98,7 +100,16 @@ result = query_repository(
 
 print_result(result)
 save_query_results(result, repo_path, question)
+```
 
+Beyond default config, you can customize the config, such as generator model, embedding mode, etc.
+
+```python
+from deepwiki_cli import *
+from deepwiki_cli import configs
+
+repo_path = "/path/to/repository"
+question = "What does this project do?"
 # Load default DictConfig
 dict_config = load_default_config()
 # Add custom config
