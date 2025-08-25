@@ -23,7 +23,9 @@ pip install deepwiki_cli
 ```bash
 git clone git@github.com:RAG4SE/deepwiki-cli.git
 cd deepwiki-cli
-pip install .
+# Support PEP 660
+pip install --upgrade pip "setuptools>=64.0.0" wheel
+pip install -e .
 
 ```
 
