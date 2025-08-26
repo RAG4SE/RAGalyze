@@ -120,7 +120,7 @@ dict_config.rag.hybrid.enabled = False
 # Disable semantic interpretation in dual-vector embedding, only embed code snippets
 dict_config.rag.embedder.sketch_filling = False
 # Modify the global dict-type configs
-configs.configs = load_all_configs(dict_config)
+load_all_configs(dict_config)
 
 result = query_repository(
     repo_path=repo_path,

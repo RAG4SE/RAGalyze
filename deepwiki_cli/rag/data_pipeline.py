@@ -464,7 +464,6 @@ class DatabaseManager:
     def __init__(self, repo_path: str):
         self.db = None
         self.db_info = None
-        self.data_transformer = None
         self.repo_path = repo_path
 
         assert "rag" in configs(), "configs() must contain rag section"
@@ -521,7 +520,6 @@ class DatabaseManager:
         Returns:
             List[Document]: List of Document objects
         """
-        self.data_transformer = prepare_data_transformer()
         self._create_db_info()
         return self.prepare_db_index()
 
