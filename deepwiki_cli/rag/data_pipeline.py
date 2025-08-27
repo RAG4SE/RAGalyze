@@ -123,8 +123,9 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
                     return None, f"binary_file_signature_{sig.hex()}"
 
             # Check if chunk has too many non-printable characters
+            # Allow byte >= 128 to support UTF-8 multi-byte chars, like Chinese
             printable_chars = sum(
-                1 for byte in chunk if 32 <= byte <= 126 or byte in [9, 10, 13]
+                1 for byte in chunk if 32 <= byte <= 126 or byte in [9, 10, 13] or byte >= 128
             )
             if len(chunk) > 0 and printable_chars / len(chunk) < 0.7:
                 return None, "binary_file_non_printable"
@@ -238,7 +239,6 @@ def read_all_documents(path: str):
         """
         # Normalize the file path for consistent matching
         normalized_path = os.path.normpath(file_path).replace("\\", "/")
-        file_name = os.path.basename(file_path)
         
         def matches_pattern(text: str, pattern: str) -> bool:
             """Check if text matches a glob pattern."""
@@ -293,6 +293,7 @@ def read_all_documents(path: str):
                 and "test" not in relative_path.lower()
             )
 
+            
             # Check token count
             if len(content) > MAX_EMBEDDING_LENGTH:
                 logger.warning(
@@ -393,7 +394,6 @@ def prepare_data_transformer() -> adal.Sequential:
     else:
         splitter = TextSplitter(**configs()["rag"]["text_splitter"])
 
-    embedder_model_config = configs()["rag"]["embedder"]["model_kwargs"]
     embedder = get_batch_embedder()
     if use_dual_vector:
         code_understanding_generator = CodeUnderstandingGenerator(

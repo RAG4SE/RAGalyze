@@ -6,7 +6,6 @@ Merged from test_overlap_debug.py, test_overlap_detection.py, and test_smart_tex
 """
 
 import sys
-sys.path.append('/home/lyr/RAGalyze')
 
 from rag.splitter import NaturalLanguageSplitter
 

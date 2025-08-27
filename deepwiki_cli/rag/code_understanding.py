@@ -17,6 +17,7 @@ from adalflow.core.component import DataComponent
 from deepwiki_cli.clients.dashscope_client import DashScopeClient
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
 from deepwiki_cli.core.types import DualVectorDocument
+from deepwiki_cli.configs import get_code_understanding_client
 
 logger = get_tqdm_compatible_logger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -58,40 +59,12 @@ class CodeUnderstandingGenerator:
             "model" in kwargs
         ), f"rag/dual_vector_pipeline.py:model not found in code_understanding_generator_config"
         self.model = kwargs["model"]
-        assert (
-            "model_client" in kwargs
-        ), f"rag/dual_vector_pipeline.py:model_client not found in code_understanding_generator_config"
-        model_client = kwargs["model_client"]
-        # Initialize client
-
-        # Get API configuration from environment
-        api_key = os.environ.get("DASHSCOPE_API_KEY")
-        if not api_key:
-            raise ValueError("DASHSCOPE_API_KEY environment variable not set")
-
-        if model_client == DashScopeClient:
-            self.client = model_client(
-                api_key=api_key,
-                # workspace_id=workspace_id
-            )
-        else:
-            raise ValueError(
-                f"rag/dual_vector_pipeline.py:Unsupported client class: {model_client.__class__.name}"
-            )
-
+        assert "batch_size" in kwargs, f"batch_size not found in the hydra config of code_understanding in rag.yaml."
+        self.batch_size = kwargs["batch_size"]
         # Extract configuration
         assert "model_kwargs" in kwargs, f"model_kwargs not found in the hydra config of code_understanding in rag.yaml."
         self.model_kwargs = kwargs["model_kwargs"]
-
-        assert "batch_size" in kwargs, f"batch_size not found in the hydra config of code_understanding in rag.yaml."
-        self.batch_size = kwargs["batch_size"]
-
-        # Get API configuration from environment
-        api_key = os.environ.get("DASHSCOPE_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "CodeUnderstandingGenerator: DASHSCOPE_API_KEY environment variable not set"
-            )
+        self.client = get_code_understanding_client()
 
     def call(
         self, code: Union[str, List[str]], file_path: Union[str, List[str]]

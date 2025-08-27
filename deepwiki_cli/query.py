@@ -245,9 +245,7 @@ def print_result(result: Dict[str, Any]) -> None:
         print("For more details, please check the reply folder")
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="main")
-def hydra_wrapped_query_repository(cfg: DictConfig) -> None:
-
+def main(cfg: DictConfig) -> None:
     assert cfg.repo_path, "repo_path must be set"
     # print("force_embedding:", configs()["rag"]["embedder"]["force_embedding"])
     load_all_configs(cfg)
@@ -272,6 +270,11 @@ def hydra_wrapped_query_repository(cfg: DictConfig) -> None:
 
         traceback.print_exc()
         sys.exit(1)
+
+
+@hydra.main(version_base=None, config_path="configs", config_name="main")
+def hydra_wrapped_query_repository(cfg: DictConfig) -> None:
+    main(cfg)
 
 
 if __name__ == "__main__":

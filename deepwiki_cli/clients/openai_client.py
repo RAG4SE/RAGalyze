@@ -1,4 +1,4 @@
-"""Dashscope (Alibaba Cloud) ModelClient integration."""
+"""OpenAI ModelClient integration."""
 
 import os
 from typing import (
@@ -57,7 +57,6 @@ import adalflow.core.functional as F
 from adalflow.components.model_client.utils import parse_embedding_response
 
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
-from .openai_client import OpenAIClient
 
 log = get_tqdm_compatible_logger(__name__)
 
@@ -96,42 +95,37 @@ async def handle_streaming_response(generator: Stream[ChatCompletionChunk]):
         yield parsed_content
 
 
-class DashScopeClient(ModelClient):
-    """A component wrapper for the Dashscope (Alibaba Cloud) API client.
+class OpenAIClient(ModelClient):
+    """A base component wrapper for the OpenAI API client.
 
-    Dashscope provides access to Alibaba Cloud's Qwen and other models through an OpenAI-compatible API.
+    This client provides a foundation for OpenAI-compatible APIs.
+    Specific implementations (like Lingxi or DashScope) should inherit from this class.
 
     Args:
-        api_key (Optional[str], optional): Dashscope API key. Defaults to None.
-        workspace_id (Optional[str], optional): Dashscope workspace ID. Defaults to None.
-        base_url (str): The API base URL. Defaults to "https://dashscope.aliyuncs.com/compatible-mode/v1".
-        env_api_key_name (str): Environment variable name for the API key. Defaults to "DASHSCOPE_API_KEY".
-        env_workspace_id_name (str): Environment variable name for the workspace ID. Defaults to "DASHSCOPE_WORKSPACE_ID".
+        api_key (Optional[str], optional): OpenAI API key. Defaults to None.
+        base_url (str): The API base URL. Defaults to "https://api.openai.com/v1".
+        env_api_key_name (str): Environment variable name for the API key. Defaults to "OPENAI_API_KEY".
 
     References:
-        - Dashscope API Documentation: https://help.aliyun.com/zh/dashscope/
+        - OpenAI API Documentation: https://platform.openai.com/docs/api-reference
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        workspace_id: Optional[str] = None,
         chat_completion_parser: Callable[[Completion], Any] = None,
         input_type: Literal["text", "messages"] = "text",
         base_url: Optional[str] = None,
-        env_base_url_name: str = "DASHSCOPE_BASE_URL",
-        env_api_key_name: str = "DASHSCOPE_API_KEY",
-        env_workspace_id_name: str = "DASHSCOPE_WORKSPACE_ID",
+        env_base_url_name: str = "OPENAI_BASE_URL",
+        env_api_key_name: str = "OPENAI_API_KEY",
         **kwargs,
     ):
         super().__init__()
         self._api_key = api_key
-        self._workspace_id = workspace_id
         self._env_api_key_name = env_api_key_name
-        self._env_workspace_id_name = env_workspace_id_name
         self._env_base_url_name = env_base_url_name
         self.base_url = base_url or os.getenv(
-            self._env_base_url_name, "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            self._env_base_url_name, "https://api.openai.com/v1"
         )
         self.sync_client = self.init_sync_client()
         self.async_client = self.init_async_client()
@@ -149,52 +143,30 @@ class DashScopeClient(ModelClient):
         Private helper method to prepare client configuration.
 
         Returns:
-            tuple: (api_key, workspace_id, base_url) for client initialization
+            tuple: (api_key, base_url) for client initialization
 
         Raises:
             ValueError: If API key is not provided
         """
         # Use provided API key first, then environment variable
         api_key = self._api_key or os.getenv(self._env_api_key_name)
-        workspace_id = self._workspace_id or os.getenv(self._env_workspace_id_name)
 
         if not api_key:
             raise ValueError(
-                f"clients/dashscope_client.py:Environment variable {self._env_api_key_name} must be set."
+                f"clients/openai_client.py:Environment variable {self._env_api_key_name} must be set."
             )
 
-        if not workspace_id:
-            log.warning(
-                f"Environment variable {self._env_workspace_id_name} not set. Some features may not work properly."
-            )
-
-        # For Dashscope, we need to include the workspace ID in the base URL if provided
         base_url = self.base_url
-        if workspace_id:
-            # Add workspace ID to headers or URL as required by Dashscope
-            base_url = f"{self.base_url.rstrip('/')}"
-
-        return api_key, workspace_id, base_url
+        return api_key, base_url
 
     def init_sync_client(self):
-        api_key, workspace_id, base_url = self._prepare_client_config()
+        api_key, base_url = self._prepare_client_config()
         client = OpenAI(api_key=api_key, base_url=base_url)
-
-        # Store workspace_id for later use in requests
-        if workspace_id:
-            client._workspace_id = workspace_id
-
         return client
 
     def init_async_client(self):
-        api_key, workspace_id, base_url = self._prepare_client_config()
-
+        api_key, base_url = self._prepare_client_config()
         client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-
-        # Store workspace_id for later use in requests
-        if workspace_id:
-            client._workspace_id = workspace_id
-
         return client
 
     # TODO: parse streaming response
@@ -271,7 +243,7 @@ class DashScopeClient(ModelClient):
                 raise
             return result
         except Exception as e:
-            log.error(f"🔍 Error parsing DashScope embedding response: {e}")
+            log.error(f"🔍 Error parsing OpenAI embedding response: {e}")
             log.error(f"🔍 Raw response details: {repr(response)}")
             raise
 
@@ -292,21 +264,10 @@ class DashScopeClient(ModelClient):
                 messages = input
             else:
                 raise ValueError(
-                    f"clients/dashscope_client.py:Unsupported input type: {type(input)}"
+                    f"clients/openai_client.py:Unsupported input type: {type(input)}"
                 )
 
-            api_kwargs = {"messages": messages, **final_model_kwargs}
-
-            # Add workspace ID to headers if available
-            workspace_id = getattr(self.sync_client, "_workspace_id", None) or getattr(
-                self.async_client, "_workspace_id", None
-            )
-            if workspace_id:
-                # Dashscope may require workspace ID in headers
-                if "extra_headers" not in api_kwargs:
-                    api_kwargs["extra_headers"] = {}
-                api_kwargs["extra_headers"]["X-DashScope-WorkSpace"] = workspace_id
-            return api_kwargs
+            return {"messages": messages, **final_model_kwargs}
 
         elif model_type == ModelType.EMBEDDER:
             # Convert Documents to text strings for embedding
@@ -334,55 +295,30 @@ class DashScopeClient(ModelClient):
                 # Convert to string as fallback
                 processed_input = str(input)
 
-            # Filter out batch_size and other unsupported parameters for DashScope API
+            # Filter out batch_size and other unsupported parameters for OpenAI API
             filtered_kwargs = {
                 k: v for k, v in final_model_kwargs.items() if k not in ["batch_size"]
             }
 
             api_kwargs = {"input": processed_input, **filtered_kwargs}
 
-            # Ensure model parameter is included for DashScope API
+            # Ensure model parameter is included for OpenAI API
             if "model" not in api_kwargs and hasattr(self, "model"):
                 api_kwargs["model"] = self.model
-
-            # Add workspace ID to headers if available
-            workspace_id = getattr(self.sync_client, "_workspace_id", None) or getattr(
-                self.async_client, "_workspace_id", None
-            )
-            if workspace_id:
-                if "extra_headers" not in api_kwargs:
-                    api_kwargs["extra_headers"] = {}
-                api_kwargs["extra_headers"]["X-DashScope-WorkSpace"] = workspace_id
 
             return api_kwargs
         else:
             raise ValueError(
-                f"clients/dashscope_client.py:model_type {model_type} is not supported"
+                f"clients/openai_client.py:model_type {model_type} is not supported"
             )
 
     def chat(self, api_kwargs: Dict = {}):
-        if not api_kwargs.get("stream", False):
-            # For non-streaming, enable_thinking must be false.
-            # Pass it via extra_body to avoid TypeError from openai client validation.
-            extra_body = api_kwargs.get("extra_body", {})
-            extra_body["enable_thinking"] = False
-            api_kwargs["extra_body"] = extra_body
-
         completion = self.sync_client.chat.completions.create(**api_kwargs)
-
         return completion
 
     async def achat(self, api_kwargs: Dict = {}):
         """Async version of chat method."""
-        if not api_kwargs.get("stream", False):
-            # For non-streaming, enable_thinking must be false.
-            # Pass it via extra_body to avoid TypeError from openai client validation.
-            extra_body = api_kwargs.get("extra_body", {})
-            extra_body["enable_thinking"] = False
-            api_kwargs["extra_body"] = extra_body
-
         completion = await self.async_client.chat.completions.create(**api_kwargs)
-
         return completion
 
     def embeddings(self, api_kwargs: Dict = {}):
@@ -552,7 +488,6 @@ class DashScopeClient(ModelClient):
 
         return result
 
-
     @backoff.on_exception(
         backoff.expo,
         (
@@ -570,7 +505,7 @@ class DashScopeClient(ModelClient):
         model_type: ModelType = ModelType.UNDEFINED,
         **kwargs,
     ):
-        """Call the Dashscope API."""
+        """Call the OpenAI API."""
         if model_type == ModelType.LLM:
             return self.chat(api_kwargs)
         elif model_type == ModelType.EMBEDDER:
@@ -592,7 +527,7 @@ class DashScopeClient(ModelClient):
     async def acall(
         self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED
     ):
-        """Async call to the Dashscope API."""
+        """Async call to the OpenAI API."""
 
         if model_type == ModelType.LLM:
             return await self.achat(api_kwargs)
@@ -610,7 +545,6 @@ class DashScopeClient(ModelClient):
         """Convert to dictionary."""
         return {
             "api_key": self._api_key,
-            "workspace_id": self._workspace_id,
             "base_url": self.base_url,
             "input_type": self._input_type,
         }
@@ -639,12 +573,12 @@ class DashScopeClient(ModelClient):
         self.async_client = self.init_async_client()  # It will be lazily initialized when acall is used
 
 
-class DashScopeEmbedder(adal.Embedder):
+class OpenAIEmbedder(adal.Embedder):
     r"""
-    A user-facing component that orchestrates an embedder model via the DashScope model client and output processors.
+    A user-facing component that orchestrates an embedder model via the OpenAI model client and output processors.
 
     Args:
-        model_client (ModelClient): The DashScope model client to use for the embedder.
+        model_client (ModelClient): The OpenAI model client to use for the embedder.
         model_kwargs (Dict[str, Any], optional): The model kwargs to pass to the model client. Defaults to {}.
         output_processors (Optional[Component], optional): The output processors after model call. Defaults to None.
     """
@@ -660,15 +594,15 @@ class DashScopeEmbedder(adal.Embedder):
         output_processors: Optional[DataComponent] = None,
     ) -> None:
         # Create model client with api_key if provided
-        client_kwargs = {}
+        client_kwargs = {"model_kwargs": model_kwargs}
         if api_key:
             client_kwargs["api_key"] = api_key
         if base_url:
-            client_kwargs["base_url"] = base_url
-        super().__init__(model_client=DashScopeClient(**client_kwargs), model_kwargs=model_kwargs, output_processors=output_processors)
+            client_kwargs["base_url"] = base_url   
+        super().__init__(model_client=OpenAIClient(**client_kwargs), model_kwargs=model_kwargs, output_processors=output_processors)
         if not isinstance(model_kwargs, Dict):
             raise TypeError(
-                f"clients/dashscope_client.py:{type(self).__name__} requires a dictionary for model_kwargs, not a string"
+                f"{type(self).__name__} requires a dictionary for model_kwargs, not a string"
             )
 
     def call(
@@ -706,7 +640,7 @@ class DashScopeEmbedder(adal.Embedder):
             )
             output = self.model_client.parse_embedding_response(response)
         except Exception as e:
-            log.error(f"Error calling the DashScope model: {e}")
+            log.error(f"Error calling the OpenAI model: {e}")
             output = EmbedderOutput(error=str(e))
             raise
 
@@ -718,23 +652,18 @@ class DashScopeEmbedder(adal.Embedder):
         return F.compose_model_kwargs(self.model_kwargs, model_kwargs)
 
 
-# Batch Embedding Components for DashScope
-class DashScopeBatchEmbedder(adal.BatchEmbedder):
-    """Batch embedder specifically designed for DashScope API"""
+# Batch Embedding Components for OpenAI
+class OpenAIBatchEmbedder(adal.BatchEmbedder):
+    """Batch embedder specifically designed for OpenAI API"""
 
     def __init__(self, embedder, batch_size: int = 100) -> None:
         super().__init__(embedder=embedder, batch_size=batch_size)
-        if self.batch_size > 10:
-            log.warning(
-                f"DashScope batch embedder initialization, batch size: {self.batch_size}, note that DashScope batch embedding size cannot exceed 25, automatically set to 10"
-            )
-            self.batch_size = 10
 
     def call(
         self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}
     ) -> BatchEmbedderOutputType:
         """
-        Batch call to DashScope embedder
+        Batch call to OpenAI embedder
 
         Args:
             input: List of input texts
@@ -752,12 +681,12 @@ class DashScopeBatchEmbedder(adal.BatchEmbedder):
         embeddings: List[EmbedderOutput] = []
 
         log.info(
-            f"Starting DashScope batch embedding processing, total {n} texts, batch size: {self.batch_size}"
+            f"Starting OpenAI batch embedding processing, total {n} texts, batch size: {self.batch_size}"
         )
 
         for i in tqdm(
             range(0, n, self.batch_size),
-            desc="DashScope batch embedding",
+            desc="OpenAI batch embedding",
             disable=False,
         ):
             batch_input = input[i : min(i + self.batch_size, n)]
@@ -790,7 +719,7 @@ class DashScopeBatchEmbedder(adal.BatchEmbedder):
                 raise
 
         log.info(
-            f"DashScope batch embedding completed, processed {len(embeddings)} batches"
+            f"OpenAI batch embedding completed, processed {len(embeddings)} batches"
         )
 
         return embeddings
