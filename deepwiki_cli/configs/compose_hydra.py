@@ -16,12 +16,14 @@ global_configs = None
 # Setup logging
 logger = get_tqdm_compatible_logger(__name__)
 
+
 def load_default_config() -> DictConfig:
     """
     Load all YAML configurations programmatically using Hydra's compose API.
     """
     with initialize(config_path=".", version_base=None):
         return compose(config_name="main")
+
 
 def load_all_configs(cfg: DictConfig = None):
     if cfg is None:
@@ -32,15 +34,39 @@ def load_all_configs(cfg: DictConfig = None):
     global global_configs
     global_configs = all_configs
 
+
 def configs():
     if global_configs is None:
-        raise ValueError("May use global_configs before loading all configs. Probably deepwiki_cli has incorrect initialization.")
+        raise ValueError(
+            "May use global_configs before loading all configs. Probably deepwiki_cli has incorrect initialization."
+        )
     return global_configs
 
 
 PROVIDER_NAME_TO_CLASS = {
     "google": GoogleGenAIClient,
     "dashscope": DashScopeClient,
+    "lingxi": LingxiClient,
+    "local_server": LocalServerClient,
+    "openai": OpenAIClient,
+}
+
+# Define provider to embedder class name mappings
+EMBEDDER_PROVIDER_TO_CLASS_NAMES = {
+    "dashscope": ("DashScopeEmbedder", "DashScopeBatchEmbedder"),
+    "huggingface": ("HuggingfaceEmbedder", "HuggingfaceBatchEmbedder"),
+    "lingxi": ("LingxiEmbedder", "LingxiBatchEmbedder"),
+    "local_server": ("LocalServerEmbedder", "LocalServerBatchEmbedder"),
+    "openai": ("OpenAIEmbedder", "OpenAIBatchEmbedder"),
+}
+
+# Define provider to code understanding client class name mappings
+CODE_UNDERSTANDING_PROVIDER_TO_CLASS_NAME = {
+    "dashscope": "DashScopeClient",
+    "huggingface": "HuggingfaceClient",
+    "lingxi": "LingxiClient",
+    "local_server": "LocalServerClient",
+    "openai": "OpenAIClient",
 }
 
 
@@ -63,34 +89,33 @@ def load_generator_config(configs: dict):
     configs["generator"]["model_client"] = PROVIDER_NAME_TO_CLASS[
         configs["generator"]["provider"]
     ]
-
+    
 def load_rag_config(configs: dict):
-    # Process client classes
+    # Process embedder client classes
     embedder_provider = configs["rag"]["embedder"]["provider"]
-    if embedder_provider == "dashscope":
-        embedder_class_name = "DashScopeEmbedder"
-        batch_embedder_class_name = "DashScopeBatchEmbedder"
-    elif embedder_provider == "huggingface":
-        embedder_class_name = "HuggingfaceEmbedder"
-        batch_embedder_class_name = "HuggingfaceBatchEmbedder"
-    else:
-        raise ValueError(f"Unknown provider: {embedder_provider}")
+    if embedder_provider not in EMBEDDER_PROVIDER_TO_CLASS_NAMES:
+        raise ValueError(f"Unknown embedder provider: {embedder_provider}")
+    
+    embedder_class_name, batch_embedder_class_name = EMBEDDER_PROVIDER_TO_CLASS_NAMES[embedder_provider]
+    
     assert (
         batch_embedder_class_name in globals() and
         embedder_class_name in globals()
     ), f"load_rag_config: {batch_embedder_class_name} or {embedder_class_name} not in globals()  {globals()}"
     configs["rag"]["embedder"]["model_client"] = globals()[embedder_class_name]
     configs["rag"]["embedder"]["batch_model_client"] = globals()[batch_embedder_class_name]
+    
+    # Handle base_url for embedder if present in config
+    if "base_url" in configs["rag"]["embedder"] and configs["rag"]["embedder"]["base_url"]:
+        configs["rag"]["embedder"]["base_url"] = configs["rag"]["embedder"]["base_url"]
+    
+    # Process code understanding client class
     code_understanding_config = configs["rag"]["code_understanding"]
-    # Get client class
     code_understanding_provider = code_understanding_config["provider"]
-    if code_understanding_provider == "dashscope":
-        class_name = "DashScopeClient"
-    elif code_understanding_provider == "huggingface":
-        class_name = "HuggingfaceClient"
-    else:
-        raise ValueError(f"Unknown provider: {code_understanding_provider}")
-    # Map client class to actual class
+    if code_understanding_provider not in CODE_UNDERSTANDING_PROVIDER_TO_CLASS_NAME:
+        raise ValueError(f"Unknown code understanding provider: {code_understanding_provider}")
+        
+    class_name = CODE_UNDERSTANDING_PROVIDER_TO_CLASS_NAME[code_understanding_provider]
     model_client = globals().get(class_name)
     if not model_client:
         raise ValueError(f"Unknown client class: {class_name}")
