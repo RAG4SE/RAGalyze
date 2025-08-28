@@ -6,95 +6,28 @@ from typing import (
     Optional,
     Any,
     Callable,
-    Generator,
-    Union,
     Literal,
-    List,
-    Sequence,
 )
-
-import backoff
-from copy import deepcopy
-from tqdm import tqdm
-import adalflow as adal
-
 # optional import
 from adalflow.utils.lazy_import import safe_import, OptionalPackages
 
 openai = safe_import(OptionalPackages.OPENAI.value[0], OptionalPackages.OPENAI.value[1])
 
-from openai import OpenAI, AsyncOpenAI, Stream
-from openai import (
-    APITimeoutError,
-    InternalServerError,
-    RateLimitError,
-    UnprocessableEntityError,
-    BadRequestError,
-)
+from openai import Stream
 from openai.types import (
     Completion,
-    CreateEmbeddingResponse,
 )
 from openai.types.chat import ChatCompletionChunk, ChatCompletion
 
-from adalflow.core.model_client import ModelClient
 from adalflow.core.types import (
     ModelType,
-    EmbedderOutput,
-    CompletionUsage,
-    GeneratorOutput,
-    Document,
-    Embedding,
-    EmbedderOutputType,
-    EmbedderInputType,
 )
 from adalflow.core.component import DataComponent
-from adalflow.core.embedder import (
-    BatchEmbedderOutputType,
-    BatchEmbedderInputType,
-)
-import adalflow.core.functional as F
-from adalflow.components.model_client.utils import parse_embedding_response
 
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
 from .openai_client import OpenAIClient, OpenAIEmbedder, OpenAIBatchEmbedder
 
 log = get_tqdm_compatible_logger(__name__)
-
-
-def get_first_message_content(completion: ChatCompletion) -> str:
-    """When we only need the content of the first message."""
-    log.info(f"🔍 get_first_message_content called with: {type(completion)}")
-    log.debug(f"raw completion: {completion}")
-
-    if hasattr(completion, "choices") and len(completion.choices) > 0:
-        choice = completion.choices[0]
-        if hasattr(choice, "message") and hasattr(choice.message, "content"):
-            content = choice.message.content
-            log.info(
-                f"✅ Successfully extracted content: {type(content)}, length: {len(content) if content else 0}"
-            )
-            return content
-        else:
-            log.error("❌ Choice doesn't have message.content")
-            return str(completion)
-    else:
-        raise ValueError("❌ Completion doesn't have choices")
-
-
-def parse_stream_response(completion: ChatCompletionChunk) -> str:
-    """Parse the response of the stream API."""
-    return completion.choices[0].delta.content
-
-
-# TODO: test handle_streaming_response
-async def handle_streaming_response(generator: Stream[ChatCompletionChunk]):
-    """Handle the streaming response asynchronously."""
-    async for completion in generator:
-        log.debug(f"Raw chunk completion: {completion}")
-        parsed_content = parse_stream_response(completion)
-        yield parsed_content
-
 
 class LingxiClient(OpenAIClient):
     """A component wrapper for the Lingxi (Ant Chat) API client.
