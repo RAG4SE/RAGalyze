@@ -90,6 +90,15 @@ class HuggingfaceToEmbeddings(ToEmbeddings):
     def call(self, input: List[Document]) -> List[Document]:
         return super().call(input)
     
+class OpenAIToEmbeddings(ToEmbeddings):
+    """Component that converts document sequences to embedding vector sequences, specifically optimized for OpenAI API"""
+
+    def __init__(self, embedder: adal.Embedder | adal.BatchEmbedder) -> None:
+        super().__init__(embedder)
+        self.embedder = embedder
+
+    def call(self, input: List[Document]) -> List[Document]:
+        return super().call(input)
 
 class DualVectorToEmbeddings(ToEmbeddings):
     """

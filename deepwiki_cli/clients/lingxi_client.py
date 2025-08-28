@@ -150,11 +150,16 @@ class LingxiEmbedder(OpenAIEmbedder):
         self,
         *,
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         model_kwargs: Dict[str, Any] = {},
         output_processors: Optional[DataComponent] = None,
     ) -> None:
-        super().__init__(
+        model_client = LingxiClient(
             api_key=api_key,
+            base_url=base_url
+        )
+        super().__init__(
+            model_client=model_client,
             model_kwargs=model_kwargs,
             output_processors=output_processors,
         )

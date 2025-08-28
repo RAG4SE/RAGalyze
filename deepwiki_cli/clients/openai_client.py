@@ -591,15 +591,19 @@ class OpenAIEmbedder(adal.Embedder):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model_kwargs: Dict[str, Any] = {},
+        model_client: Optional[OpenAIClient] = None,
         output_processors: Optional[DataComponent] = None,
     ) -> None:
-        # Create model client with api_key if provided
-        client_kwargs = {"model_kwargs": model_kwargs}
-        if api_key:
-            client_kwargs["api_key"] = api_key
-        if base_url:
-            client_kwargs["base_url"] = base_url   
-        super().__init__(model_client=OpenAIClient(**client_kwargs), model_kwargs=model_kwargs, output_processors=output_processors)
+        if model_client:
+            super().__init__(model_client=model_client, model_kwargs=model_kwargs, output_processors=output_processors)
+        else:
+            # Create model client with api_key if provided
+            client_kwargs = {"model_kwargs": model_kwargs}
+            if api_key:
+                client_kwargs["api_key"] = api_key
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            super().__init__(model_client=OpenAIClient(**client_kwargs), model_kwargs=model_kwargs, output_processors=output_processors)
         if not isinstance(model_kwargs, Dict):
             raise TypeError(
                 f"{type(self).__name__} requires a dictionary for model_kwargs, not a string"

@@ -12,6 +12,7 @@ from adalflow.components.data_process import TextSplitter
 
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
 from deepwiki_cli.rag.embedding import DashScopeToEmbeddings, HuggingfaceToEmbeddings, DualVectorToEmbeddings
+from deepwiki_cli.rag.transformer_registry import create_embedder_transformer
 from deepwiki_cli.core.types import DualVectorDocument
 from deepwiki_cli.rag.code_understanding import CodeUnderstandingGenerator
 from deepwiki_cli.rag.dynamic_splitter_transformer import DynamicSplitterTransformer
@@ -395,32 +396,20 @@ def prepare_data_transformer() -> adal.Sequential:
         splitter = TextSplitter(**configs()["rag"]["text_splitter"])
 
     embedder = get_batch_embedder()
+    
+    # Create code understanding generator (required for dual vector mode)
+    code_understanding_generator = None
     if use_dual_vector:
         code_understanding_generator = CodeUnderstandingGenerator(
             **code_understanding_config
         )
-        embedder_transformer = DualVectorToEmbeddings(
-            embedder=embedder, generator=code_understanding_generator
-        )
-        logger.info("Using DualVectorToEmbeddings transformer.")
-    elif embedder.__class__.__name__ == "HuggingfaceBatchEmbedder" or embedder.__class__.__name__ == "HuggingfaceEmbedder":
-        # HuggingFace can use larger batch sizes
-        # batch_size = embedder_model_config["batch_size"]
-        embedder_transformer = HuggingfaceToEmbeddings(
-            embedder=embedder
-        )
-        logger.info(f"Using HuggingFace embedder")
-    elif embedder.__class__.__name__ == "DashScopeBatchEmbedder" or embedder.__class__.__name__ == "DashScopeEmbedder":
-        # DashScope API limits batch size to maximum of 10
-        # batch_size = embedder_model_config["batch_size"]
-        embedder_transformer = DashScopeToEmbeddings(
-            embedder=embedder
-        )
-        logger.info(
-            f"Using DashScope specialized embedder"
-        )
-    else:
-        raise ValueError(f"Unknown embedder type: {embedder.__class__.__name__}")
+    
+    # Use registry pattern to create appropriate embedder transformer
+    embedder_transformer = create_embedder_transformer(
+        embedder=embedder,
+        use_dual_vector=use_dual_vector,
+        code_understanding_generator=code_understanding_generator
+    )
 
     data_transformer = adal.Sequential(splitter, embedder_transformer)
 

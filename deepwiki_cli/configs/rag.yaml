@@ -1,23 +1,19 @@
 rag:
   embedder:
 
-    provider: local_server
-    model: text-embedding-qwen3-embedding-4b
-
-    # provider: dashscope
-    # model: text-embedding-v4
+    provider: dashscope
+    model: text-embedding-v4
 
     # provider: huggingface
     # model: intfloat/multilingual-e5-large-instruct
 
-    # provider: local_server
     api_key: ""
     base_url: ""
     model_kwargs:
       dimensions: 256
       encoding_format: float
     # The qps of dashscope is 10, we need to set the batch size to 10 at most if using dashscope
-    batch_size: 50
+    batch_size: 10
 
     sketch_filling: true
     force_embedding: false
