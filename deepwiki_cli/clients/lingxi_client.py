@@ -103,8 +103,3 @@ class LingxiBatchEmbedder(OpenAIBatchEmbedder):
 
     def __init__(self, embedder, batch_size: int = 100) -> None:
         super().__init__(embedder=embedder, batch_size=batch_size)
-        if self.batch_size > 10:
-            log.warning(
-                f"Lingxi batch embedder initialization, batch size: {self.batch_size}, note that Lingxi batch embedding size cannot exceed 25, automatically set to 10"
-            )
-            self.batch_size = 10
