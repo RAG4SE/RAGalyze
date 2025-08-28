@@ -16,11 +16,12 @@ def get_batch_embedder() -> adal.BatchEmbedder:
     
     # Handle API key
     api_key = embedder_config.get("api_key", "")
+    base_url = embedder_config.get("base_url", "")
     client_kwargs = {"model_kwargs": model_kwargs}
     if api_key:
         client_kwargs["api_key"] = api_key
-    if "base_url" in embedder_config and embedder_config["base_url"]:
-        client_kwargs["base_url"] = embedder_config["base_url"]
+    if base_url:
+        client_kwargs["base_url"] = base_url
     
     model_client = model_client_class(**client_kwargs)
     batch_model_client = batch_model_client_class(embedder=model_client, batch_size=embedder_config["batch_size"])
