@@ -84,10 +84,13 @@ deepwiki repo_path=/path/to/repository question="What does this project do?" 're
 ### As a Python Library
 
 ```python
-from eepwiki_cli import *
+from deepwiki_cli import *
 
 repo_path = "/path/to/repository"
-question = "What does this project do?"
+question = \
+"""
+Your question here.
+"""
 
 # Load default config
 load_all_configs(load_default_config())
@@ -107,7 +110,10 @@ Beyond default config, you can customize the config, such as generator model, em
 from deepwiki_cli import *
 
 repo_path = "/path/to/repository"
-question = "What does this project do?"
+question = \
+"""
+Your question here.
+"""
 # Load default DictConfig
 dict_config = load_default_config()
 # Add custom config
