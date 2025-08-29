@@ -84,14 +84,13 @@ deepwiki repo_path=/path/to/repository question="What does this project do?" 're
 ### As a Python Library
 
 ```python
-from deepwiki_cli import *
-from deepwiki_cli import configs
+from eepwiki_cli import *
 
 repo_path = "/path/to/repository"
 question = "What does this project do?"
 
 # Load default config
-configs.configs = load_all_configs(load_default_config())
+load_all_configs(load_default_config())
 # Basic usage
 result = query_repository(
     repo_path=repo_path,
@@ -106,7 +105,6 @@ Beyond default config, you can customize the config, such as generator model, em
 
 ```python
 from deepwiki_cli import *
-from deepwiki_cli import configs
 
 repo_path = "/path/to/repository"
 question = "What does this project do?"
