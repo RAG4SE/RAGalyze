@@ -132,9 +132,9 @@ def analyze_repository(repo_path: str) -> RAG:
 
     logger.info(f"🚀 Starting new analysis for: {repo_path}")
 
-    # Initialize RAG with dual vector flag
+    logger.info("Using standard RAG")
+    # Initialize standard RAG
     rag = RAG()
-
     # Prepare retriever
     rag.prepare_retriever(repo_path)
 
@@ -170,7 +170,7 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
 
     if result and len(result) > 0:
         # result[0] is RetrieverOutput
-        retriever_output = result[0]
+        retriever_output = result[0] if isinstance(result, list) else result
         retrieved_docs = (
             retriever_output.documents if hasattr(retriever_output, "documents") else []
         )
@@ -182,9 +182,17 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
                 contexts = [doc.original_doc for doc in retrieved_docs]
             else:
                 contexts = retrieved_docs
-            generator_result = rag.generator(
-                prompt_kwargs={"input_str": question, "contexts": contexts}
-            )
+                
+            # Handle both standard RAG and query-driven RAG
+            if hasattr(rag, 'generator'):
+                generator_result = rag.generator(
+                    prompt_kwargs={"input_str": question, "contexts": contexts}
+                )
+            else:
+                # Fallback for standard RAG
+                generator_result = rag.generator(
+                    prompt_kwargs={"input_str": question, "contexts": contexts}
+                )
         except Exception as e:
             logger.error(f"Error calling generator: {e}")
             raise

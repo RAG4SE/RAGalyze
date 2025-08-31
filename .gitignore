@@ -13,3 +13,6 @@ dist/
 *.egg-info/
 reply/
 .pytest_cache/
+QWEN.md
+CLAUDE.md
+cache/
