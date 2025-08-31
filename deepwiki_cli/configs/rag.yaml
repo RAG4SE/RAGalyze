@@ -1,20 +1,13 @@
 rag:
   embedder:
-
     provider: dashscope
     model: text-embedding-v4
-
-    # provider: huggingface
-    # model: intfloat/multilingual-e5-large-instruct
-
     api_key: ""
     base_url: ""
     model_kwargs:
       dimensions: 256
       encoding_format: float
-    # The qps of dashscope is 10, we need to set the batch size to 10 at most if using dashscope
     batch_size: 10
-
     sketch_filling: true
     force_embedding: false
 
@@ -37,15 +30,11 @@ rag:
   dynamic_splitter:
     enabled: false
     parallel: true
-    # If batch_size is None, use all available CPU cores. Otherwise, use the specified batch size.
-    # Each batch will be processed in parallel.
     batch_size: null
-    # Text splitter configuration for natural language documents
     natural_language_splitter:
       split_by: word
       chunk_size: 256
       chunk_overlap: 32
-    # Code splitter configuration for source code files
     code_splitter:
       split_by: word
       chunk_size: 256
@@ -61,3 +50,7 @@ rag:
       temperature: 0.7
       top_p: 0.8
       max_tokens: 2048
+
+  # Query-driven configuration
+  query_driven:
+    enabled: true

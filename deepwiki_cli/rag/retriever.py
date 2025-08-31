@@ -1,5 +1,10 @@
+"""
+This file implements various retrieval strategies including single vector, dual vector, 
+hybrid BM25+FAISS, and query-driven retrievers for semantic document search in the RAG system.
+"""
+
 import re
-from typing import List, Optional, Union, Dict, Any
+from typing import List, Optional, Union, Callable
 from rank_bm25 import BM25Okapi
 
 from adalflow.core.types import RetrieverOutput, Document, RetrieverOutputType
@@ -11,11 +16,13 @@ from adalflow.components.retriever.faiss_retriever import (
 from deepwiki_cli.configs import get_embedder, configs
 from deepwiki_cli.core.types import DualVectorDocument
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
+from deepwiki_cli.rag.db import DatabaseManager
 
 logger = get_tqdm_compatible_logger(__name__)
 
+
 class SingleVectorRetriever(FAISSRetriever):
-    """A wrapper of FAISSRetriever with the additional feature of supporting docoments feature"""
+    """A wrapper of FAISSRetriever with the additional feature of supporting documents feature"""
 
     def __init__(self, documents: List[Document], *args, **kwargs):
         self.original_doc = documents
@@ -49,6 +56,7 @@ class SingleVectorRetriever(FAISSRetriever):
             )
         ]
 
+
 class DualVectorRetriever:
     """Dual vector retriever: supports dual retrieval from code and summary vectors."""
 
@@ -58,7 +66,7 @@ class DualVectorRetriever:
 
         Args:
             dual_docs: A list of dual vector documents.
-            embedder: The embedder instance.
+            embedder: The embedder instance for embedding queries.
             top_k: The number of most relevant documents to return.
         """
         self.dual_docs = dual_docs
@@ -203,6 +211,7 @@ class DualVectorRetriever:
             )
         ]
 
+
 class HybridRetriever:
     """
     Hybrid retriever that combines BM25 keyword filtering with FAISS semantic search.
@@ -218,15 +227,7 @@ class HybridRetriever:
         Initialize the hybrid retriever.
 
         Args:
-            documents: List of documents to index
-            embedder: Embedding model for FAISS
-            use_bm25: Whether to enable BM25 filtering
-            bm25_top_k: Number of documents to retrieve from BM25 before FAISS
-            bm25_k1: BM25 k1 parameter (term frequency saturation)
-            bm25_b: BM25 b parameter (field length normalization)
-            top_k: Final number of documents to return
-            use_dual_vector: Whether to use dual vector retrieval
-            **kwargs: Additional arguments for FAISS retriever
+            documents: List of transformed documents to index
         """
         self.documents = documents
         self.embedder = get_embedder()
@@ -391,3 +392,71 @@ class HybridRetriever:
             if self.faiss_retriever is None:
                 self._initialize_faiss_retriever()
             return self.faiss_retriever.call(query)
+
+
+class QueryDrivenRetriever(HybridRetriever):
+    """Query-driven retriever that uses BM25 index and on-demand embedding with FAISS."""
+    
+    def __init__(self, documents: List[Union[Document, DualVectorDocument]], update_database: Callable):
+        """
+        Initialize the query-driven retriever.
+        
+        Args:
+            documents: List of splitted documents to index
+            update_database: Function to update the database with new embedded documents
+        """
+        self.update_database = update_database
+        super().__init__(documents)
+    
+    def call(self, query: str, top_k: Optional[int] = None) -> List[RetrieverOutput]:
+        """
+        Retrieve documents using BM25 index and on-demand embedding with FAISS.
+        
+        Args:
+            query: Query string
+            top_k: Number of top documents to return (defaults to retriever.top_k config)
+            
+        Returns:
+            List of RetrieverOutput objects
+        """
+        if top_k is None:
+            top_k = self.top_k
+        
+        # Step 1: BM25 filtering to get candidates
+        logger.info("Step 1: BM25 filtering")
+        bm25_indices = self._bm25_filter(query)
+        candidate_chunks = [self.documents[i] for i in bm25_indices]
+        logger.info(f"Retrieved {len(candidate_chunks)} candidates using BM25")
+        
+        # Step 2: Use database manager to embed and cache documents
+        logger.info("Step 2: Embedding and caching documents using DatabaseManager")
+        embedded_docs = self.update_database(candidate_chunks)
+        logger.info(f"Embedded and cached {len(embedded_docs)} documents")
+        
+        # Initialize appropriate retriever based on configuration
+        if self.use_dual_vector:
+            logger.info("Using dual vector retriever")
+            # Filter to only DualVectorDocument objects
+            dual_docs = [doc for doc in embedded_docs if isinstance(doc, DualVectorDocument)]
+            faiss_retriever = DualVectorRetriever(
+                dual_docs=dual_docs,
+                embedder=self.embedder,
+                top_k=top_k
+            )
+        else:
+            logger.info("Using single vector retriever")
+            # Filter to only Document objects with embeddings
+            embedded_documents = [doc for doc in embedded_docs if isinstance(doc, Document) and hasattr(doc, 'vector')]
+            faiss_retriever = SingleVectorRetriever(
+                documents=embedded_documents,
+                embedder=self.embedder,
+                top_k=top_k,
+                document_map_func=lambda doc: doc.vector
+            )
+        
+        # Perform FAISS search
+        faiss_results = faiss_retriever.call(query)
+        
+        logger.info(f"Retrieved {len(faiss_results[0].documents)} chunks using BM25 + on-demand embedding + FAISS")
+        
+        return faiss_results

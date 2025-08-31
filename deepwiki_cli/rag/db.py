@@ -1,8 +1,9 @@
 import os
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Literal
 import glob
 import re
 import fnmatch
+import pickle
 
 import adalflow as adal
 from adalflow.core.types import Document, List
@@ -11,7 +12,6 @@ from adalflow.core.db import LocalDB
 from adalflow.components.data_process import TextSplitter
 
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
-from deepwiki_cli.rag.embedding import DashScopeToEmbeddings, HuggingfaceToEmbeddings, DualVectorToEmbeddings
 from deepwiki_cli.rag.transformer_registry import create_embedder_transformer
 from deepwiki_cli.core.types import DualVectorDocument
 from deepwiki_cli.rag.code_understanding import CodeUnderstandingGenerator
@@ -23,63 +23,6 @@ MAX_EMBEDDING_LENGTH = 1000000
 
 # Configure logging
 logger = get_tqdm_compatible_logger(__name__)
-
-
-def count_tokens(
-    text: str,
-    model_provider: str,
-    model_name: Optional[str] = None,
-    hf_tokenizer=None,
-) -> int:
-    """
-    Count the number of tokens in a text string using the correct tokenizer
-    for the model provider: OpenAI (tiktoken), HuggingFace (transformers), DashScope (approx).
-
-    Args:
-        text (str): The text to count tokens for.
-        model_provider (str): "openai", "huggingface", or "dashscope".
-        model_name (str, optional): Model name (for auto-determine tokenizer).
-        hf_tokenizer (PreTrainedTokenizer, optional): HuggingFace tokenizer instance.
-
-    Returns:
-        int: The number of tokens in the text.
-    """
-    try:
-        if model_provider.lower() == "openai":
-            import tiktoken
-
-            # You can switch model name if needed
-            encoding = tiktoken.encoding_for_model(
-                model_name or "text-embedding-3-small"
-            )
-            return len(encoding.encode(text))
-
-        elif model_provider.lower() == "huggingface":
-            # Needs transformers and a loaded tokenizer object
-            if hf_tokenizer is None:
-                from transformers import AutoTokenizer
-
-                assert model_name, "model_name is required for HuggingFace tokenizer"
-                hf_tokenizer = AutoTokenizer.from_pretrained(model_name)
-            return len(hf_tokenizer.encode(text))
-
-        elif model_provider.lower() == "dashscope":
-            # DashScope doesn't officially publish a tokenizer; use character or word heuristic
-            # You may customize this rule per DashScope's documentation if available.
-            # OpenAI-style estimate: ~4 chars/token for English
-            return max(1, len(text) // 4)
-        elif model_provider.lower() == "google":
-            # Following https://ai.google.dev/gemini-api/docs/tokens?lang=python, ~4 chars/token for English
-            return max(1, len(text) // 4)
-        else:
-            logger.warning(
-                f"Unknown model provider '{model_provider}'; using rough 4-char-per-token estimate."
-            )
-            return max(1, len(text) // 4)
-
-    except Exception as e:
-        logger.warning(f"Error counting tokens ({model_provider=}, {model_name=}): {e}")
-        return max(1, len(text) // 4)
 
 
 def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
@@ -126,7 +69,9 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
             # Check if chunk has too many non-printable characters
             # Allow byte >= 128 to support UTF-8 multi-byte chars, like Chinese
             printable_chars = sum(
-                1 for byte in chunk if 32 <= byte <= 126 or byte in [9, 10, 13] or byte >= 128
+                1
+                for byte in chunk
+                if 32 <= byte <= 126 or byte in [9, 10, 13] or byte >= 128
             )
             if len(chunk) > 0 and printable_chars / len(chunk) < 0.7:
                 return None, "binary_file_non_printable"
@@ -215,8 +160,14 @@ def read_all_documents(path: str):
     Returns:
         list: A list of Document objects with metadata.
     """
+
     documents = []
-    excluded_patterns = list(set(configs()["repo"]["file_filters"]["excluded_patterns"] + configs()["repo"]["file_filters"]["extra_excluded_patterns"]))
+    excluded_patterns = list(
+        set(
+            configs()["repo"]["file_filters"]["excluded_patterns"]
+            + configs()["repo"]["file_filters"]["extra_excluded_patterns"]
+        )
+    )
     code_extensions = configs()["repo"]["file_extensions"]["code_extensions"]
     doc_extensions = configs()["repo"]["file_extensions"]["doc_extensions"]
 
@@ -240,7 +191,7 @@ def read_all_documents(path: str):
         """
         # Normalize the file path for consistent matching
         normalized_path = os.path.normpath(file_path).replace("\\", "/")
-        
+
         def matches_pattern(text: str, pattern: str) -> bool:
             """Check if text matches a glob pattern."""
             if fnmatch.fnmatch(text, pattern):
@@ -252,7 +203,7 @@ def read_all_documents(path: str):
         for excluded_pattern in excluded_patterns:
             if matches_pattern(normalized_path, excluded_pattern):
                 return False
-            
+
         return True
 
     # Process code files first
@@ -294,7 +245,6 @@ def read_all_documents(path: str):
                 and "test" not in relative_path.lower()
             )
 
-            
             # Check token count
             if len(content) > MAX_EMBEDDING_LENGTH:
                 logger.warning(
@@ -370,11 +320,14 @@ def read_all_documents(path: str):
                 logger.error(f"Error processing {file_path}: {e}")
 
     logger.info(f"Found {len(documents)} files to be processed")
-
     return documents
 
 
-def prepare_data_transformer() -> adal.Sequential:
+def prepare_data_transformer(
+    mode: Literal[
+        "only_splitter", "only_embedder", "splitter_and_embedder"
+    ] = "splitter_and_embedder"
+) -> adal.Sequential:
     """
     Creates and returns the data transformation pipeline.
     Uses dynamic splitter that automatically selects appropriate splitter
@@ -386,32 +339,42 @@ def prepare_data_transformer() -> adal.Sequential:
     use_dual_vector = configs()["rag"]["embedder"]["sketch_filling"]
     code_understanding_config = configs()["rag"]["code_understanding"]
 
-    if configs()["rag"]["dynamic_splitter"]["enabled"]:
-        # Use dynamic splitter that automatically selects appropriate splitter
-        splitter = DynamicSplitterTransformer(
-            batch_size=configs()["rag"]["dynamic_splitter"]["batch_size"],
-            parallel=configs()["rag"]["dynamic_splitter"]["parallel"]
-        )
-    else:
-        splitter = TextSplitter(**configs()["rag"]["text_splitter"])
+    if mode != "only_embedder":
+        if (
+            configs()["rag"]["dynamic_splitter"]["enabled"]
+            and mode == "splitter_and_embedder"
+        ):
+            # Use dynamic splitter that automatically selects appropriate splitter
+            splitter = DynamicSplitterTransformer(
+                batch_size=configs()["rag"]["dynamic_splitter"]["batch_size"],
+                parallel=configs()["rag"]["dynamic_splitter"]["parallel"],
+            )
+        else:
+            splitter = TextSplitter(**configs()["rag"]["text_splitter"])
+
+        if mode == "only_splitter":
+            return adal.Sequential(splitter)
 
     embedder = get_batch_embedder()
-    
+
     # Create code understanding generator (required for dual vector mode)
     code_understanding_generator = None
     if use_dual_vector:
         code_understanding_generator = CodeUnderstandingGenerator(
             **code_understanding_config
         )
-    
+
     # Use registry pattern to create appropriate embedder transformer
     embedder_transformer = create_embedder_transformer(
         embedder=embedder,
         use_dual_vector=use_dual_vector,
-        code_understanding_generator=code_understanding_generator
+        code_understanding_generator=code_understanding_generator,
     )
 
-    data_transformer = adal.Sequential(splitter, embedder_transformer)
+    if mode == "splitter_and_embedder":
+        data_transformer = adal.Sequential(splitter, embedder_transformer)
+    elif mode == "only_embedder":
+        data_transformer = adal.Sequential(embedder_transformer)
 
     return data_transformer
 
@@ -430,7 +393,7 @@ def transform_documents_and_save_to_db(
     Returns:
         LocalDB: The local database instance.
     """
-    data_transformer = prepare_data_transformer()
+    data_transformer = prepare_data_transformer(mode="splitter_and_embedder")
 
     # Save the documents to a local database
     db = LocalDB()
@@ -469,6 +432,9 @@ class DatabaseManager:
         ), "hybrid_config must contain enabled section"
         self.use_bm25 = rag_config["hybrid"]["enabled"]
 
+        # Query-driven specific attributes
+        self.query_driven = rag_config.get("query_driven", {}).get("enabled", False)
+
     def _create_db_info(self) -> None:
         logger.info(f"Preparing repo storage for {self.repo_path}...")
 
@@ -494,8 +460,11 @@ class DatabaseManager:
         file_name = repo_name
         if self.use_dual_vector:
             file_name += "-dual-vector"
-        if self.use_bm25:
+        if not self.query_driven and self.use_bm25:
+            # If query-driven, then bm25 is a must, so no need to add it to the file name
             file_name += "-bm25"
+        if self.query_driven:
+            file_name += "-query-driven"
         file_name = file_name.replace("/", "#")
         embedding_provider = configs()["rag"]["embedder"]["provider"]
         embedding_model = configs()["rag"]["embedder"]["model"]
@@ -522,33 +491,148 @@ class DatabaseManager:
 
         force_recreate = configs()["rag"]["embedder"]["force_embedding"]
 
-        # check the database
-        if (
-            self.db_info
-            and os.path.exists(self.db_info["db_file_path"])
-            and not force_recreate
-        ):
-            logger.info("Loading existing database...")
-            self.db = LocalDB.load_state(self.db_info["db_file_path"])
+        if not self.query_driven:
+            # check the database
+            if (
+                self.db_info
+                and os.path.exists(self.db_info["db_file_path"])
+                and not force_recreate
+            ):
+                logger.info("Loading existing database...")
+                self.db = LocalDB.load_state(self.db_info["db_file_path"])
+                documents = self.db.get_transformed_data(
+                    key=os.path.basename(self.db_info["db_file_path"])
+                )
+                if documents:
+                    logger.info(f"Loaded {len(documents)} documents from existing database")
+                    return documents
+                else:
+                    logger.warning("No documents found in the existing database")
+                    return []
+
+            documents = read_all_documents(
+                self.db_info["repo_path"],
+            )
+            self.db = transform_documents_and_save_to_db(
+                documents, self.db_info["db_file_path"]
+            )
             documents = self.db.get_transformed_data(
                 key=os.path.basename(self.db_info["db_file_path"])
             )
-            if documents:
-                logger.info(f"Loaded {len(documents)} documents from existing database")
-                return documents
-            else:
-                logger.warning("No documents found in the existing database")
-                return []
+            # If query-driven, return the original documents directly
+            return documents
+        
+        else:
+            cache_dir = os.path.expanduser("~/.adalflow/deepwiki_cache")
+            os.makedirs(cache_dir, exist_ok=True)
+            cache_file_path = os.path.join(cache_dir, self.db_info["repo_path"].replace("/", "#") + ".pkl")
+            if not configs()["rag"]["embedder"]["force_embedding"] and os.path.exists(
+                cache_file_path
+            ):
+                logger.info(f"Loading documents from cache file {cache_file_path}")
+                return pickle.load(open(cache_file_path, "rb"))
+            
+            documents = read_all_documents(
+                self.db_info["repo_path"],
+            )
+            splitter = prepare_data_transformer(mode="only_splitter")
+            splitted_documents = splitter(documents)
+            pickle.dump(splitted_documents, open(cache_file_path, "wb"))
+            return splitted_documents
 
-        # prepare the database
-        logger.info("Creating new database...")
-        documents = read_all_documents(
-            self.db_info["repo_path"],
+    def update_database_with_documents(
+        self, documents: List[Document]
+    ) -> List[Union[Document, DualVectorDocument]]:
+        """
+        Update the database with new documents by embedding them and saving to the database.
+
+        Args:
+            documents: List of Document objects to be embedded and added to the database
+
+        Returns:
+            List[Union[Document, DualVectorDocument]]: List of embedded documents
+        """
+        if not documents:
+            return []
+
+        logger.info(f"Updating database with {len(documents)} new documents...")
+        key = (
+            os.path.basename(self.db_info["db_file_path"])
+            if self.db_info
+            else "default"
         )
-        self.db = transform_documents_and_save_to_db(
-            documents, self.db_info["db_file_path"]
+
+        # Ensure we have a database instance
+        if self.db is None:
+            # Try to load existing database first
+            if (
+                self.db_info
+                and os.path.exists(self.db_info["db_file_path"])
+                and not configs()["rag"]["embedder"]["force_embedding"]
+            ):
+                logger.info("Loading existing database...")
+                self.db = LocalDB.load_state(self.db_info["db_file_path"])
+            else:
+                # Create new database if none exists
+                logger.info("Creating new database...")
+                self.db = LocalDB()
+                self.db.transformed_items[key] = []
+
+        # Add documents to database
+        # Only add documents that are not already in the database
+        existing_item_ids = set(
+            item.id if isinstance(item, Document) else item.original_doc.id 
+            for item in self.db.items
         )
-        documents = self.db.get_transformed_data(
-            key=os.path.basename(self.db_info["db_file_path"])
+
+        new_documents = [
+            doc for doc in documents 
+            if (hasattr(doc, 'id') and doc.id not in existing_item_ids) or 
+               (hasattr(doc, 'original_doc') and hasattr(doc.original_doc, 'id') and doc.original_doc.id not in existing_item_ids)
+        ]
+
+        document_ids = set(
+            doc.id if isinstance(doc, Document) else doc.original_doc.id 
+            for doc in documents
         )
-        return documents
+
+        cached_embedded_documents = [
+            doc for doc in self.db.transformed_items[key] 
+            if (hasattr(doc, 'id') and doc.id in document_ids) or 
+               (hasattr(doc, 'original_doc') and hasattr(doc.original_doc, 'id') and doc.original_doc.id in document_ids)
+        ]
+
+        new_embedded_documents = []
+
+        if len(new_documents) > 0:
+            embedder = prepare_data_transformer(mode="only_embedder")
+            new_embedded_documents = embedder(new_documents)
+            self.db.transformed_items[key] = (
+                self.db.transformed_items[key] + new_embedded_documents
+            )
+            self.db.items = self.db.items + new_documents
+
+        logger.info(f"Updated database with {len(new_embedded_documents)} new documents and {len(cached_embedded_documents)} cached documents")
+
+        # Save the updated database
+        if self.db_info and self.db_info.get("db_file_path"):
+            self.db.save_state(filepath=self.db_info["db_file_path"])
+            logger.info(f"Database updated and saved to {self.db_info['db_file_path']}")
+        return new_embedded_documents + cached_embedded_documents
+
+    def get_embedded_documents(self) -> List[Union[Document, DualVectorDocument]]:
+        """
+        Get all embedded documents from the database.
+
+        Returns:
+            List[Union[Document, DualVectorDocument]]: List of embedded documents
+        """
+        if self.db is None:
+            return []
+
+        key = (
+            os.path.basename(self.db_info["db_file_path"])
+            if self.db_info
+            else "default"
+        )
+        return self.db.get_transformed_data(key=key)

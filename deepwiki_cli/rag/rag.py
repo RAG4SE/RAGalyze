@@ -8,8 +8,8 @@ from adalflow.core.types import Document
 
 from deepwiki_cli.configs import configs
 from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
-from deepwiki_cli.rag.retriever import HybridRetriever
-from deepwiki_cli.rag.data_pipeline import DatabaseManager
+from deepwiki_cli.rag.retriever import HybridRetriever, QueryDrivenRetriever
+from deepwiki_cli.rag.db import DatabaseManager
 from deepwiki_cli.core.types import DualVectorDocument
 
 # Configure logging
@@ -351,10 +351,9 @@ IMPORTANT FORMATTING RULES:
     def prepare_retriever(self, repo_path: str):
         """
         Prepare the retriever for a repository.
-        Will load database from local storage if available.
 
         Args:
-            repo_path: URL or local path to the repository
+            repo_path: Local path to the repository
         """
         self.initialize_db_manager(repo_path)
 
@@ -362,16 +361,21 @@ IMPORTANT FORMATTING RULES:
         # self.documents is a list of Document or DualVectorDocument
         self.documents = self.db_manager.prepare_database()
         logger.info(f"✅ Loaded {len(self.documents)} documents for retrieval")
-        # Validate and filter embeddings to ensure consistent sizes
-        self.documents = self._validate_and_filter_embeddings(self.documents)
-        logger.info(f"🎉Validated and filtered {len(self.documents)} documents")
+        if not configs()["rag"]["query_driven"]["enabled"]:
+            # Validate and filter embeddings to ensure consistent sizes
+            self.documents = self._validate_and_filter_embeddings(self.documents)
+            logger.info(f"🎉Validated and filtered {len(self.documents)} documents")
         if not self.documents:
             raise ValueError(
                 "No valid documents with embeddings found. Cannot create retriever."
             )
 
-        # Use HybridRetriever which combines BM25 and FAISS
-        self.retriever = HybridRetriever(documents=self.documents)
+        if configs()["rag"]["query_driven"]["enabled"]:
+            # Use QueryDrivenRetriever which employs on-demand embedding
+            self.retriever = QueryDrivenRetriever(documents=self.documents, update_database=self.db_manager.update_database_with_documents)
+        else:
+            # Use HybridRetriever which combines BM25 and FAISS
+            self.retriever = HybridRetriever(documents=self.documents)
 
     def call(self, query: str) -> List[RetrieverOutput]:
         """
