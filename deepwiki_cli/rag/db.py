@@ -340,10 +340,7 @@ def prepare_data_transformer(
     code_understanding_config = configs()["rag"]["code_understanding"]
 
     if mode != "only_embedder":
-        if (
-            configs()["rag"]["dynamic_splitter"]["enabled"]
-            and mode == "splitter_and_embedder"
-        ):
+        if configs()["rag"]["dynamic_splitter"]["enabled"]:
             # Use dynamic splitter that automatically selects appropriate splitter
             splitter = DynamicSplitterTransformer(
                 batch_size=configs()["rag"]["dynamic_splitter"]["batch_size"],
@@ -435,6 +432,8 @@ class DatabaseManager:
         # Query-driven specific attributes
         self.query_driven = rag_config.get("query_driven", {}).get("enabled", False)
 
+        self.dynamic_splitter = rag_config.get("dynamic_splitter", {}).get("enabled", False)
+
     def _create_db_info(self) -> None:
         logger.info(f"Preparing repo storage for {self.repo_path}...")
 
@@ -465,6 +464,8 @@ class DatabaseManager:
             file_name += "-bm25"
         if self.query_driven:
             file_name += "-query-driven"
+        if self.dynamic_splitter:
+            file_name += "-dynamic-splitter"
         file_name = file_name.replace("/", "#")
         embedding_provider = configs()["rag"]["embedder"]["provider"]
         embedding_model = configs()["rag"]["embedder"]["model"]
