@@ -127,7 +127,6 @@ class DynamicSplitterTransformer(Component):
             return []
 
         result_documents = []
-
         if not self.parallel:
             for idx in tqdm(range(0, len(documents)), desc="Dynamcally Splitting Documents in Sequence"):
                 result_documents.extend(self._process_single_document(documents[idx]))
