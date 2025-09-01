@@ -7,8 +7,8 @@ from adalflow.components.data_process.text_splitter import (
     DocumentSplitterOutputType,
 )
 from adalflow.core.types import Document
-from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
-from deepwiki_cli.rag.splitter.utf8 import find_safe_utf8_boundary
+from ragalyze.logger.logging_config import get_tqdm_compatible_logger
+from ragalyze.rag.splitter.utf8 import find_safe_utf8_boundary
 from copy import deepcopy
 from tqdm import tqdm
 
@@ -541,7 +541,9 @@ class CodeSplitter(TextSplitter):
             # Calculate the end position for this chunk
             chunk_end = min(idx + chunk_size, len(splits))
             prev_chunk_bytes = (
-                separator.join(splits[:idx]).encode("utf-8", errors="ignore") if idx > 0 else b""
+                separator.join(splits[:idx]).encode("utf-8", errors="ignore")
+                if idx > 0
+                else b""
             )
             chunk_text = separator.join(splits[idx:chunk_end])
             chunk_text_bytes = chunk_text.encode("utf-8", errors="ignore")
@@ -557,10 +559,12 @@ class CodeSplitter(TextSplitter):
                     len(chunk_text_bytes) + len(prev_chunk_bytes),
                 )
                 smart_boundary_pos -= len(prev_chunk_bytes)
-                
+
                 # Ensure we're at a safe UTF-8 boundary
-                smart_boundary_pos = find_safe_utf8_boundary(chunk_text_bytes, smart_boundary_pos)
-                
+                smart_boundary_pos = find_safe_utf8_boundary(
+                    chunk_text_bytes, smart_boundary_pos
+                )
+
                 # If we found a good boundary, adjust the chunk end
                 if smart_boundary_pos < len(chunk_text_bytes):
                     boundary_text = chunk_text_bytes[:smart_boundary_pos].decode(
@@ -596,9 +600,11 @@ class CodeSplitter(TextSplitter):
                     self.bytes, desired_start_byte + len(prev_chunk_bytes)
                 )
                 best_start_byte -= len(prev_chunk_bytes)
-                
+
                 # Ensure we're at a safe UTF-8 boundary
-                best_start_byte = find_safe_utf8_boundary(chunk_text_bytes, best_start_byte)
+                best_start_byte = find_safe_utf8_boundary(
+                    chunk_text_bytes, best_start_byte
+                )
 
                 if 0 < best_start_byte < len(chunk_text_bytes):
                     new_overlap_text = chunk_text_bytes[best_start_byte:].decode(
@@ -650,9 +656,11 @@ class CodeSplitter(TextSplitter):
                     len(chunk_text_bytes) + len(prev_chunk_bytes),
                 )
                 smart_boundary_pos -= len(prev_chunk_bytes)
-                
+
                 # Ensure we're at a safe UTF-8 boundary
-                smart_boundary_pos = find_safe_utf8_boundary(chunk_text_bytes, smart_boundary_pos)
+                smart_boundary_pos = find_safe_utf8_boundary(
+                    chunk_text_bytes, smart_boundary_pos
+                )
 
                 # If we found a good boundary, adjust the chunk end
                 if smart_boundary_pos < len(chunk_text_bytes):
@@ -690,10 +698,12 @@ class CodeSplitter(TextSplitter):
                     self.bytes, desired_start_byte + len(prev_chunk_bytes)
                 )
                 best_start_byte -= len(prev_chunk_bytes)
-                
+
                 # Ensure we're at a safe UTF-8 boundary
-                best_start_byte = find_safe_utf8_boundary(chunk_text_bytes, best_start_byte)
-                
+                best_start_byte = find_safe_utf8_boundary(
+                    chunk_text_bytes, best_start_byte
+                )
+
                 if best_start_byte < len(chunk_text_bytes):
                     new_overlap_text = chunk_text_bytes[best_start_byte:].decode(
                         "utf-8"

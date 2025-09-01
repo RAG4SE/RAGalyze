@@ -3,7 +3,7 @@ requires = ["setuptools>=64.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "deepwiki_cli"
+name = "RAGalyze"
 version = "0.2.3"
 description = "Repository Analysis and Query Library with RAG capabilities"
 readme = "README.md"
@@ -54,17 +54,16 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/RAG4SE/deepwiki-cli"
-Documentation = "https://github.com/RAG4SE/deepwiki-cli#readme"
-Repository = "https://github.com/RAG4SE/deepwiki-cli"
-"Bug Tracker" = "https://github.com/RAG4SE/deepwiki-cli/issues"
+Homepage = "https://github.com/RAG4SE/RAGalyze"
+Documentation = "https://github.com/RAG4SE/RAGalyze#readme"
+Repository = "https://github.com/RAG4SE/RAGalyze"
+"Bug Tracker" = "https://github.com/RAG4SE/RAGalyze/issues"
 
 [project.scripts]
-deepwiki = "deepwiki_cli.query:hydra_wrapped_query_repository"
-deepwiki-query-driven = "deepwiki_cli.query_driven_cli:main"
+ragalyze = "ragalyze.query:hydra_wrapped_query_repository"
 
 [tool.setuptools]
-packages = ["deepwiki_cli", "deepwiki_cli.configs", "deepwiki_cli.rag", "deepwiki_cli.rag.splitter", "deepwiki_cli.clients", "deepwiki_cli.logger", "deepwiki_cli.core"]
+packages = ["ragalyze", "ragalyze.configs", "ragalyze.rag", "ragalyze.rag.splitter", "ragalyze.clients", "ragalyze.logger", "ragalyze.core"]
 
 [tool.setuptools.package-data]
-"deepwiki_cli" = ["configs/*.yaml", "configs/*.yml"]
+"ragalyze" = ["configs/*.yaml", "configs/*.yml"]

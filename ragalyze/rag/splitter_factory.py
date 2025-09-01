@@ -4,16 +4,15 @@ import os
 
 from adalflow.components.data_process import TextSplitter
 
-from deepwiki_cli.rag.splitter import *
-from deepwiki_cli.configs import configs
-from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
+from ragalyze.rag.splitter import *
+from ragalyze.configs import configs
+from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 
 logger = get_tqdm_compatible_logger(__name__)
 
 
 class SplitterFactory:
     """Factory class for creating appropriate splitters based on document type."""
-
 
     def __init__(self):
         """Initialize the splitter factory."""
@@ -28,10 +27,14 @@ class SplitterFactory:
         Returns:
             SmartTextSplitter: Configured smart text splitter
         """
-        natural_language_splitter_config = configs()["rag"]["dynamic_splitter"]["natural_language_splitter"].copy()
+        natural_language_splitter_config = configs()["rag"]["dynamic_splitter"][
+            "natural_language_splitter"
+        ].copy()
         # Add smart splitting parameters for text content
         natural_language_splitter_config["smart_boundary_ratio"] = 0.8
-        _natural_language_splitter = NaturalLanguageSplitter(**natural_language_splitter_config)
+        _natural_language_splitter = NaturalLanguageSplitter(
+            **natural_language_splitter_config
+        )
         return _natural_language_splitter
 
     def _get_code_splitter(self, extension: str) -> CodeSplitter:
@@ -40,7 +43,9 @@ class SplitterFactory:
         Returns:
             SmartTextSplitter: Configured smart code splitter with custom tokenizer
         """
-        code_splitter_config = configs()["rag"]["dynamic_splitter"]["code_splitter"].copy()
+        code_splitter_config = configs()["rag"]["dynamic_splitter"][
+            "code_splitter"
+        ].copy()
 
         # Add smart splitting parameters for code content
         code_splitter_config["smart_boundary_ratio"] = (
@@ -50,7 +55,6 @@ class SplitterFactory:
         # Create the smart code splitter
         _code_splitter = CodeSplitter(**code_splitter_config)
         return _code_splitter
-
 
     def detect_document_type(self, file_path: str) -> tuple[str, str]:
         """Detect document type and extension based on file path.

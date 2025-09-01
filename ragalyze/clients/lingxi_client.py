@@ -8,6 +8,7 @@ from typing import (
     Callable,
     Literal,
 )
+
 # optional import
 from adalflow.utils.lazy_import import safe_import, OptionalPackages
 
@@ -24,10 +25,11 @@ from adalflow.core.types import (
 )
 from adalflow.core.component import DataComponent
 
-from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
+from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from .openai_client import OpenAIClient, OpenAIEmbedder, OpenAIBatchEmbedder
 
 log = get_tqdm_compatible_logger(__name__)
+
 
 class LingxiClient(OpenAIClient):
     """A component wrapper for the Lingxi (Ant Chat) API client.
@@ -87,10 +89,7 @@ class LingxiEmbedder(OpenAIEmbedder):
         model_kwargs: Dict[str, Any] = {},
         output_processors: Optional[DataComponent] = None,
     ) -> None:
-        model_client = LingxiClient(
-            api_key=api_key,
-            base_url=base_url
-        )
+        model_client = LingxiClient(api_key=api_key, base_url=base_url)
         super().__init__(
             model_client=model_client,
             model_kwargs=model_kwargs,

@@ -29,7 +29,7 @@ from openai.types.chat import ChatCompletion
 from openai import OpenAI, AsyncOpenAI
 from tqdm import tqdm
 
-from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
+from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from .openai_client import OpenAIClient
 
 log = get_tqdm_compatible_logger(__name__)
@@ -68,11 +68,13 @@ class DashScopeClient(OpenAIClient):
         # Store DashScope-specific attributes before calling parent constructor
         self._workspace_id = workspace_id
         self._env_workspace_id_name = env_workspace_id_name
-        
+
         # Set default base URL for DashScope if not provided
         if base_url is None:
-            base_url = os.getenv(env_base_url_name, "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        
+            base_url = os.getenv(
+                env_base_url_name, "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
+
         # Call parent constructor with DashScope-specific defaults
         super().__init__(
             api_key=api_key,
@@ -96,7 +98,7 @@ class DashScopeClient(OpenAIClient):
         """
         # Get base configuration from parent
         api_key, base_url = super()._prepare_client_config()
-        
+
         # Add DashScope-specific workspace_id
         workspace_id = self._workspace_id or os.getenv(self._env_workspace_id_name)
 
@@ -110,7 +112,7 @@ class DashScopeClient(OpenAIClient):
     def init_sync_client(self):
         """Override to handle workspace_id storage."""
         api_key, workspace_id, base_url = self._prepare_client_config()
-        
+
         # Use OpenAI client with DashScope base URL
         client = OpenAI(api_key=api_key, base_url=base_url)
 
@@ -136,10 +138,10 @@ class DashScopeClient(OpenAIClient):
     def _add_dashscope_headers(self, api_kwargs: Dict) -> Dict:
         """
         Helper method to add DashScope-specific headers to API kwargs.
-        
+
         Args:
             api_kwargs: The API keyword arguments to modify
-            
+
         Returns:
             Modified API kwargs with DashScope headers
         """
@@ -151,7 +153,7 @@ class DashScopeClient(OpenAIClient):
             if "extra_headers" not in api_kwargs:
                 api_kwargs["extra_headers"] = {}
             api_kwargs["extra_headers"]["X-DashScope-WorkSpace"] = workspace_id
-        
+
         return api_kwargs
 
     def convert_inputs_to_api_kwargs(
@@ -162,30 +164,32 @@ class DashScopeClient(OpenAIClient):
     ) -> Dict:
         """
         Override parent method to add DashScope-specific headers.
-        
+
         Args:
             input: The input data
             model_kwargs: Model parameters
             model_type: Type of model (LLM or EMBEDDER)
-            
+
         Returns:
             API kwargs with DashScope-specific modifications
         """
         # Get base API kwargs from parent
-        api_kwargs = super().convert_inputs_to_api_kwargs(input, model_kwargs, model_type)
-        
+        api_kwargs = super().convert_inputs_to_api_kwargs(
+            input, model_kwargs, model_type
+        )
+
         # Add DashScope-specific headers
         api_kwargs = self._add_dashscope_headers(api_kwargs)
-        
+
         return api_kwargs
 
     def chat(self, api_kwargs: Dict = {}):
         """
         Override parent method to add DashScope-specific parameters.
-        
+
         Args:
             api_kwargs: API keyword arguments
-            
+
         Returns:
             Chat completion response
         """
@@ -201,10 +205,10 @@ class DashScopeClient(OpenAIClient):
     async def achat(self, api_kwargs: Dict = {}):
         """
         Override parent method to add DashScope-specific parameters.
-        
+
         Args:
             api_kwargs: API keyword arguments
-            
+
         Returns:
             Async chat completion response
         """
@@ -220,7 +224,7 @@ class DashScopeClient(OpenAIClient):
     def to_dict(self) -> Dict[str, Any]:
         """
         Override parent method to include workspace_id.
-        
+
         Returns:
             Dictionary representation including DashScope-specific fields
         """
@@ -231,10 +235,10 @@ class DashScopeClient(OpenAIClient):
     def parse_embedding_response(self, response) -> EmbedderOutput:
         """
         Override parent method to provide DashScope-specific error messaging.
-        
+
         Args:
             response: The embedding response from DashScope API
-            
+
         Returns:
             Parsed embedding output
         """
@@ -270,9 +274,9 @@ class DashScopeEmbedder(adal.Embedder):
     ) -> None:
         if model_client:
             super().__init__(
-                model_client=model_client, 
-                model_kwargs=model_kwargs, 
-                output_processors=output_processors
+                model_client=model_client,
+                model_kwargs=model_kwargs,
+                output_processors=output_processors,
             )
         else:
             # Create model client with provided parameters
@@ -283,13 +287,13 @@ class DashScopeEmbedder(adal.Embedder):
                 client_kwargs["workspace_id"] = workspace_id
             if base_url:
                 client_kwargs["base_url"] = base_url
-            
+
             super().__init__(
-                model_client=DashScopeClient(**client_kwargs), 
-                model_kwargs=model_kwargs, 
-                output_processors=output_processors
+                model_client=DashScopeClient(**client_kwargs),
+                model_kwargs=model_kwargs,
+                output_processors=output_processors,
             )
-            
+
         if not isinstance(model_kwargs, Dict):
             raise TypeError(
                 f"clients/dashscope_client.py:{type(self).__name__} requires a dictionary for model_kwargs, not a string"
@@ -349,7 +353,7 @@ class DashScopeEmbedder(adal.Embedder):
 class DashScopeBatchEmbedder(adal.BatchEmbedder):
     """
     Batch embedder specifically designed for DashScope API.
-    
+
     DashScope has a smaller batch size limit compared to other providers.
     """
 

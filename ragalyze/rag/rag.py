@@ -6,11 +6,11 @@ import adalflow as adal
 from adalflow.core.types import RetrieverOutput
 from adalflow.core.types import Document
 
-from deepwiki_cli.configs import configs
-from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
-from deepwiki_cli.rag.retriever import HybridRetriever, QueryDrivenRetriever
-from deepwiki_cli.rag.db import DatabaseManager
-from deepwiki_cli.core.types import DualVectorDocument
+from ragalyze.configs import configs
+from ragalyze.logger.logging_config import get_tqdm_compatible_logger
+from ragalyze.rag.retriever import HybridRetriever, QueryDrivenRetriever
+from ragalyze.rag.db import DatabaseManager
+from ragalyze.core.types import DualVectorDocument
 
 # Configure logging
 logger = get_tqdm_compatible_logger(__name__)
@@ -372,7 +372,10 @@ IMPORTANT FORMATTING RULES:
 
         if configs()["rag"]["query_driven"]["enabled"]:
             # Use QueryDrivenRetriever which employs on-demand embedding
-            self.retriever = QueryDrivenRetriever(documents=self.documents, update_database=self.db_manager.update_database_with_documents)
+            self.retriever = QueryDrivenRetriever(
+                documents=self.documents,
+                update_database=self.db_manager.update_database_with_documents,
+            )
         else:
             # Use HybridRetriever which combines BM25 and FAISS
             self.retriever = HybridRetriever(documents=self.documents)

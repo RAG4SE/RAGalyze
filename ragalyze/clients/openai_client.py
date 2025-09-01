@@ -56,7 +56,7 @@ from adalflow.core.embedder import (
 import adalflow.core.functional as F
 from adalflow.components.model_client.utils import parse_embedding_response
 
-from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
+from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 
 log = get_tqdm_compatible_logger(__name__)
 
@@ -393,7 +393,8 @@ class OpenAIClient(ModelClient):
                     )
                     final_data.append(
                         Embedding(
-                            embedding=[0.0] * embedding_dim,  # Use correct embedding dimension
+                            embedding=[0.0]
+                            * embedding_dim,  # Use correct embedding dimension
                             index=i,
                         )
                     )
@@ -477,7 +478,8 @@ class OpenAIClient(ModelClient):
                     )
                     final_data.append(
                         Embedding(
-                            embedding=[0.0] * embedding_dim,  # Use correct embedding dimension
+                            embedding=[0.0]
+                            * embedding_dim,  # Use correct embedding dimension
                             index=i,
                         )
                     )
@@ -570,7 +572,9 @@ class OpenAIClient(ModelClient):
         self.__dict__.update(state)
         # Re-initialize the clients after unpickling
         self.sync_client = self.init_sync_client()
-        self.async_client = self.init_async_client()  # It will be lazily initialized when acall is used
+        self.async_client = (
+            self.init_async_client()
+        )  # It will be lazily initialized when acall is used
 
 
 class OpenAIEmbedder(adal.Embedder):
@@ -595,7 +599,11 @@ class OpenAIEmbedder(adal.Embedder):
         output_processors: Optional[DataComponent] = None,
     ) -> None:
         if model_client:
-            super().__init__(model_client=model_client, model_kwargs=model_kwargs, output_processors=output_processors)
+            super().__init__(
+                model_client=model_client,
+                model_kwargs=model_kwargs,
+                output_processors=output_processors,
+            )
         else:
             # Create model client with api_key if provided
             client_kwargs = {"model_kwargs": model_kwargs}
@@ -603,7 +611,11 @@ class OpenAIEmbedder(adal.Embedder):
                 client_kwargs["api_key"] = api_key
             if base_url:
                 client_kwargs["base_url"] = base_url
-            super().__init__(model_client=OpenAIClient(**client_kwargs), model_kwargs=model_kwargs, output_processors=output_processors)
+            super().__init__(
+                model_client=OpenAIClient(**client_kwargs),
+                model_kwargs=model_kwargs,
+                output_processors=output_processors,
+            )
         if not isinstance(model_kwargs, Dict):
             raise TypeError(
                 f"{type(self).__name__} requires a dictionary for model_kwargs, not a string"

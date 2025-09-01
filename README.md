@@ -15,14 +15,14 @@ Repository Analysis and Query CLI Tool with RAG (Retrieval-Augmented Generation)
 ### From PyPI
 
 ```bash
-pip install deepwiki_cli
+pip install RAGalyze
 ```
 
 ### From Source
 
 ```bash
-git clone git@github.com:RAG4SE/deepwiki-cli.git
-cd deepwiki-cli
+git clone git@github.com:RAG4SE/RAGalyze.git
+cd RAGalyze
 # Support PEP 660
 pip install --upgrade pip "setuptools>=64.0.0" wheel
 pip install -e .
@@ -60,10 +60,10 @@ You can refer to the following coarse-grained table to get the corresponding API
 
 ### As a Command-Line Tool
 
-After installation, you can use the `deepwiki` command to query about a local codebase:
+After installation, you can use the `ragalyze` command to query about a local codebase:
 
 ```bash
-deepwiki repo_path=/path/to/repository question="What does this project do?"
+ragalyze repo_path=/path/to/repository question="What does this project do?"
 ```
 
 **Important Note**: If your question contains commas, please escape them with a backslash before the comma. Otherwise, hydra will crash this execution due to its quirk.
@@ -71,20 +71,20 @@ deepwiki repo_path=/path/to/repository question="What does this project do?"
 Or, you can only embed the codebase with the following command:
 
 ```bash
-deepwiki repo_path=/path/to/repository
+ragalyze repo_path=/path/to/repository
 ```
 
 **Important Note**: If you want to exclude additional folders from the embedding process, avoid specifying them directly like `repo.file_filters.extra_excluded_patterns=["reply/"]`. 
 Shell quoting may cause Hydra to not recognize this pattern correctly. Instead, use the following format:
 
 ```bash
-deepwiki repo_path=/path/to/repository question="What does this project do?" 'repo.file_filters.extra_excluded_patterns=[pattern1, pattern2]'
+ragalyze repo_path=/path/to/repository question="What does this project do?" 'repo.file_filters.extra_excluded_patterns=[pattern1, pattern2]'
 ```
 
 ### As a Python Library
 
 ```python
-from deepwiki_cli import *
+from ragalyze import *
 
 repo_path = "/path/to/repository"
 question = \
@@ -107,7 +107,7 @@ save_query_results(result, repo_path, question)
 Beyond default config, you can customize the config, such as generator model, embedding mode, etc.
 
 ```python
-from deepwiki_cli import *
+from ragalyze import *
 
 repo_path = "/path/to/repository"
 question = \
@@ -135,10 +135,10 @@ print_result(result)
 save_query_results(result, repo_path, question)
 ```
 
-Similar to the second use of `deepwiki` command, you can also use deepwiki_cli library to only embed to codebase
+Similar to the second use of `ragalyze` command, you can also use ragalyze library to only embed to codebase
 
 ```python
-from deepwiki_cli import *
+from ragalyze import *
 
 repo_path = "/path/to/repository"
 

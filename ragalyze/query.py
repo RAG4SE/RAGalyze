@@ -11,10 +11,10 @@ from datetime import datetime
 from omegaconf import DictConfig
 import hydra
 
-from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
-from deepwiki_cli.rag.rag import RAG
-from deepwiki_cli.configs import *
-from deepwiki_cli.core.types import DualVectorDocument
+from ragalyze.logger.logging_config import get_tqdm_compatible_logger
+from ragalyze.rag.rag import RAG
+from ragalyze.configs import *
+from ragalyze.core.types import DualVectorDocument
 
 # Setup logging
 logger = get_tqdm_compatible_logger(__name__)
@@ -182,9 +182,9 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
                 contexts = [doc.original_doc for doc in retrieved_docs]
             else:
                 contexts = retrieved_docs
-                
+
             # Handle both standard RAG and query-driven RAG
-            if hasattr(rag, 'generator'):
+            if hasattr(rag, "generator"):
                 generator_result = rag.generator(
                     prompt_kwargs={"input_str": question, "contexts": contexts}
                 )

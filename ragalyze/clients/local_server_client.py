@@ -51,7 +51,7 @@ from adalflow.core.embedder import (
 import adalflow.core.functional as F
 from adalflow.components.model_client.utils import parse_embedding_response
 
-from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
+from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from .openai_client import OpenAIClient, OpenAIEmbedder, OpenAIBatchEmbedder
 
 log = get_tqdm_compatible_logger(__name__)
@@ -59,13 +59,13 @@ log = get_tqdm_compatible_logger(__name__)
 
 class LocalServerClient(OpenAIClient):
     """A component wrapper for local server API client, inheriting from OpenAIClient.
-    
+
     This client is designed to work with local LLM servers that expose an OpenAI-compatible API.
     It inherits all functionality from OpenAIClient without any modifications.
-    
+
     Args:
         api_key (Optional[str], optional): API key for the local server. Defaults to None.
-        base_url (str): The API base URL for the local server. 
+        base_url (str): The API base URL for the local server.
                        Defaults to "http://localhost:8000/v1" (common default for local servers).
         env_api_key_name (str): Environment variable name for the API key. Defaults to "LOCAL_SERVER_API_KEY".
         env_base_url_name (str): Environment variable name for the base URL. Defaults to "LOCAL_SERVER_BASE_URL".
@@ -84,7 +84,7 @@ class LocalServerClient(OpenAIClient):
         # Set default base URL for local server if not provided
         if base_url is None:
             base_url = os.getenv(env_base_url_name, "http://localhost:8000/v1")
-            
+
         super().__init__(
             api_key=api_key,
             chat_completion_parser=chat_completion_parser,
@@ -98,10 +98,10 @@ class LocalServerClient(OpenAIClient):
 
 class LocalServerEmbedder(OpenAIEmbedder):
     """A user-facing component for local server embedder, inheriting from OpenAIEmbedder.
-    
+
     This embedder is designed to work with local embedding models that expose an OpenAI-compatible API.
     It inherits all functionality from OpenAIEmbedder without any modifications.
-    
+
     Args:
         model_client (ModelClient): The local server model client to use for the embedder.
         model_kwargs (Dict[str, Any], optional): The model kwargs to pass to the model client. Defaults to {}.
@@ -129,10 +129,10 @@ class LocalServerEmbedder(OpenAIEmbedder):
 
 class LocalServerBatchEmbedder(OpenAIBatchEmbedder):
     """Batch embedder specifically designed for local server API, inheriting from OpenAIBatchEmbedder.
-    
+
     This batch embedder is designed to work with local embedding models that expose an OpenAI-compatible API.
     It inherits all functionality from OpenAIBatchEmbedder without any modifications.
-    
+
     Args:
         embedder: The embedder to use for batch processing.
         batch_size (int): The batch size for processing. Defaults to 100.

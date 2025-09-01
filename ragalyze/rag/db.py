@@ -11,12 +11,12 @@ from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
 from adalflow.components.data_process import TextSplitter
 
-from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
-from deepwiki_cli.rag.transformer_registry import create_embedder_transformer
-from deepwiki_cli.core.types import DualVectorDocument
-from deepwiki_cli.rag.code_understanding import CodeUnderstandingGenerator
-from deepwiki_cli.rag.dynamic_splitter_transformer import DynamicSplitterTransformer
-from deepwiki_cli.configs import get_batch_embedder, configs
+from ragalyze.logger.logging_config import get_tqdm_compatible_logger
+from ragalyze.rag.transformer_registry import create_embedder_transformer
+from ragalyze.core.types import DualVectorDocument
+from ragalyze.rag.code_understanding import CodeUnderstandingGenerator
+from ragalyze.rag.dynamic_splitter_transformer import DynamicSplitterTransformer
+from ragalyze.configs import get_batch_embedder, configs
 
 # The setting is from the observation that the maximum length of Solidity compiler's files is 919974
 MAX_EMBEDDING_LENGTH = 1000000
@@ -432,7 +432,9 @@ class DatabaseManager:
         # Query-driven specific attributes
         self.query_driven = rag_config.get("query_driven", {}).get("enabled", False)
 
-        self.dynamic_splitter = rag_config.get("dynamic_splitter", {}).get("enabled", False)
+        self.dynamic_splitter = rag_config.get("dynamic_splitter", {}).get(
+            "enabled", False
+        )
 
     def _create_db_info(self) -> None:
         logger.info(f"Preparing repo storage for {self.repo_path}...")
@@ -505,7 +507,9 @@ class DatabaseManager:
                     key=os.path.basename(self.db_info["db_file_path"])
                 )
                 if documents:
-                    logger.info(f"Loaded {len(documents)} documents from existing database")
+                    logger.info(
+                        f"Loaded {len(documents)} documents from existing database"
+                    )
                     return documents
                 else:
                     logger.warning("No documents found in the existing database")
@@ -522,17 +526,19 @@ class DatabaseManager:
             )
             # If query-driven, return the original documents directly
             return documents
-        
+
         else:
             cache_dir = os.path.expanduser("~/.adalflow/deepwiki_cache")
             os.makedirs(cache_dir, exist_ok=True)
-            cache_file_path = os.path.join(cache_dir, self.db_info["repo_path"].replace("/", "#") + ".pkl")
+            cache_file_path = os.path.join(
+                cache_dir, self.db_info["repo_path"].replace("/", "#") + ".pkl"
+            )
             if not configs()["rag"]["embedder"]["force_embedding"] and os.path.exists(
                 cache_file_path
             ):
                 logger.info(f"Loading documents from cache file {cache_file_path}")
                 return pickle.load(open(cache_file_path, "rb"))
-            
+
             documents = read_all_documents(
                 self.db_info["repo_path"],
             )
@@ -582,25 +588,35 @@ class DatabaseManager:
         # Add documents to database
         # Only add documents that are not already in the database
         existing_item_ids = set(
-            item.id if isinstance(item, Document) else item.original_doc.id 
+            item.id if isinstance(item, Document) else item.original_doc.id
             for item in self.db.items
         )
 
         new_documents = [
-            doc for doc in documents 
-            if (hasattr(doc, 'id') and doc.id not in existing_item_ids) or 
-               (hasattr(doc, 'original_doc') and hasattr(doc.original_doc, 'id') and doc.original_doc.id not in existing_item_ids)
+            doc
+            for doc in documents
+            if (hasattr(doc, "id") and doc.id not in existing_item_ids)
+            or (
+                hasattr(doc, "original_doc")
+                and hasattr(doc.original_doc, "id")
+                and doc.original_doc.id not in existing_item_ids
+            )
         ]
 
         document_ids = set(
-            doc.id if isinstance(doc, Document) else doc.original_doc.id 
+            doc.id if isinstance(doc, Document) else doc.original_doc.id
             for doc in documents
         )
 
         cached_embedded_documents = [
-            doc for doc in self.db.transformed_items[key] 
-            if (hasattr(doc, 'id') and doc.id in document_ids) or 
-               (hasattr(doc, 'original_doc') and hasattr(doc.original_doc, 'id') and doc.original_doc.id in document_ids)
+            doc
+            for doc in self.db.transformed_items[key]
+            if (hasattr(doc, "id") and doc.id in document_ids)
+            or (
+                hasattr(doc, "original_doc")
+                and hasattr(doc.original_doc, "id")
+                and doc.original_doc.id in document_ids
+            )
         ]
 
         new_embedded_documents = []
@@ -613,7 +629,9 @@ class DatabaseManager:
             )
             self.db.items = self.db.items + new_documents
 
-        logger.info(f"Updated database with {len(new_embedded_documents)} new documents and {len(cached_embedded_documents)} cached documents")
+        logger.info(
+            f"Updated database with {len(new_embedded_documents)} new documents and {len(cached_embedded_documents)} cached documents"
+        )
 
         # Save the updated database
         if self.db_info and self.db_info.get("db_file_path"):

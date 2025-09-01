@@ -28,7 +28,7 @@ from adalflow.core.types import (
 import adalflow.core.functional as F
 
 # Configure logging
-from deepwiki_cli.logger.logging_config import get_tqdm_compatible_logger
+from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 
 log = get_tqdm_compatible_logger(__name__)
 
@@ -332,7 +332,11 @@ class HuggingfaceEmbedder(adal.Embedder):
         output_processors: Optional[DataComponent] = None,
     ) -> None:
 
-        super().__init__(model_client=HuggingfaceClient(), model_kwargs=model_kwargs, output_processors=output_processors)
+        super().__init__(
+            model_client=HuggingfaceClient(),
+            model_kwargs=model_kwargs,
+            output_processors=output_processors,
+        )
         if not isinstance(model_kwargs, Dict):
             raise TypeError(
                 f"{type(self).__name__} requires a dictionary for model_kwargs, not a string"
@@ -353,6 +357,7 @@ class HuggingfaceEmbedder(adal.Embedder):
             log.error(f"🤡 Error calling the model: {e}")
             raise
         return output
+
 
 class HuggingfaceBatchEmbedder(adal.BatchEmbedder):
     __doc__ = r"""Adds batching to the embedder component.
