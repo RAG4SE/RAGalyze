@@ -207,7 +207,7 @@ def read_all_documents(path: str):
         return True
 
     # Process code files first
-    for ext in code_extensions:
+    for ext in set(code_extensions):
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
         for file_path in files:
             # Check if file should be processed based on inclusion/exclusion rules
@@ -266,7 +266,7 @@ def read_all_documents(path: str):
             documents.append(doc)
 
     # Then process documentation files
-    for ext in doc_extensions:
+    for ext in set(doc_extensions):
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
         for file_path in files:
             # Check if file should be processed based on inclusion/exclusion rules
@@ -347,7 +347,10 @@ def prepare_data_transformer(
                 parallel=configs()["rag"]["dynamic_splitter"]["parallel"],
             )
         else:
-            splitter = MyTextSplitter(enable_line_number=configs()["generator"]["enable_line_number"], **configs()["rag"]["text_splitter"])
+            splitter = MyTextSplitter(
+                enable_line_number=configs()["generator"]["enable_line_number"],
+                **configs()["rag"]["text_splitter"],
+            )
 
         if mode == "only_splitter":
             return adal.Sequential(splitter)

@@ -189,7 +189,6 @@ repo:
       - ".ini"
       - ".cfg"
       - ".conf"
-      - ".xml"
       - ".xaml"
       - ".proto"
       - ".graphql"
