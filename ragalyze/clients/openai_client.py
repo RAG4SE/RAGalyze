@@ -43,7 +43,6 @@ from adalflow.core.types import (
     EmbedderOutput,
     CompletionUsage,
     GeneratorOutput,
-    Document,
     Embedding,
     EmbedderOutputType,
     EmbedderInputType,

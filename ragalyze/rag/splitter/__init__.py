@@ -1,2 +1,3 @@
 from .code_splitter import CodeSplitter
 from .natural_language_splitter import NaturalLanguageSplitter
+from .custom_text_splitter import MyTextSplitter

@@ -2,7 +2,7 @@ generator:
   
   provider: dashscope
   model: qwen3-coder-plus-2025-07-22
-  
+  enable_line_number: true
   api_key: ""
   base_url: ""
   model_kwargs:

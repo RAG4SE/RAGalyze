@@ -116,6 +116,22 @@ class OpenAITransformerFactory(TransformerFactory):
         embedder_class_name = embedder.__class__.__name__
         return embedder_class_name in ["OpenAIBatchEmbedder", "OpenAIEmbedder"]
 
+class LocalServerTransformerFactory(TransformerFactory):
+    """Factory for OpenAI transformers"""
+
+    def create_transformer(
+        self, embedder: adal.Embedder | adal.BatchEmbedder, **kwargs
+    ) -> OpenAIToEmbeddings:
+        return OpenAIToEmbeddings(embedder=embedder)
+
+    def can_handle(
+        self, embedder: adal.Embedder | adal.BatchEmbedder, **kwargs
+    ) -> bool:
+        if kwargs.get("use_dual_vector", False):
+            return False
+        embedder_class_name = embedder.__class__.__name__
+        return embedder_class_name in ["LocalServerBatchEmbedder", "LocalServerEmbedder"]
+
 
 class TransformerRegistry:
     """
@@ -135,6 +151,7 @@ class TransformerRegistry:
         self.register_factory(HuggingfaceTransformerFactory())
         self.register_factory(DashScopeTransformerFactory())
         self.register_factory(OpenAITransformerFactory())
+        self.register_factory(LocalServerTransformerFactory())
 
     def register_factory(self, factory: TransformerFactory):
         """Register a new factory"""

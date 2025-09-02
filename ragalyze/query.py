@@ -255,7 +255,6 @@ def print_result(result: Dict[str, Any]) -> None:
 
 def main(cfg: DictConfig) -> None:
     assert cfg.repo_path, "repo_path must be set"
-    # print("force_embedding:", configs()["rag"]["embedder"]["force_embedding"])
     load_all_configs(cfg)
     try:
         result = query_repository(repo_path=cfg.repo_path, question=cfg.question)

@@ -5,18 +5,10 @@ from typing import List, Optional, Union
 from openai.types.chat import ChatCompletion
 from tqdm import tqdm
 
-import adalflow as adal
 from adalflow.core.types import (
-    Document,
     ModelType,
-    RetrieverOutput,
-    RetrieverOutputType,
 )
-from adalflow.core.component import DataComponent
-
-from ragalyze.clients.dashscope_client import DashScopeClient
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
-from ragalyze.core.types import DualVectorDocument
 from ragalyze.configs import get_code_understanding_client
 
 logger = get_tqdm_compatible_logger(__name__)

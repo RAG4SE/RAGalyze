@@ -6,50 +6,14 @@ from typing import (
     Optional,
     Any,
     Callable,
-    Generator,
-    Union,
     Literal,
-    List,
-    Sequence,
 )
 
-import backoff
-from copy import deepcopy
-from tqdm import tqdm
-import adalflow as adal
-
-from openai import OpenAI, AsyncOpenAI, Stream
-from openai import (
-    APITimeoutError,
-    InternalServerError,
-    RateLimitError,
-    UnprocessableEntityError,
-    BadRequestError,
-)
 from openai.types import (
     Completion,
-    CreateEmbeddingResponse,
 )
-from openai.types.chat import ChatCompletionChunk, ChatCompletion
 
-from adalflow.core.model_client import ModelClient
-from adalflow.core.types import (
-    ModelType,
-    EmbedderOutput,
-    CompletionUsage,
-    GeneratorOutput,
-    Document,
-    Embedding,
-    EmbedderOutputType,
-    EmbedderInputType,
-)
 from adalflow.core.component import DataComponent
-from adalflow.core.embedder import (
-    BatchEmbedderOutputType,
-    BatchEmbedderInputType,
-)
-import adalflow.core.functional as F
-from adalflow.components.model_client.utils import parse_embedding_response
 
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from .openai_client import OpenAIClient, OpenAIEmbedder, OpenAIBatchEmbedder

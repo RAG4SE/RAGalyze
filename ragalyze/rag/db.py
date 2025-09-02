@@ -9,8 +9,8 @@ import adalflow as adal
 from adalflow.core.types import Document, List
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
-from adalflow.components.data_process import TextSplitter
 
+from ragalyze.rag.splitter import MyTextSplitter
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from ragalyze.rag.transformer_registry import create_embedder_transformer
 from ragalyze.core.types import DualVectorDocument
@@ -347,7 +347,7 @@ def prepare_data_transformer(
                 parallel=configs()["rag"]["dynamic_splitter"]["parallel"],
             )
         else:
-            splitter = TextSplitter(**configs()["rag"]["text_splitter"])
+            splitter = MyTextSplitter(enable_line_number=configs()["generator"]["enable_line_number"], **configs()["rag"]["text_splitter"])
 
         if mode == "only_splitter":
             return adal.Sequential(splitter)

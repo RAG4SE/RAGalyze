@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from adalflow.core.types import Document, List
 
-
 @dataclass
 class DualVectorDocument:
     """
