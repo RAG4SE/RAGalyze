@@ -1,6 +1,6 @@
-# DeepWiki CLI
+# RAGalyze
 
-Repository Analysis and Query CLI Tool with RAG (Retrieval-Augmented Generation) capabilities.
+Repository Analysis and Query Toolchain with RAG (Retrieval-Augmented Generation) capabilities.
 
 ## Features
 
@@ -33,7 +33,7 @@ pip install -e .
 
 ### Set up API keys of LLM providers
 
-DeepWiki-cli requires API keys from LLM providers to function properly. The tool has been thoroughly tested with the following model configurations:
+RAGalyze requires API keys from LLM providers to function properly. The tool has been thoroughly tested with the following model configurations:
 
 **Embedding Models:**
 - Huggingface: `intfloat/multilingual-e5-large-instruct`
