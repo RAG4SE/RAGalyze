@@ -22,6 +22,141 @@ from ragalyze.core.utils import minmax_norm, zscore_norm
 
 logger = get_tqdm_compatible_logger(__name__)
 
+class BM25Retriever:
+    """Standalone BM25 retriever that can be used by other retrievers."""
+
+    def __init__(self, documents: List[Union[Document, DualVectorDocument]], 
+                 k1: float = 1.5, b: float = 0.75, top_k: int = 20):
+        """
+        Initialize the BM25 retriever.
+
+        Args:
+            documents: List of documents to index
+            k1: BM25 k1 parameter
+            b: BM25 b parameter
+            top_k: Number of top documents to retrieve
+        """
+        self.documents = documents
+        self.k1 = k1
+        self.b = b
+        self.top_k = top_k
+        self.bm25 = None
+        self._initialize_bm25(documents)
+
+    def _initialize_bm25(self, documents: List[Union[Document, DualVectorDocument]]):
+        """Initialize BM25 index with document texts."""
+        try:
+            # Extract text content from documents for BM25 indexing
+            corpus = []
+            for doc in documents:
+                if isinstance(doc, DualVectorDocument):
+                    # For dual vector documents, combine code and understanding text
+                    text = doc.original_doc.text + "\n" + doc.understanding_text
+                else:
+                    text = doc.text
+
+                # Tokenize text for BM25 (simple whitespace + punctuation splitting)
+                tokens = self._tokenize_text(text)
+                corpus.append(tokens)
+
+            # Initialize BM25 with custom parameters
+            self.bm25 = BM25Okapi(corpus, k1=self.k1, b=self.b)
+            logger.info(f"BM25 index created with {len(corpus)} documents")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize BM25: {e}")
+            self.bm25 = None
+
+    def _tokenize_text(self, text: str) -> List[str]:
+        """Simple tokenization for BM25 indexing."""
+        # Convert to lowercase and split on whitespace and punctuation
+        text = text.lower()
+        # Split on whitespace and common punctuation, keep alphanumeric tokens
+        tokens = re.findall(r"\b\w+\b", text)
+        return tokens
+
+    def get_scores(self, query: str) -> List[float]:
+        """Get BM25 scores for all documents given a query."""
+        if not self.bm25:
+            logger.warning("BM25 index not initialized")
+            return []
+
+        try:
+            # Tokenize query
+            query_tokens = self._tokenize_text(query)
+            # Get BM25 scores for all documents
+            scores = self.bm25.get_scores(query_tokens)
+            return scores
+        except Exception as e:
+            logger.error(f"Failed to get BM25 scores: {e}")
+            return []
+
+    def filter_and_score(self, query: str, top_k: Optional[int] = None) -> tuple[List[int], List[float]]:
+        """Filter documents using BM25 and return document indices and normalized scores."""
+        if top_k is None:
+            top_k = self.top_k
+            
+        try:
+            # Get BM25 scores for all documents
+            scores = self.get_scores(query)
+            
+            # Get top-k document indices based on BM25 scores
+            doc_indices = sorted(
+                range(len(scores)), key=lambda i: scores[i], reverse=True
+            )[:top_k]
+
+            filtered_scores = [scores[i] for i in doc_indices]
+            filtered_scores = minmax_norm(filtered_scores)
+            filtered_scores = zscore_norm(filtered_scores)
+
+            logger.info(f"BM25 filtered {len(self.documents)} documents to {len(doc_indices)} candidates")
+            return doc_indices, filtered_scores
+
+        except Exception as e:
+            logger.error(f"BM25 filtering failed: {e}")
+            raise
+
+    def call(self, query: str, top_k: Optional[int] = None) -> RetrieverOutputType:
+        """Retrieve documents using BM25."""
+        if not self.bm25:
+            logger.warning("BM25 index not initialized")
+            return []
+
+        if top_k is None:
+            top_k = self.top_k
+
+        try:
+            # Get BM25 scores for all documents
+            scores = self.get_scores(query)
+            
+            # Get top-k document indices based on BM25 scores
+            doc_indices = sorted(
+                range(len(scores)), key=lambda i: scores[i], reverse=True
+            )[:top_k]
+
+            # Get the actual documents and scores
+            retrieved_docs = [self.documents[i] for i in doc_indices]
+            doc_scores = [scores[i] for i in doc_indices]
+            
+            # Normalize scores
+            doc_scores = minmax_norm(doc_scores)
+            doc_scores = zscore_norm(doc_scores)
+
+            logger.info(f"BM25 retrieved {len(retrieved_docs)} documents")
+
+            return [
+                RetrieverOutput(
+                    doc_indices=doc_indices,
+                    doc_scores=doc_scores,
+                    query=query,
+                    documents=retrieved_docs,
+                )
+            ]
+
+        except Exception as e:
+            logger.error(f"BM25 retrieval failed: {e}")
+            return []
+    
 
 class SingleVectorRetriever(FAISSRetriever):
     """A wrapper of FAISSRetriever with the additional feature of supporting documents feature"""
@@ -36,10 +171,11 @@ class SingleVectorRetriever(FAISSRetriever):
     def call(
         self,
         input: FAISSRetrieverQueriesType,
-        bm25_scores: List[float],
-        bm25_weight: float
+        top_k: int = None
     ) -> RetrieverOutputType:
-        retriever_output = super().call(input, self.top_k)
+        if top_k is None:
+            top_k = self.top_k
+        retriever_output = super().call(input, top_k)
 
         # Extract the first result from the list
         if not retriever_output:
@@ -47,11 +183,9 @@ class SingleVectorRetriever(FAISSRetriever):
 
         first_output = retriever_output[0]
 
-        faiss_score = zscore_norm(minmax_norm(first_output.doc_scores))
-        final_score = [(1-bm25_weight) * faiss_score[j] + bm25_weight * [bm25_scores[i] for i in first_output.doc_indices][j] for j in range(len(faiss_score))]
-        doc_scores = final_score
+        doc_scores = zscore_norm(minmax_norm(first_output.doc_scores))
         faiss_doc_indices = sorted(
-            range(len(final_score)), key=lambda i: final_score[i], reverse=True
+            range(len(doc_scores)), key=lambda i: doc_scores[i], reverse=True
         )
         doc_indices = [first_output.doc_indices[i] for i in faiss_doc_indices]
         retrieved_docs = [self.original_doc[i] for i in doc_indices]
@@ -84,13 +218,13 @@ class DualVectorRetriever:
         self.top_k = top_k
         self.doc_map = {doc.original_doc.id: doc for doc in dual_docs}
 
-        # Build the two FAISS indexes
-        self._build_indices()
         logger.info(
             f"Dual vector retriever initialization completed, containing {len(dual_docs)} documents"
         )
 
-    def _build_indices(self):
+    def _build_indices(self, top_k: int = None):
+        if top_k is None:
+            top_k = self.top_k
         """Builds the code index and the summary index."""
         if not self.dual_docs:
             logger.warning("No documents available for building indices")
@@ -111,7 +245,7 @@ class DualVectorRetriever:
             code_docs.append(faiss_doc)
 
         self.code_retriever = FAISSRetriever(
-            top_k=self.top_k,
+            top_k=top_k,
             embedder=self.embedder,
             documents=code_docs,
             document_map_func=lambda doc: doc.vector,
@@ -130,14 +264,14 @@ class DualVectorRetriever:
             understanding_docs.append(faiss_doc)
 
         self.understanding_retriever = FAISSRetriever(
-            top_k=self.top_k,
+            top_k=top_k,
             embedder=self.embedder,
             documents=understanding_docs,
             document_map_func=lambda doc: doc.vector,
         )
         logger.info("Understanding FAISS index built successfully.")
 
-    def call(self, query_str: str, bm25_scores: List[float], bm25_weight: float) -> RetrieverOutputType:
+    def call(self, query_str: str, top_k: int = None) -> RetrieverOutputType:
         """
         Performs dual retrieval.
 
@@ -151,26 +285,25 @@ class DualVectorRetriever:
             query_str, str
         ), f"Query must be a string, got {type(query_str)}"
 
+        if top_k is None:
+            top_k = self.top_k
+
+        self._build_indices(top_k=top_k)
+
         if not self.dual_docs:
             return RetrieverOutput(
                 doc_indices=[], doc_scores=[], query=query_str, documents=[]
             )
 
         # 1. Retrieve from the code index
-        code_results = self.code_retriever.call(query_str, top_k=self.top_k)[0]
+        code_results = self.code_retriever.call(query_str, top_k=top_k)[0]
         # 2. Retrieve from the summary index
         understanding_results = self.understanding_retriever.call(
-            query_str, top_k=self.top_k
+            query_str, top_k=top_k
         )[0]
 
         # 3. Merge and re-rank the results
         combined_scores = {}
-
-        if bm25_scores:
-            # If bm25_scores will be combined with faiss scores, then doc_scores calculated
-            # by faiss should be normalized first.
-            code_results.doc_scores = zscore_norm(minmax_norm(code_results.doc_scores))
-            understanding_results.doc_scores = zscore_norm(minmax_norm(understanding_results.doc_scores))
 
         # Process code results - extract original chunk_id from FAISS document ID
         for i, score in zip(code_results.doc_indices, code_results.doc_scores):
@@ -193,10 +326,6 @@ class DualVectorRetriever:
                     combined_scores[original_chunk_id], score
                 )
 
-        for i, doc in enumerate(self.dual_docs):
-            if doc.original_doc.id in combined_scores:
-                combined_scores[doc.original_doc.id] = bm25_scores[i] * bm25_weight + (1 - bm25_weight) * combined_scores[doc.original_doc.id]
-
         # 4. Sort and get the top-k results
         # Sort by the combined score in descending order
         sorted_chunk_ids = sorted(
@@ -210,7 +339,7 @@ class DualVectorRetriever:
         doc_indices = []
         doc_scores = []
         for idx, chunk_id in enumerate(
-            sorted_chunk_ids[: min(self.top_k, len(sorted_chunk_ids))]
+            sorted_chunk_ids[: min(top_k, len(sorted_chunk_ids))]
         ):
             if chunk_id in self.doc_map:
                 dual_doc = self.doc_map[chunk_id]
@@ -250,7 +379,6 @@ class HybridRetriever:
             documents: List of transformed documents to index
         """
         self.documents = documents
-        self.bm25_documents = None
         self.embedder = get_embedder()
 
         rag_config = configs()["rag"]
@@ -258,56 +386,39 @@ class HybridRetriever:
         retriever_config = rag_config["retriever"]
         self.top_k = retriever_config["top_k"]
         bm25_config = retriever_config["bm25"]
-        self.bm25_top_k = bm25_config["top_k"]
         self.bm25_k1 = bm25_config["k1"]
         self.bm25_b = bm25_config["b"]
-        self.bm25_weight = bm25_config.get("weight", 0.5)
+        self.bm25_weight = bm25_config["weight"]
 
-        self._initialize_bm25()
-        # FAISS retriever will be initialized later with filtered documents
+        # Initialize BM25 retriever
+        self.bm25_retriever = BM25Retriever(
+            documents=documents, 
+            k1=self.bm25_k1, 
+            b=self.bm25_b, 
+            top_k=self.top_k
+        )
+
+        # Initialize FAISS retriever in call function
         self.faiss_retriever = None
 
         logger.info(
             f"Hybrid retriever initialized with dual_vector={'enabled' if self.use_dual_vector else 'disabled'}"
+            f"BM25 parameters: k1={self.bm25_k1}, b={self.bm25_b}, weight={self.bm25_weight}"
+            f"Other parameters: top_k={self.top_k}"
         )
 
-    def _initialize_bm25(self):
-        """Initialize BM25 index with document texts."""
-        try:
-            # Extract text content from documents for BM25 indexing
-            corpus = []
-            for doc in self.documents:
-                if isinstance(doc, DualVectorDocument):
-                    # For dual vector documents, combine code and understanding text
-                    text = doc.original_doc.text + "\n" + doc.understanding_text
-                else:
-                    text = doc.text
-
-                # Tokenize text for BM25 (simple whitespace + punctuation splitting)
-                tokens = self._tokenize_text(text)
-                corpus.append(tokens)
-
-            # Initialize BM25 with custom parameters
-            self.bm25 = BM25Okapi(corpus, k1=self.bm25_k1, b=self.bm25_b)
-            logger.info(f"BM25 index created with {len(corpus)} documents")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize BM25: {e}")
-            self.bm25 = None
-
-    def _initialize_faiss_retriever(self, **kwargs):
+    def _initialize_faiss_retriever(self, documents: List[Document | DualVectorDocument], **kwargs):
         """Initialize FAISS retriever based on vector type."""
-        assert self.bm25_documents is not None, "BM25 documents must be set before initializing FAISS"
         if self.use_dual_vector:
             self.faiss_retriever = DualVectorRetriever(
-                dual_docs=self.bm25_documents,
+                dual_docs=documents,
                 embedder=self.embedder,
                 top_k=self.top_k,
                 **kwargs,
             )
         else:
             self.faiss_retriever = SingleVectorRetriever(
-                documents=self.bm25_documents,
+                documents=documents,
                 embedder=self.embedder,
                 top_k=self.top_k,
                 document_map_func=lambda doc: doc.vector,
@@ -315,68 +426,45 @@ class HybridRetriever:
             )
         logger.info(f"FAISS retriever initialized successfully")
 
-    def _tokenize_text(self, text: str) -> List[str]:
-        """Simple tokenization for BM25 indexing."""
-        # Convert to lowercase and split on whitespace and punctuation
-        text = text.lower()
-        # Split on whitespace and common punctuation, keep alphanumeric tokens
-        tokens = re.findall(r"\b\w+\b", text)
-        return tokens
+    def _mix_bm25_score_faiss_score(self, bm25_indices: List[int], bm25_scores: List[float], faiss_results: RetrieverOutputType) -> List[Document]:
+        """Mix BM25 scores with FAISS results."""
+        faiss_indices = faiss_results[0].doc_indices
+        faiss_scores = faiss_results[0].doc_scores
+        scores = [0] * len(bm25_indices)
+        assert len(faiss_indices) == len(bm25_indices), f"Mismatch in FAISS results: {len(faiss_indices)} vs {len(bm25_indices)}"
+        assert all([bm25_indices[i] < len(bm25_indices) for i in range(len(bm25_indices))]), f"Invalid BM25 index found"
+        assert all([faiss_indices[i] < len(faiss_indices) for i in range(len(faiss_indices))]), f"Invalid FAISS index found"
+        for i, doc in enumerate(bm25_indices):
+            scores[bm25_indices[i]] = bm25_scores[i] * self.bm25_weight
+        for i, doc in enumerate(faiss_indices):
+            scores[faiss_indices[i]] += faiss_scores[i] * (1 - self.bm25_weight)
+        return scores
 
-    def _bm25_filter(self, query: str) -> List[int]:
-        """Filter documents using BM25 and return document indices."""
-
-        try:
-            # Tokenize query
-            query_tokens = self._tokenize_text(query)
-
-            # Get BM25 scores for all documents
-            scores = self.bm25.get_scores(query_tokens)
-
-            # Get top-k document indices based on BM25 scores
-            doc_indices = sorted(
-                range(len(scores)), key=lambda i: scores[i], reverse=True
-            )
-
-            # Limit to bm25_top_k documents
-            filtered_indices = doc_indices[: self.bm25_top_k]
-
-            filtered_scores = [scores[i] for i in filtered_indices]
-            filtered_scores = minmax_norm(filtered_scores)
-            filtered_scores = zscore_norm(filtered_scores)
-
-            logger.info(
-                f"BM25 filtered {len(self.documents)} documents to {len(filtered_indices)} candidates"
-            )
-            return filtered_indices, filtered_scores
-
-        except Exception as e:
-            logger.error(f"BM25 filtering failed: {e}, falling back to all documents")
-            raise
-
-    def call(self, query: str, top_k: Optional[int] = None) -> List[RetrieverOutput]:
+    def call(self, query: str, top_k: Optional[int] = None, documents: List[Document | DualVectorDocument] = None) -> List[RetrieverOutput]:
         """Perform hybrid retrieval combining BM25 and FAISS."""
         if top_k is None:
             top_k = self.top_k
 
+        if documents is None:
+            documents = self.documents
+
         try:
-            # Step 1: BM25 filtering
-            bm25_indices, bm25_scores = self._bm25_filter(query)
-            # Step 2: Filter documents
-            self.bm25_documents = [self.documents[i] for i in bm25_indices]
-            # Step 3: Initialize FAISS retriever with filtered documents
-            self._initialize_faiss_retriever()
-
-            if not bm25_indices:
-                logger.warning(
-                    "BM25 returned no results, falling back to full FAISS search"
+            bm25_indices, bm25_scores = self.bm25_retriever.filter_and_score(query, top_k=len(documents))
+            self._initialize_faiss_retriever(documents)
+            faiss_results = self.faiss_retriever.call(query, top_k=len(documents))
+            assert len(faiss_results[0].documents) == len(bm25_indices), f"Mismatch in number of documents between BM25 and FAISS results: {len(bm25_indices)} vs {len(faiss_results[0]['documents'])}"
+            scores = self._mix_bm25_score_faiss_score(bm25_indices, bm25_scores, faiss_results)
+            doc_indices = sorted(
+                range(len(scores)), key=lambda i: scores[i], reverse=True
+            )[:top_k]
+            return [
+                RetrieverOutput(
+                    doc_indices=doc_indices,
+                    doc_scores=[scores[i] for i in doc_indices],
+                    query=query,
+                    documents=[documents[i] for i in doc_indices],
                 )
-                # Initialize FAISS with all documents as fallback
-                return self.faiss_retriever.call(query)
-
-            faiss_results = self.faiss_retriever.call(query, bm25_scores=bm25_scores, bm25_weight=self.bm25_weight)
-
-            return faiss_results
+            ]
 
         except Exception as e:
             logger.error(
@@ -401,63 +489,37 @@ class QueryDrivenRetriever(HybridRetriever):
             update_database: Function to update the database with new embedded documents
         """
         self.update_database = update_database
+        self.query_driven_top_k = configs()["rag"]["query_driven"]['top_k']
+        self.query_driven_algo = configs()["rag"]["query_driven"]['algo']
+        assert self.query_driven_algo in ['bm25', 'faiss'], f"Invalid query_driven algorithm: {self.query_driven_algo}, only 'bm25' and 'faiss' are allowed"
+        logger.info(f"Query-driven retriever initialized with query_driven_top_k={self.query_driven_top_k}, algo={self.query_driven_algo}")
         super().__init__(documents)
 
-    def call(self, query: str, top_k: Optional[int] = None) -> List[RetrieverOutput]:
+    def call(self, query: str) -> List[RetrieverOutput]:
         """
         Retrieve documents using BM25 index and on-demand embedding with FAISS.
 
         Args:
             query: Query string
-            top_k: Number of top documents to return (defaults to retriever.top_k config)
 
         Returns:
             List of RetrieverOutput objects
         """
-        if top_k is None:
-            top_k = self.top_k
 
         # Step 1: BM25 filtering to get candidates
-        logger.info("Step 1: BM25 filtering")
-        bm25_indices, bm25_scores = self._bm25_filter(query)
-        self.bm25_documents = [self.documents[i] for i in bm25_indices]
-        logger.info(f"Retrieved {len(self.bm25_documents)} candidates using BM25")
+        if self.query_driven_algo == 'bm25':
+            logger.info("Step 1: BM25 filtering")
+            query_related_doc_indices, _ = self.bm25_retriever.filter_and_score(query, top_k=self.query_driven_top_k)
+        else:
+            logger.info("Step 1: FAISS filtering")
+            faiss_results = self.faiss_retriever.call(query, top_k=self.query_driven_top_k)
+            query_related_doc_indices = faiss_results[0].doc_indices
+        
+        filtered_docs = [self.documents[i] for i in query_related_doc_indices]
 
         # Step 2: Use database manager to embed and cache documents
         logger.info("Step 2: Embedding and caching documents using DatabaseManager")
-        embedded_docs = self.update_database(self.bm25_documents)
-        logger.info(f"Embedded and cached {len(embedded_docs)} documents")
-
-        # Initialize appropriate retriever based on configuration
-        if self.use_dual_vector:
-            logger.info("Using dual vector retriever")
-            # Filter to only DualVectorDocument objects
-            dual_docs = [
-                doc for doc in embedded_docs if isinstance(doc, DualVectorDocument)
-            ]
-            faiss_retriever = DualVectorRetriever(
-                dual_docs=dual_docs, embedder=self.embedder, top_k=top_k
-            )
-        else:
-            logger.info("Using single vector retriever")
-            # Filter to only Document objects with embeddings
-            embedded_documents = [
-                doc
-                for doc in embedded_docs
-                if isinstance(doc, Document) and hasattr(doc, "vector")
-            ]
-            faiss_retriever = SingleVectorRetriever(
-                documents=embedded_documents,
-                embedder=self.embedder,
-                top_k=top_k,
-                document_map_func=lambda doc: doc.vector,
-            )
-
-        # Perform FAISS search
-        faiss_results = faiss_retriever.call(query, bm25_scores=bm25_scores, bm25_weight=self.bm25_weight)
-
-        logger.info(
-            f"Retrieved {len(faiss_results[0].documents)} chunks using BM25 + on-demand embedding + FAISS"
-        )
-
-        return faiss_results
+        embedded_docs = self.update_database(filtered_docs)
+        logger.info(f"Embedded and cached {len(embedded_docs)} documents")        
+        
+        return super().call(query, documents=embedded_docs)

@@ -378,6 +378,7 @@ IMPORTANT FORMATTING RULES:
             )
         else:
             # Use HybridRetriever which combines BM25 and FAISS
+            print('document type is', type(self.documents[0]))
             self.retriever = HybridRetriever(documents=self.documents)
 
     def call(self, query: str) -> List[RetrieverOutput]:

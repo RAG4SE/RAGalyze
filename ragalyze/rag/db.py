@@ -511,16 +511,36 @@ class DatabaseManager:
                 else:
                     logger.warning("No documents found in the existing database")
                     return []
-
-            documents = read_all_documents(
-                self.db_info["repo_path"],
+            
+            cache_dir = os.path.expanduser(configs()["doc_cache_path"])
+            os.makedirs(cache_dir, exist_ok=True)
+            self.cache_file_path = os.path.join(
+                cache_dir, self.db_info["repo_path"].replace("/", "#") + ".pkl"
             )
+            if not configs()["rag"]["embedder"]["force_embedding"] and os.path.exists(
+                self.cache_file_path
+            ):
+                logger.info(f"Loading documents from cache file {self.cache_file_path}")
+                documents = pickle.load(open(self.cache_file_path, "rb"))
+            else:
+                documents = read_all_documents(
+                    self.db_info["repo_path"],
+                )
+                pickle.dump(documents, open(self.cache_file_path, "wb"))
+
             self.db = transform_documents_and_save_to_db(
                 documents, self.db_info["db_file_path"]
             )
             documents = self.db.get_transformed_data(
                 key=os.path.basename(self.db_info["db_file_path"])
             )
+            if isinstance(documents[0], Document):
+                id2doc = {doc.id: doc for doc in documents}
+            elif isinstance(documents[0], DualVectorDocument):
+                id2doc = {doc.original_doc.id: doc.original_doc for doc in documents}
+            else:
+                raise ValueError("documents must be a list of Document or DualVectorDocument")
+            pickle.dump(id2doc, open(self.cache_file_path + ".id2doc.pkl", "wb"))
             # If query-driven, return the original documents directly
             return documents
 

@@ -7,4 +7,4 @@ defaults:
 repo_path: ""
 question: ""
 
-doc_cache_path: ~/.adalflow/deepwiki_cache
+doc_cache_path: ~/.adalflow/ragalyze_cache

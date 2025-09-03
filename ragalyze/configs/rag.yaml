@@ -12,9 +12,11 @@ rag:
     force_embedding: false
 
   retriever:
+    query-driven: true
     top_k: 20
     bm25:
-      top_k: 100
+      # We first use bm25 to retrieve top_k candidate documents
+      # based on syntax similarity
       k1: 1.2
       b: 0.75
       # the weight of bm25 score in the final score
@@ -54,6 +56,8 @@ rag:
   # Query-driven configuration
   query_driven:
     enabled: true
+    top_k: 100
+    algo: bm25
 
   # After retrieving a document, the number of adjacent documents to consider
   # For instance, if the count is 1, then consider the retrieved doc, the doc before the retrieved doc, and the doc after the retrieved doc
