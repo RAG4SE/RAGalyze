@@ -429,12 +429,6 @@ class DatabaseManager:
         ), "rag_config must contain sketch_filling section"
         self.use_dual_vector = rag_config["embedder"]["sketch_filling"]
 
-        assert "hybrid" in rag_config, "rag_config must contain hybrid section"
-        assert (
-            "enabled" in rag_config["hybrid"]
-        ), "hybrid_config must contain enabled section"
-        self.use_bm25 = rag_config["hybrid"]["enabled"]
-
         # Query-driven specific attributes
         self.query_driven = rag_config.get("query_driven", {}).get("enabled", False)
 
@@ -467,9 +461,6 @@ class DatabaseManager:
         file_name = repo_name
         if self.use_dual_vector:
             file_name += "-dual-vector"
-        if not self.query_driven and self.use_bm25:
-            # If query-driven, then bm25 is a must, so no need to add it to the file name
-            file_name += "-bm25"
         if self.query_driven:
             file_name += "-query-driven"
         if self.dynamic_splitter:

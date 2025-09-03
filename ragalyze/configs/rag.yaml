@@ -13,13 +13,13 @@ rag:
 
   retriever:
     top_k: 20
-
-  hybrid:
-    enabled: true
     bm25:
       top_k: 100
       k1: 1.2
       b: 0.75
+      # the weight of bm25 score in the final score
+      # 0.5 means equal contribution from both BM25 and FAISS
+      weight: 0.5
   
   text_splitter:
     split_by: token
