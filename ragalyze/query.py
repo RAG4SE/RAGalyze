@@ -3,20 +3,11 @@
 RAGalyze Query Module
 """
 
-import os
-import sys
-from typing import Dict, Any, List
+from typing import Dict, Any
 from pathlib import Path
 from datetime import datetime
-from omegaconf import DictConfig
-import hydra
-from copy import deepcopy
-import pickle
-
-from adalflow.core.types import Document
 
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
-from ragalyze.rag.rag import RAG
 from ragalyze.configs import *
 from ragalyze.core.types import DualVectorDocument
 
@@ -70,6 +61,7 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
                     f.write(
                         f"\n{i}. File: {getattr(doc.original_doc, 'meta_data', {}).get('file_path', 'Unknown')}\n"
                     )
+                    f.write(f"Document ID: {doc.original_doc.id}\n")
                     f.write("Full Content:\n")
                     f.write(doc.original_doc.text + "\n")
                     understanding_text = getattr(doc, "understanding_text", "")
@@ -83,9 +75,23 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
                     f.write(
                         f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}\n"
                     )
-
+                    f.write(f"Document ID: {doc.id}\n")
                     f.write("Full Content:\n")
                     f.write(doc.text + "\n")
+    
+    if result.get("context"):
+        docs_file = output_dir / "context.txt"
+        with open(docs_file, "w", encoding="utf-8") as f:
+            f.write("=" * 50 + "\n")
+            f.write("CONTEXTS\n")
+            f.write("=" * 50 + "\n")
+            for i, doc in enumerate(result["context"], 1):
+                f.write(
+                    f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}\n"
+                )
+                f.write(f"Document ID: {doc.id}\n")
+                f.write("Full Content:\n")
+                f.write(doc.text + "\n")
 
     # Save metadata
     metadata_file = output_dir / "metadata.txt"
@@ -253,6 +259,7 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
         return {
             "response": rag_answer,
             "retrieved_documents": retrieved_docs,
+            "context": contexts,
             "error_msg": "",
         }
 
