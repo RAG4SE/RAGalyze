@@ -53,7 +53,8 @@ class SingleVectorRetriever(FAISSRetriever):
             doc_scores = first_output.doc_scores
         else:
             faiss_score = zscore_norm(minmax_norm(first_output.doc_scores))
-            final_score = faiss_score + [bm_scores[i] for i in first_output.doc_indices]
+            final_score = [faiss_score[j] + [bm_scores[i] for i in first_output.doc_indices][j] for j in range(len(faiss_score))]
+            doc_scores = final_score
             faiss_doc_indices = sorted(
                 range(len(final_score)), key=lambda i: final_score[i], reverse=True
             )
