@@ -1,3 +1,4 @@
+import numpy as np
 
 class AsyncWrapper:
     """
@@ -31,3 +32,13 @@ class AsyncWrapper:
       async def _process():
         return await self.parent.acall(*self.args, **self.kwargs)
       return _process().__await__()
+
+def minmax_norm(scores):
+    if len(scores) <= 1:
+        return [1.0] * len(scores)
+    lo, hi = min(scores), max(scores)
+    return [(s - lo) / (hi - lo + 1e-12) for s in scores]
+
+def zscore_norm(scores):
+    mu, sigma = np.mean(scores), np.std(scores)
+    return [(s - mu) / (sigma + 1e-12) for s in scores]

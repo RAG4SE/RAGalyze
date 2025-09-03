@@ -6,6 +6,7 @@ hybrid BM25+FAISS, and query-driven retrievers for semantic document search in t
 import re
 from typing import List, Optional, Union, Callable
 from rank_bm25 import BM25Okapi
+import numpy as np
 
 from adalflow.core.types import RetrieverOutput, Document, RetrieverOutputType
 from adalflow.components.retriever.faiss_retriever import (
@@ -17,6 +18,7 @@ from ragalyze.configs import get_embedder, configs
 from ragalyze.core.types import DualVectorDocument
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from ragalyze.rag.db import DatabaseManager
+from ragalyze.core.utils import minmax_norm, zscore_norm
 
 logger = get_tqdm_compatible_logger(__name__)
 
@@ -34,6 +36,7 @@ class SingleVectorRetriever(FAISSRetriever):
     def call(
         self,
         input: FAISSRetrieverQueriesType,
+        bm_scores: List[float] = []
     ) -> RetrieverOutputType:
         retriever_output = super().call(input, self.top_k)
 
@@ -43,14 +46,25 @@ class SingleVectorRetriever(FAISSRetriever):
 
         first_output = retriever_output[0]
 
-        # Get the documents based on the indices
-        retrieved_docs = [self.original_doc[i] for i in first_output.doc_indices]
+        if not bm_scores:
+            # Get the documents based on the indices
+            retrieved_docs = [self.original_doc[i] for i in first_output.doc_indices]
+            doc_indices = first_output.doc_indices
+            doc_scores = first_output.doc_scores
+        else:
+            faiss_score = zscore_norm(minmax_norm(first_output.doc_scores))
+            final_score = faiss_score + [bm_scores[i] for i in first_output.doc_indices]
+            faiss_doc_indices = sorted(
+                range(len(final_score)), key=lambda i: final_score[i], reverse=True
+            )
+            doc_indices = [first_output.doc_indices[i] for i in faiss_doc_indices]
+            retrieved_docs = [self.original_doc[i] for i in doc_indices]
 
         # Create a new RetrieverOutput with the documents
         return [
             RetrieverOutput(
-                doc_indices=first_output.doc_indices,
-                doc_scores=first_output.doc_scores,
+                doc_indices=doc_indices,
+                doc_scores=doc_scores,
                 query=first_output.query,
                 documents=retrieved_docs,
             )
@@ -127,7 +141,7 @@ class DualVectorRetriever:
         )
         logger.info("Understanding FAISS index built successfully.")
 
-    def call(self, query_str: str) -> RetrieverOutputType:
+    def call(self, query_str: str, bm_scores: List[float] = []) -> RetrieverOutputType:
         """
         Performs dual retrieval.
 
@@ -156,6 +170,12 @@ class DualVectorRetriever:
         # 3. Merge and re-rank the results
         combined_scores = {}
 
+        if bm_scores:
+            # If bm_scores will be combined with faiss scores, then doc_scores calculated
+            # by faiss should be normalized first.
+            code_results.doc_scores = zscore_norm(minmax_norm(code_results.doc_scores))
+            understanding_results.doc_scores = zscore_norm(minmax_norm(understanding_results.doc_scores))
+
         # Process code results - extract original chunk_id from FAISS document ID
         for i, score in zip(code_results.doc_indices, code_results.doc_scores):
             # Get the document from code retriever to extract original chunk_id
@@ -176,6 +196,11 @@ class DualVectorRetriever:
                 combined_scores[original_chunk_id] = max(
                     combined_scores[original_chunk_id], score
                 )
+
+        if bm_scores:
+            for i, doc in enumerate(self.dual_docs):
+                if doc.original_doc.id in combined_scores:
+                    combined_scores[doc.original_doc.id] += bm_scores[i]
 
         # 4. Sort and get the top-k results
         # Sort by the combined score in descending order
@@ -346,10 +371,14 @@ class HybridRetriever:
             # Limit to bm25_top_k documents
             filtered_indices = doc_indices[: self.bm25_top_k]
 
+            filtered_scores = [scores[i] for i in filtered_indices]
+            filtered_scores = minmax_norm(filtered_scores)
+            filtered_scores = zscore_norm(filtered_scores)
+
             logger.info(
                 f"BM25 filtered {len(self.documents)} documents to {len(filtered_indices)} candidates"
             )
-            return filtered_indices
+            return filtered_indices, filtered_scores
 
         except Exception as e:
             logger.error(f"BM25 filtering failed: {e}, falling back to all documents")
@@ -363,7 +392,7 @@ class HybridRetriever:
         try:
             if self.use_bm25:
                 # Step 1: BM25 filtering
-                bm25_indices = self._bm25_filter(query)
+                bm25_indices, bm_scores = self._bm25_filter(query)
                 # Step 2: Filter documents
                 self.bm25_documents = [self.documents[i] for i in bm25_indices]
                 # Step 3: Initialize FAISS retriever with filtered documents
@@ -376,7 +405,7 @@ class HybridRetriever:
                     # Initialize FAISS with all documents as fallback
                     return self.faiss_retriever.call(query)
 
-                faiss_results = self.faiss_retriever.call(query)
+                faiss_results = self.faiss_retriever.call(query, bm_scores=bm_scores)
 
                 return faiss_results
 
@@ -430,7 +459,7 @@ class QueryDrivenRetriever(HybridRetriever):
 
         # Step 1: BM25 filtering to get candidates
         logger.info("Step 1: BM25 filtering")
-        bm25_indices = self._bm25_filter(query)
+        bm25_indices, bm25_scores = self._bm25_filter(query)
         self.bm25_documents = [self.documents[i] for i in bm25_indices]
         logger.info(f"Retrieved {len(self.bm25_documents)} candidates using BM25")
 
@@ -465,7 +494,7 @@ class QueryDrivenRetriever(HybridRetriever):
             )
 
         # Perform FAISS search
-        faiss_results = faiss_retriever.call(query)
+        faiss_results = faiss_retriever.call(query, bm_scores=bm25_scores)
 
         logger.info(
             f"Retrieved {len(faiss_results[0].documents)} chunks using BM25 + on-demand embedding + FAISS"
