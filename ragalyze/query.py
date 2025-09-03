@@ -3,10 +3,19 @@
 RAGalyze Query Module
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, List
 from pathlib import Path
 from datetime import datetime
+import pickle
+from omegaconf import DictConfig
+from copy import deepcopy
+import os
+import sys
+import hydra
 
+from adalflow.core.types import Document
+
+from ragalyze.rag.rag import RAG
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from ragalyze.configs import *
 from ragalyze.core.types import DualVectorDocument
@@ -92,7 +101,7 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
                 f.write(f"Document ID: {doc.id}\n")
                 f.write("Full Content:\n")
                 f.write(doc.text + "\n")
-
+    
     # Save metadata
     metadata_file = output_dir / "metadata.txt"
     with open(metadata_file, "w", encoding="utf-8") as f:
@@ -116,6 +125,20 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
                 if understanding_text:
                     docs_with_understanding += 1
         f.write(f"Documents with Code Understanding: {docs_with_understanding}\n")
+    
+    if result.get("bm25_docs"):
+        bm25_doc_file = output_dir / "bm25_retrieved.txt"
+        with open(bm25_doc_file, "w", encoding="utf-8") as f:
+            f.write("=" * 50 + "\n")
+            f.write("BM25-retrieved docs\n")
+            f.write("=" * 50 + "\n")
+            for i, doc in enumerate(result["bm25_docs"], 1):
+                f.write(
+                    f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}\n"
+                )
+                f.write(f"Document ID: {doc.id}\n")
+                f.write("Full Content:\n")
+                f.write(doc.text + "\n")
 
     return str(output_dir)
 
@@ -260,7 +283,7 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
             "response": rag_answer,
             "retrieved_documents": retrieved_docs,
             "context": contexts,
-            "error_msg": "",
+            "bm25_docs": rag.retriever.bm25_documents if hasattr(rag.retriever, 'bm25_documents') and rag.retriever.bm25_documents else [],
         }
 
     else:
@@ -269,37 +292,33 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
 
 
 def print_result(result: Dict[str, Any]) -> None:
-    if result["error_msg"]:
-        print(f"Error: {result['error_msg']}")
-        sys.exit(1)
-    else:
-        print("\n" + "=" * 50)
-        print("RESPONSE:")
-        print("=" * 50)
-        # Convert escaped newlines to actual line breaks for better readability
-        formatted_response = result["response"].replace("\\n", "\n")
-        print(formatted_response)
+    print("\n" + "=" * 50)
+    print("RESPONSE:")
+    print("=" * 50)
+    # Convert escaped newlines to actual line breaks for better readability
+    formatted_response = result["response"].replace("\\n", "\n")
+    print(formatted_response)
 
-        if result["retrieved_documents"]:
-            print("\n" + "=" * 50)
-            print("RETRIEVED DOCUMENTS:")
-            print("=" * 50)
-            for i, doc in enumerate(result["retrieved_documents"], 1):
-                if isinstance(doc, DualVectorDocument):
-                    print(
-                        f"\n{i}. File: {getattr(doc.original_doc, 'meta_data', {}).get('file_path', 'Unknown')}"
-                    )
-                    print(
-                        f"   Preview: {(doc.original_doc.text[:200] + '...') if len(doc.original_doc.text) > 200 else doc.original_doc.text}"
-                    )
-                else:
-                    print(
-                        f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}"
-                    )
-                    print(
-                        f"   Preview: {(doc.text[:200] + '...') if len(doc.text) > 200 else doc.text}"
-                    )
-        print("For more details, please check the reply folder")
+    # if result["retrieved_documents"]:
+    #     print("\n" + "=" * 50)
+    #     print("RETRIEVED DOCUMENTS:")
+    #     print("=" * 50)
+    #     for i, doc in enumerate(result["retrieved_documents"], 1):
+    #         if isinstance(doc, DualVectorDocument):
+    #             print(
+    #                 f"\n{i}. File: {getattr(doc.original_doc, 'meta_data', {}).get('file_path', 'Unknown')}"
+    #             )
+    #             print(
+    #                 f"   Preview: {(doc.original_doc.text[:200] + '...') if len(doc.original_doc.text) > 200 else doc.original_doc.text}"
+    #             )
+    #         else:
+    #             print(
+    #                 f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}"
+    #             )
+    #             print(
+    #                 f"   Preview: {(doc.text[:200] + '...') if len(doc.text) > 200 else doc.text}"
+    #             )
+    print("For more details, please check the reply folder")
 
 
 def main(cfg: DictConfig) -> None:

@@ -230,6 +230,7 @@ class HybridRetriever:
             documents: List of transformed documents to index
         """
         self.documents = documents
+        self.bm25_documents = None
         self.embedder = get_embedder()
 
         rag_config = configs()["rag"]
@@ -298,16 +299,17 @@ class HybridRetriever:
 
     def _initialize_faiss_retriever(self, **kwargs):
         """Initialize FAISS retriever based on vector type."""
+        docs = self.documents if self.bm25_documents is None else self.bm25_documents
         if self.use_dual_vector:
             self.faiss_retriever = DualVectorRetriever(
-                dual_docs=self.documents,
+                dual_docs=docs,
                 embedder=self.embedder,
                 top_k=self.top_k,
                 **kwargs,
             )
         else:
             self.faiss_retriever = SingleVectorRetriever(
-                documents=self.documents,
+                documents=docs,
                 embedder=self.embedder,
                 top_k=self.top_k,
                 document_map_func=lambda doc: doc.vector,
@@ -363,7 +365,7 @@ class HybridRetriever:
                 # Step 1: BM25 filtering
                 bm25_indices = self._bm25_filter(query)
                 # Step 2: Filter documents
-                self.documents = [self.documents[i] for i in bm25_indices]
+                self.bm25_documents = [self.documents[i] for i in bm25_indices]
                 # Step 3: Initialize FAISS retriever with filtered documents
                 self._initialize_faiss_retriever()
 
@@ -429,12 +431,12 @@ class QueryDrivenRetriever(HybridRetriever):
         # Step 1: BM25 filtering to get candidates
         logger.info("Step 1: BM25 filtering")
         bm25_indices = self._bm25_filter(query)
-        candidate_chunks = [self.documents[i] for i in bm25_indices]
-        logger.info(f"Retrieved {len(candidate_chunks)} candidates using BM25")
+        self.bm25_documents = [self.documents[i] for i in bm25_indices]
+        logger.info(f"Retrieved {len(self.bm25_documents)} candidates using BM25")
 
         # Step 2: Use database manager to embed and cache documents
         logger.info("Step 2: Embedding and caching documents using DatabaseManager")
-        embedded_docs = self.update_database(candidate_chunks)
+        embedded_docs = self.update_database(self.bm25_documents)
         logger.info(f"Embedded and cached {len(embedded_docs)} documents")
 
         # Initialize appropriate retriever based on configuration
