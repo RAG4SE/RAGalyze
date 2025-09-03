@@ -5,11 +5,15 @@ RAGalyze Query Module
 
 import os
 import sys
-from typing import Dict, Any
+from typing import Dict, Any, List
 from pathlib import Path
 from datetime import datetime
 from omegaconf import DictConfig
 import hydra
+from copy import deepcopy
+import pickle
+
+from adalflow.core.types import Document
 
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from ragalyze.rag.rag import RAG
@@ -142,6 +146,46 @@ def analyze_repository(repo_path: str) -> RAG:
 
     return rag
 
+def build_contexts(retrieved_docs: List[Document | DualVectorDocument], id2doc: Dict[str, Document]) -> List[Document]:
+    """
+    Build context strings from retrieved documents.
+
+    Args:
+        retrieved_documents: List of retrieved Document objects.
+
+    Returns:
+        List of context strings.
+    """
+    if isinstance(retrieved_docs[0], DualVectorDocument):
+        contexts = [doc.original_doc for doc in retrieved_docs]
+    else:
+        contexts = retrieved_docs
+    
+    if not configs()['rag']['adjacent_documents']['enabled']:
+        return contexts
+
+    count = configs()['rag']['adjacent_documents']['count']
+
+    new_contexts = []
+
+    for doc in contexts:
+        new_doc = deepcopy(doc)
+        cnt = 0
+        this_doc = doc
+        while(doc.meta_data["prev_doc_id"] is not None and cnt < count):
+            prev_doc = id2doc[doc.meta_data["prev_doc_id"]]
+            new_doc.text = prev_doc.text + new_doc.text
+            doc = prev_doc
+            cnt += 1
+        doc = this_doc
+        cnt = 0
+        while(doc.meta_data["next_doc_id"] is not None and cnt < count):
+            next_doc = id2doc[doc.meta_data["next_doc_id"]]
+            new_doc.text = new_doc.text + next_doc.text
+            doc = next_doc
+            cnt += 1
+        new_contexts.append(new_doc)
+    return new_contexts
 
 def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
     """
@@ -178,10 +222,8 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
         # Generate answer
         logger.info("🤖 Generating answer...")
         try:
-            if isinstance(retrieved_docs[0], DualVectorDocument):
-                contexts = [doc.original_doc for doc in retrieved_docs]
-            else:
-                contexts = retrieved_docs
+            id2doc = pickle.load(open(rag.db_manager.cache_file_path + ".id2doc.pkl", "rb"))
+            contexts = build_contexts(retrieved_docs, id2doc)
 
             # Handle both standard RAG and query-driven RAG
             if hasattr(rag, "generator"):

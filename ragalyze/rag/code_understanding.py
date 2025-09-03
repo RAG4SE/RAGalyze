@@ -29,12 +29,21 @@ The summary should be in English and as concise as possible.
 """
 
 CODE_UNDERSTANDING_SYSTEM_PROMPT = """
+# Task
 You are an expert programmer and a master of code analysis.
 Your task is to provide a concise, high-level summary of the given code snippet.
 
 Keep the summary in plain language and easy to understand for someone with technical background but not necessarily familiar with this specific code.
 Do not get lost in implementation details. Provide a "bird's-eye view" of the code.
 The summary should be in English and as concise as possible.
+
+# Response Format
+<FILE PATH>
+file path of this code snippet
+</FILE PATH>
+<SUMMARY>
+Summary without the thinking process
+</SUMMARY>
 """
 
 

@@ -347,9 +347,12 @@ def prepare_data_transformer(
                 parallel=configs()["rag"]["dynamic_splitter"]["parallel"],
             )
         else:
+            text_splitter_kwargs = configs()["rag"]["text_splitter"]
+            if configs()["rag"]["adjacent_documents"]["enabled"]:
+                text_splitter_kwargs["chunk_overlap"] = False
             splitter = MyTextSplitter(
                 enable_line_number=configs()["generator"]["enable_line_number"],
-                **configs()["rag"]["text_splitter"],
+                **text_splitter_kwargs,
             )
 
         if mode == "only_splitter":
@@ -531,23 +534,25 @@ class DatabaseManager:
             return documents
 
         else:
-            cache_dir = os.path.expanduser("~/.adalflow/deepwiki_cache")
+            cache_dir = os.path.expanduser(configs()["doc_cache_path"])
             os.makedirs(cache_dir, exist_ok=True)
-            cache_file_path = os.path.join(
+            self.cache_file_path = os.path.join(
                 cache_dir, self.db_info["repo_path"].replace("/", "#") + ".pkl"
             )
             if not configs()["rag"]["embedder"]["force_embedding"] and os.path.exists(
-                cache_file_path
+                self.cache_file_path
             ):
-                logger.info(f"Loading documents from cache file {cache_file_path}")
-                return pickle.load(open(cache_file_path, "rb"))
+                logger.info(f"Loading documents from cache file {self.cache_file_path}")
+                return pickle.load(open(self.cache_file_path, "rb"))
 
             documents = read_all_documents(
                 self.db_info["repo_path"],
             )
             splitter = prepare_data_transformer(mode="only_splitter")
             splitted_documents = splitter(documents)
-            pickle.dump(splitted_documents, open(cache_file_path, "wb"))
+            id2doc = {doc.id: doc for doc in splitted_documents}
+            pickle.dump(splitted_documents, open(self.cache_file_path, "wb"))
+            pickle.dump(id2doc, open(self.cache_file_path + ".id2doc.pkl", "wb"))
             return splitted_documents
 
     def update_database_with_documents(

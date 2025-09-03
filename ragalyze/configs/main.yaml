@@ -6,3 +6,5 @@ defaults:
 
 repo_path: ""
 question: ""
+
+doc_cache_path: ~/.adalflow/deepwiki_cache

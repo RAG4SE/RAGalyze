@@ -66,12 +66,13 @@ class MyTextSplitter(TextSplitter):
 
                 # prefix each line of doc.text with the 0-based line number
                 doc.text = "\n".join(f"{i}: {line}" for i, line in enumerate(doc.text.splitlines()))
-
                 text_splits = self.split_text(doc.text)
+                
                 meta_data = deepcopy(doc.meta_data)
                 
                 if self.enable_line_number:
                     start_pos = 0
+                    prev_doc = None
                     for i, chunk in enumerate(text_splits):
                         pattern = re.escape(chunk.lstrip())
                         match = re.search(pattern, doc.text[start_pos:])
@@ -83,15 +84,22 @@ class MyTextSplitter(TextSplitter):
                         start_line = doc.text[:chunk_start].count('\n')
                         chunk_meta = deepcopy(meta_data) if meta_data else {}
                         chunk_meta["start_line"] = start_line
-                        split_docs.append(
-                            Document(
-                                text=chunk,
-                                meta_data=chunk_meta,
-                                parent_doc_id=f"{doc.id}",
-                                order=i,
-                                vector=[],
-                            )
+                        this_doc = Document(
+                            text=chunk,
+                            meta_data=chunk_meta,
+                            parent_doc_id=f"{doc.id}",
+                            order=i,
+                            vector=[],
                         )
+                        if prev_doc:
+                            prev_doc.meta_data['next_doc_id'] = this_doc.id
+                            this_doc.meta_data['prev_doc_id'] = prev_doc.id
+                            this_doc.meta_data["next_doc_id"] = None
+                        else:
+                            this_doc.meta_data['prev_doc_id'] = None
+                            this_doc.meta_data["next_doc_id"] = None
+                        split_docs.append(this_doc)
+                        prev_doc = this_doc
                 else:
                     split_docs.extend(
                         [

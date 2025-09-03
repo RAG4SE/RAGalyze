@@ -22,9 +22,9 @@ rag:
       b: 0.75
   
   text_splitter:
-      split_by: token
-      chunk_size: 256
-      chunk_overlap: 32
+    split_by: token
+    chunk_size: 256
+    chunk_overlap: 32
 
   # Dynamic splitter configuration - automatically selects appropriate splitter
   dynamic_splitter:
@@ -54,3 +54,9 @@ rag:
   # Query-driven configuration
   query_driven:
     enabled: true
+
+  # After retrieving a document, the number of adjacent documents to consider
+  # For instance, if the count is 1, then consider the retrieved doc, the doc before the retrieved doc, and the doc after the retrieved doc
+  adjacent_documents:
+    enabled: true
+    count: 1
