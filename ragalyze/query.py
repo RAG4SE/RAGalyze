@@ -284,6 +284,7 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
             "retrieved_documents": retrieved_docs,
             "context": contexts,
             "bm25_docs": rag.retriever.bm25_documents if hasattr(rag.retriever, 'bm25_documents') and rag.retriever.bm25_documents else [],
+
         }
 
     else:
