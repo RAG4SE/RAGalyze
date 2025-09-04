@@ -27,6 +27,33 @@ from adalflow.core.types import (
 )
 import adalflow.core.functional as F
 
+# Dynamic import checks for optional dependencies
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+
+def check_huggingface_dependencies():
+    """Check if required HuggingFace dependencies are available and raise helpful error if not."""
+    missing_packages = []
+    if not TORCH_AVAILABLE:
+        missing_packages.append("torch>=2.0.0")
+    if not SENTENCE_TRANSFORMERS_AVAILABLE:
+        missing_packages.append("sentence-transformers>=2.2.0")
+    
+    if missing_packages:
+        raise ImportError(
+            f"To use HuggingFace embedding features, please install the required packages: "
+            f"pip install {' '.join(missing_packages)}"
+        )
+
 # Configure logging
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 
@@ -56,6 +83,9 @@ class HuggingfaceClient(ModelClient):
         Args:
             device: Device to run the model on ("cuda" or "cpu")
         """
+        # Check for required dependencies
+        check_huggingface_dependencies()
+        
         super().__init__()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = None

@@ -95,6 +95,45 @@ except ImportError:
     TREE_SITTER_AVAILABLE = False
     LANGUAGE_MODULES = {}
 
+def check_treesitter_dependencies():
+    """Check if required tree-sitter dependencies are available and raise helpful error if not."""
+    if not TREE_SITTER_AVAILABLE:
+        # Check what's missing
+        missing_packages = []
+        try:
+            import tree_sitter
+        except ImportError:
+            missing_packages.append("tree-sitter")
+        
+        # Check for language parsers
+        language_packages = {
+            "python": "tree-sitter-python",
+            "javascript": "tree-sitter-javascript",
+            "typescript": "tree-sitter-javascript",  # TypeScript uses JS parser
+            "java": "tree-sitter-java",
+            "cpp": "tree-sitter-cpp",
+            "c": "tree-sitter-cpp",  # C uses CPP parser
+            "go": "tree-sitter-go",
+            "rust": "tree-sitter-rust",
+            "markdown": "tree-sitter-markdown",
+            "rst": "tree-sitter-rst",
+            "yaml": "tree-sitter-yaml",
+            "yml": "tree-sitter-yaml",  # Both .yaml and .yml extensions
+            "json": "tree-sitter-json"
+        }
+        
+        # Check which language packages are missing
+        for lang, package in language_packages.items():
+            if lang not in LANGUAGE_MODULES:
+                if package not in missing_packages:
+                    missing_packages.append(package)
+        
+        if missing_packages:
+            raise ImportError(
+                f"To use tree-sitter code parsing features, please install the required packages: "
+                f"pip install {' '.join(missing_packages)}"
+            )
+
 logger = get_tqdm_compatible_logger(__name__)
 
 
@@ -193,6 +232,7 @@ class CodeSplitter(TextSplitter):
 
         # Initialize tree-sitter parsers
         self.parsers = {}
+        check_treesitter_dependencies()
         if TREE_SITTER_AVAILABLE:
             self._init_parsers()
         else:
@@ -235,11 +275,15 @@ class CodeSplitter(TextSplitter):
         self.__dict__.update(state)
         # Re-initialize the tree_sitter.Parser objects
         self.parsers = {}
+        check_treesitter_dependencies()
         if TREE_SITTER_AVAILABLE:
             self._init_parsers()
 
     def _init_parsers(self):
         """Initialize tree-sitter parsers for supported languages."""
+        # Check for required dependencies
+        check_treesitter_dependencies()
+        
         if not TREE_SITTER_AVAILABLE:
             logger.warning(
                 "Tree-sitter not available. Code splitting will use fallback method."
@@ -463,6 +507,9 @@ class CodeSplitter(TextSplitter):
         The "best" boundary is the one that is closest to max_pos, but not less than start_pos.
         Only considers statement-level nodes to ensure complete code semantics.
         """
+        # Check for required dependencies
+        check_treesitter_dependencies()
+        
         assert isinstance(text, bytes), "text must be utf-8 encoded bytes"
         assert self.language, "language must be set"
         assert self.tree, "tree must be set"
@@ -501,6 +548,9 @@ class CodeSplitter(TextSplitter):
         The "best" boundary is the one that is closest to desired_start_char, but not less than desired_start_char.
         The range of the boundary is [desired_start_char, len(text)].
         """
+        # Check for required dependencies
+        check_treesitter_dependencies()
+        
         assert isinstance(text, bytes), "text must be utf-8 encoded bytes"
         assert self.language is not None, "language must be set"
         assert self.tree is not None, "tree must be set"
@@ -776,6 +826,9 @@ class CodeSplitter(TextSplitter):
         Initialize parser
         Split the text into chunks using the smart boundary detection.
         """
+        # Check for required dependencies
+        check_treesitter_dependencies()
+        
         self.language = self.SUFFIX_TO_LANG[self.file_extension]
         self.text = text
         self.bytes = text.encode("utf-8", errors="ignore")

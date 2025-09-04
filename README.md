@@ -12,6 +12,8 @@ Repository Analysis and Query Toolchain with RAG (Retrieval-Augmented Generation
 
 ## Installation
 
+well-tested under Python 3.11
+
 ### From PyPI
 
 ```bash
