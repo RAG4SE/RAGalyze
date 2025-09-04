@@ -537,12 +537,16 @@ class QueryDrivenRetriever(HybridRetriever):
         query_related_doc_indices, query_related_doc_scores = bm25_retriever.filter_and_score(query, top_k=self.query_driven_top_k)
         
         filtered_docs = [self.documents[i] for i in query_related_doc_indices]
-        query_related_doc_indices = list(range(len(filtered_docs)))
-        
+        doc_id_to_score = {doc.id : score for doc, score in zip(filtered_docs, query_related_doc_scores)}
+
         self.bm25_documents = filtered_docs
         # Step 2: Use database manager to embed and cache documents
         logger.info("Step 2: Embedding and caching documents using DatabaseManager")
         embedded_docs = self.update_database(filtered_docs)
         logger.info(f"Embedded and cached {len(embedded_docs)} documents")
+
+        # embedded_docs may reorder the filtered_docs, so update the query_related_doc_indices nad query_related_doc_scores correspondingly
+        query_related_doc_indices = list(range(len(embedded_docs)))
+        query_related_doc_scores = [doc_id_to_score[doc.original_doc.id] if isinstance(doc, DualVectorDocument) else doc_id_to_score[doc.id] for doc in embedded_docs]
 
         return super().call(query, documents=embedded_docs, bm25_indices=query_related_doc_indices, bm25_scores=query_related_doc_scores)
