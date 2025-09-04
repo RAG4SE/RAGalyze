@@ -19,9 +19,16 @@ rag:
       # based on syntax similarity
       k1: 1.2
       b: 0.75
-      # the weight of bm25 score in the final score
+      # The weight of bm25 score in the final score in `normal_add`
       # 0.5 means equal contribution from both BM25 and FAISS
       weight: 0.5
+    # fusion strategy includes `normal_add` and `rrf`
+    # `normal_add` performs normalization before addition of faiss score and bm25 score
+    # while `rrf` (Ranked Relevance Fusion) combines scores based on their rank
+    fusion: "normal_add"
+    rrf:
+      # A smoothing constant
+      k: 60
   
   text_splitter:
     split_by: token

@@ -6,7 +6,7 @@ hybrid BM25+FAISS, and query-driven retrievers for semantic document search in t
 import re
 from typing import List, Optional, Union, Callable
 from rank_bm25 import BM25Okapi
-import numpy as np
+from collections import defaultdict
 
 from adalflow.core.types import RetrieverOutput, Document, RetrieverOutputType
 from adalflow.components.retriever.faiss_retriever import (
@@ -106,8 +106,6 @@ class BM25Retriever:
             )[:top_k]
 
             filtered_scores = [scores[i] for i in doc_indices]
-            filtered_scores = minmax_norm(filtered_scores)
-            filtered_scores = zscore_norm(filtered_scores)
 
             logger.info(f"BM25 filtered {len(self.documents)} documents to {len(doc_indices)} candidates")
             return doc_indices, filtered_scores
@@ -137,10 +135,6 @@ class BM25Retriever:
             # Get the actual documents and scores
             retrieved_docs = [self.documents[i] for i in doc_indices]
             doc_scores = [scores[i] for i in doc_indices]
-            
-            # Normalize scores
-            doc_scores = minmax_norm(doc_scores)
-            doc_scores = zscore_norm(doc_scores)
 
             logger.info(f"BM25 retrieved {len(retrieved_docs)} documents")
 
@@ -183,7 +177,6 @@ class SingleVectorRetriever(FAISSRetriever):
 
         first_output = retriever_output[0]
 
-        doc_scores = zscore_norm(minmax_norm(first_output.doc_scores))
         faiss_doc_indices = sorted(
             range(len(doc_scores)), key=lambda i: doc_scores[i], reverse=True
         )
@@ -390,17 +383,8 @@ class HybridRetriever:
         self.bm25_b = bm25_config["b"]
         self.bm25_weight = bm25_config["weight"]
         assert 0 <= self.bm25_weight <= 1, "BM25 weight must be between 0 and 1."
-
-        # Initialize BM25 retriever
-        self.bm25_retriever = BM25Retriever(
-            documents=documents, 
-            k1=self.bm25_k1, 
-            b=self.bm25_b, 
-            top_k=self.top_k
-        )
-
-        # Initialize FAISS retriever in call function
-        self.faiss_retriever = None
+        self.fusion = configs()["rag"]["retriever"]["fusion"]
+        assert self.fusion in ["rrf", "normal_add"], f"Invalid fusion method: {self.fusion}"
 
         logger.info(
             f"Hybrid retriever initialized with dual_vector={'enabled' if self.use_dual_vector else 'disabled'}"
@@ -411,14 +395,14 @@ class HybridRetriever:
     def _initialize_faiss_retriever(self, documents: List[Document | DualVectorDocument], **kwargs):
         """Initialize FAISS retriever based on vector type."""
         if self.use_dual_vector:
-            self.faiss_retriever = DualVectorRetriever(
+            faiss_retriever = DualVectorRetriever(
                 dual_docs=documents,
                 embedder=self.embedder,
                 top_k=self.top_k,
                 **kwargs,
             )
         else:
-            self.faiss_retriever = SingleVectorRetriever(
+            faiss_retriever = SingleVectorRetriever(
                 documents=documents,
                 embedder=self.embedder,
                 top_k=self.top_k,
@@ -426,22 +410,62 @@ class HybridRetriever:
                 **kwargs,
             )
         logger.info(f"FAISS retriever initialized successfully")
+        return faiss_retriever
 
-    def _mix_bm25_score_faiss_score(self, bm25_indices: List[int], bm25_scores: List[float], faiss_results: RetrieverOutputType) -> List[Document]:
+    def _initialize_bm25_retriever(self, documents: List[Document | DualVectorDocument], **kwargs) -> BM25Retriever:
+        """Initialize BM25 retriever."""
+        bm25_retriever = BM25Retriever(
+            documents=documents,
+            k1=self.bm25_k1,
+            b=self.bm25_b,
+            top_k=self.top_k
+        )
+        logger.info(f"BM25 retriever initialized successfully")
+        return bm25_retriever
+
+    def _rrf(self, doc_indices_list: List[List[int]], weights: List[int]) -> dict:
+        """
+        Given several ranks, return the final rank based on Reciprocal Rank Fusion
+        """
+        k = configs()["rag"]["retriever"]["rrf"]["k"]
+        # Initialize a dictionary to hold the cumulative scores for each document
+        doc_scores = defaultdict(float)
+        for doc_indices, weight in zip(doc_indices_list, weights):
+            for rank, doc_id in enumerate(doc_indices):
+                # Apply the Reciprocal Rank Fusion formula
+                doc_scores[doc_id] += weight * (1.0 / float(rank + 1 + k))
+        # Return the final ranked list of document IDs
+        return dict(sorted(doc_scores.items(), key=lambda x: x[1], reverse=True))
+
+
+    def _mix_bm25_score_faiss_score(self, documents: List[Document | DualVectorDocument], bm25_indices: List[int], bm25_scores: List[float], faiss_results: RetrieverOutputType) -> List[Document]:
         """Mix BM25 scores with FAISS results."""
         faiss_indices = faiss_results[0].doc_indices
         faiss_scores = faiss_results[0].doc_scores
-        scores = [0] * len(bm25_indices)
-        assert len(faiss_indices) == len(bm25_indices), f"Mismatch in FAISS results: {len(faiss_indices)} vs {len(bm25_indices)}"
-        assert all([bm25_indices[i] < len(bm25_indices) for i in range(len(bm25_indices))]), f"Invalid BM25 index found"
-        assert all([faiss_indices[i] < len(faiss_indices) for i in range(len(faiss_indices))]), f"Invalid FAISS index found"
-        for i, doc in enumerate(bm25_indices):
-            scores[bm25_indices[i]] = bm25_scores[i] * self.bm25_weight
-        for i, doc in enumerate(faiss_indices):
-            scores[faiss_indices[i]] += faiss_scores[i] * (1 - self.bm25_weight)
+        if isinstance(documents[0], DualVectorDocument):
+            documents = [doc.original_doc for doc in documents]
+        if self.fusion == "normal_add":
+            minmax_bm25_scores = minmax_norm(bm25_scores)
+            zscore_bm25_scores = zscore_norm(minmax_bm25_scores)
+            self.doc_id_to_bm25_scores = {documents[doc_id].id: (original_score, minmax_score, zscore_score) for doc_id, original_score, minmax_score, zscore_score in zip(bm25_indices, bm25_scores, minmax_bm25_scores, zscore_bm25_scores)}
+            minmax_faiss_scores = minmax_norm(faiss_scores)
+            zscore_faiss_scores = zscore_norm(minmax_faiss_scores)
+            self.doc_id_to_faiss_scores = {documents[doc_id].id: (original_score, minmax_score, zscore_score) for doc_id, original_score, minmax_score, zscore_score in zip(faiss_indices, faiss_scores, minmax_faiss_scores, zscore_faiss_scores)}
+            scores = [0] * len(bm25_indices)
+            assert len(faiss_indices) == len(bm25_indices), f"Mismatch in FAISS results: {len(faiss_indices)} vs {len(bm25_indices)}"
+            assert all([faiss_indices[i] < len(faiss_indices) for i in range(len(faiss_indices))]), f"Invalid FAISS index found"
+            assert all([bm25_indices[i] < len(bm25_indices) for i in range(len(bm25_indices))]), f"Invalid BM25 index found"
+            for i, doc in enumerate(bm25_indices):
+                scores[bm25_indices[i]] = zscore_bm25_scores[i] * self.bm25_weight
+            for i, doc in enumerate(faiss_indices):
+                scores[faiss_indices[i]] += zscore_faiss_scores[i] * (1 - self.bm25_weight)
+        else:
+            id_to_scores = self._rrf([bm25_indices, faiss_indices], [self.bm25_weight, 1 - self.bm25_weight])
+            scores = list(id_to_scores.values())
+            self.doc_id_to_rrf_scores = {documents[id].id: score for (id, score) in id_to_scores.items()}
         return scores
 
-    def call(self, query: str, top_k: Optional[int] = None, documents: List[Document | DualVectorDocument] = None) -> List[RetrieverOutput]:
+    def call(self, query: str, top_k: Optional[int] = None, documents: List[Document | DualVectorDocument] = None, bm25_indices = [], bm25_scores = []) -> List[RetrieverOutput]:
         """Perform hybrid retrieval combining BM25 and FAISS."""
         if top_k is None:
             top_k = self.top_k
@@ -450,11 +474,13 @@ class HybridRetriever:
             documents = self.documents
 
         try:
-            bm25_indices, bm25_scores = self.bm25_retriever.filter_and_score(query, top_k=len(documents))
-            self._initialize_faiss_retriever(documents)
-            faiss_results = self.faiss_retriever.call(query, top_k=len(documents))
+            if not bm25_indices:
+                bm25_retriever = self._initialize_bm25_retriever(documents)
+                bm25_indices, bm25_scores = bm25_retriever.filter_and_score(query, top_k=len(documents))
+            faiss_retriever = self._initialize_faiss_retriever(documents)
+            faiss_results = faiss_retriever.call(query, top_k=len(documents))
             assert len(faiss_results[0].documents) == len(bm25_indices), f"Mismatch in number of documents between BM25 and FAISS results: {len(bm25_indices)} vs {len(faiss_results[0]['documents'])}"
-            scores = self._mix_bm25_score_faiss_score(bm25_indices, bm25_scores, faiss_results)
+            scores = self._mix_bm25_score_faiss_score(documents, bm25_indices, bm25_scores, faiss_results)
             doc_indices = sorted(
                 range(len(scores)), key=lambda i: scores[i], reverse=True
             )[:top_k]
@@ -507,13 +533,16 @@ class QueryDrivenRetriever(HybridRetriever):
 
         # Step 1: BM25 filtering to get candidates
         logger.info("Step 1: BM25 filtering")
-        query_related_doc_indices, _ = self.bm25_retriever.filter_and_score(query, top_k=self.query_driven_top_k)
-
+        bm25_retriever = self._initialize_bm25_retriever(self.documents)
+        query_related_doc_indices, query_related_doc_scores = bm25_retriever.filter_and_score(query, top_k=self.query_driven_top_k)
+        
         filtered_docs = [self.documents[i] for i in query_related_doc_indices]
-
+        query_related_doc_indices = list(range(len(filtered_docs)))
+        
+        self.bm25_documents = filtered_docs
         # Step 2: Use database manager to embed and cache documents
         logger.info("Step 2: Embedding and caching documents using DatabaseManager")
         embedded_docs = self.update_database(filtered_docs)
-        logger.info(f"Embedded and cached {len(embedded_docs)} documents")        
-        
-        return super().call(query, documents=embedded_docs)
+        logger.info(f"Embedded and cached {len(embedded_docs)} documents")
+
+        return super().call(query, documents=embedded_docs, bm25_indices=query_related_doc_indices, bm25_scores=query_related_doc_scores)

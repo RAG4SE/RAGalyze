@@ -139,6 +139,33 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
                 f.write(f"Document ID: {doc.id}\n")
                 f.write("Full Content:\n")
                 f.write(doc.text + "\n")
+    
+    if result.get("bm25_scores"):
+        bm25_score_file = output_dir / "bm25_scores.csv"
+        with open(bm25_score_file, "w", encoding="utf-8") as f:
+            f.write("doc_id, original_score, minmax_score, zscore_score\n")
+            # Sort by original score (score[0]) in descending order
+            sorted_scores = sorted(result["bm25_scores"].items(), key=lambda x: x[1][0], reverse=True)
+            for doc_id, score in sorted_scores:
+                f.write(f"{doc_id}, {score[0]}, {score[1]}, {score[2]}\n")
+
+    if result.get("faiss_scores"):
+        faiss_score_file = output_dir / "faiss_scores.csv"
+        with open(faiss_score_file, "w", encoding="utf-8") as f:
+            f.write("doc_id, original_score, minmax_score, zscore_score\n")
+            # Sort by original score (score[0]) in descending order
+            sorted_scores = sorted(result["faiss_scores"].items(), key=lambda x: x[1][0], reverse=True)
+            for doc_id, score in sorted_scores:
+                f.write(f"{doc_id}, {score[0]}, {score[1]}, {score[2]}\n")
+    
+    if result.get("rrf_scores"):
+        rrf_score_file = output_dir / "rrf_scores.csv"
+        with open(rrf_score_file, "w", encoding="utf-8") as f:
+            f.write("doc_id, rrf_score\n")
+            # Sort by original score (score[0]) in descending order
+            sorted_scores = sorted(result["rrf_scores"].items(), key=lambda x: x[1], reverse=True)
+            for doc_id, score in sorted_scores:
+                f.write(f"{doc_id}, {score}\n")
 
     return str(output_dir)
 
@@ -284,7 +311,9 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
             "retrieved_documents": retrieved_docs,
             "context": contexts,
             "bm25_docs": rag.retriever.bm25_documents if hasattr(rag.retriever, 'bm25_documents') and rag.retriever.bm25_documents else [],
-
+            "bm25_scores": rag.retriever.doc_id_to_bm25_scores if hasattr(rag.retriever, 'doc_id_to_bm25_scores') else [],
+            "faiss_scores": rag.retriever.doc_id_to_faiss_scores if hasattr(rag.retriever, 'doc_id_to_faiss_scores') else [],
+            "rrf_scores": rag.retriever.doc_id_to_rrf_scores if hasattr(rag.retriever, 'doc_id_to_rrf_scores') else []
         }
 
     else:
