@@ -381,7 +381,7 @@ IMPORTANT FORMATTING RULES:
             print('document type is', type(self.documents[0]))
             self.retriever = HybridRetriever(documents=self.documents)
 
-    def call(self, query: str) -> List[RetrieverOutput]:
+    def call(self, query: str, documents: List[Document | DualVectorDocument] = None) -> List[RetrieverOutput]:
         """
         Query the RAG system.
         """
@@ -391,7 +391,7 @@ IMPORTANT FORMATTING RULES:
         logger.info(f"🏃 Running RAG for query: '{query}'")
 
         try:
-            retrieved_docs = self.retriever.call(query)
+            retrieved_docs = self.retriever.call(query, documents=documents)
             return retrieved_docs
         except Exception as e:
             logger.error(f"Error in RAG call: {str(e)}")

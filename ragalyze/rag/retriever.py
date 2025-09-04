@@ -39,6 +39,7 @@ class BM25Retriever:
         self.documents = documents
         self.k1 = k1
         self.b = b
+        assert top_k > 0, "Top k must be greater than 0"
         self.top_k = top_k
         self.bm25 = None
         self._initialize_bm25(documents)
@@ -95,7 +96,7 @@ class BM25Retriever:
         """Filter documents using BM25 and return document indices and normalized scores."""
         if top_k is None:
             top_k = self.top_k
-            
+        assert top_k > 0, "Top k must be greater than 0"
         try:
             # Get BM25 scores for all documents
             scores = self.get_scores(query)
@@ -122,6 +123,8 @@ class BM25Retriever:
 
         if top_k is None:
             top_k = self.top_k
+
+        assert top_k > 0, "Top k must be greater than 0"
 
         try:
             # Get BM25 scores for all documents
@@ -169,6 +172,7 @@ class SingleVectorRetriever(FAISSRetriever):
     ) -> RetrieverOutputType:
         if top_k is None:
             top_k = self.top_k
+        assert top_k > 0, "Top k must be greater than 0"
         retriever_output = super().call(input, top_k)
 
         # Extract the first result from the list
@@ -208,6 +212,7 @@ class DualVectorRetriever:
         """
         self.dual_docs = dual_docs
         self.embedder = embedder
+        assert top_k > 0, "Top k must be greater than 0"
         self.top_k = top_k
         self.doc_map = {doc.original_doc.id: doc for doc in dual_docs}
 
@@ -218,6 +223,7 @@ class DualVectorRetriever:
     def _build_indices(self, top_k: int = None):
         if top_k is None:
             top_k = self.top_k
+        assert top_k > 0, "Top k must be greater than 0"
         """Builds the code index and the summary index."""
         if not self.dual_docs:
             logger.warning("No documents available for building indices")
@@ -280,6 +286,8 @@ class DualVectorRetriever:
 
         if top_k is None:
             top_k = self.top_k
+
+        assert top_k > 0, "Top k must be greater than 0"
 
         self._build_indices(top_k=top_k)
 
@@ -378,6 +386,7 @@ class HybridRetriever:
         self.use_dual_vector = rag_config["embedder"]["sketch_filling"]
         retriever_config = rag_config["retriever"]
         self.top_k = retriever_config["top_k"]
+        assert self.top_k > 0, "Top k must be greater than 0"
         bm25_config = retriever_config["bm25"]
         self.bm25_k1 = bm25_config["k1"]
         self.bm25_b = bm25_config["b"]
@@ -469,6 +478,8 @@ class HybridRetriever:
         """Perform hybrid retrieval combining BM25 and FAISS."""
         if top_k is None:
             top_k = self.top_k
+
+        assert top_k > 0, "Top k must be greater than 0"
 
         if documents is None:
             documents = self.documents

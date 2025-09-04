@@ -243,6 +243,38 @@ def build_contexts(retrieved_docs: List[Document | DualVectorDocument], id2doc: 
         new_contexts.append(new_doc)
     return new_contexts
 
+def query_repository_with_format_1(repo_path: str, question: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Query a repository about a structered question and return structured results.
+    The question is a dictionary with the following keys:
+    - what_to_find: str
+    - what_to_do: str
+    what_to_do is about what_to_find
+
+    For instance,
+    question = {
+        "what_to_find": "EVMDialect::builtin",
+        "what_to_do": "Find all the function bodies that contain function call(s) to `EVMDialect::builtin`"
+    }
+    is a good example of retriving related function calls in Solidity compiler.
+    """
+    assert question.keys() == ["what_to_find", "what_to_do"], "Question must contain what_to_find and what_to_do"
+
+    what_to_find = question["what_to_find"]
+    what_to_do = question["what_to_do"]
+
+    dict_config = load_default_config()
+    dict_config.rag.retriever.bm25.weight = 1.0
+
+    rag = analyze_repository(repo_path=repo_path)
+
+    result = rag.call(what_to_find)[0]
+    documents = result.documents
+    result = rag.call(what_to_do, documents=documents)
+    #TODO: for tomorrow
+    pass
+    
+
 def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
     """
     Query a repository about a question and return structured results.
