@@ -389,6 +389,7 @@ class HybridRetriever:
         self.bm25_k1 = bm25_config["k1"]
         self.bm25_b = bm25_config["b"]
         self.bm25_weight = bm25_config["weight"]
+        assert 0 <= self.bm25_weight <= 1, "BM25 weight must be between 0 and 1."
 
         # Initialize BM25 retriever
         self.bm25_retriever = BM25Retriever(
@@ -490,9 +491,7 @@ class QueryDrivenRetriever(HybridRetriever):
         """
         self.update_database = update_database
         self.query_driven_top_k = configs()["rag"]["query_driven"]['top_k']
-        self.query_driven_algo = configs()["rag"]["query_driven"]['algo']
-        assert self.query_driven_algo in ['bm25', 'faiss'], f"Invalid query_driven algorithm: {self.query_driven_algo}, only 'bm25' and 'faiss' are allowed"
-        logger.info(f"Query-driven retriever initialized with query_driven_top_k={self.query_driven_top_k}, algo={self.query_driven_algo}")
+        logger.info(f"Query-driven retriever initialized with query_driven_top_k={self.query_driven_top_k}")
         super().__init__(documents)
 
     def call(self, query: str) -> List[RetrieverOutput]:
@@ -507,14 +506,9 @@ class QueryDrivenRetriever(HybridRetriever):
         """
 
         # Step 1: BM25 filtering to get candidates
-        if self.query_driven_algo == 'bm25':
-            logger.info("Step 1: BM25 filtering")
-            query_related_doc_indices, _ = self.bm25_retriever.filter_and_score(query, top_k=self.query_driven_top_k)
-        else:
-            logger.info("Step 1: FAISS filtering")
-            faiss_results = self.faiss_retriever.call(query, top_k=self.query_driven_top_k)
-            query_related_doc_indices = faiss_results[0].doc_indices
-        
+        logger.info("Step 1: BM25 filtering")
+        query_related_doc_indices, _ = self.bm25_retriever.filter_and_score(query, top_k=self.query_driven_top_k)
+
         filtered_docs = [self.documents[i] for i in query_related_doc_indices]
 
         # Step 2: Use database manager to embed and cache documents
