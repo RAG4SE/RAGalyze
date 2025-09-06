@@ -25,7 +25,7 @@ def load_default_config() -> DictConfig:
         return compose(config_name="main")
 
 
-def load_all_configs(cfg: DictConfig = None):
+def set_global_configs(cfg: DictConfig = None):
     if cfg is None:
         cfg = load_default_config()
     all_configs = OmegaConf.to_container(cfg, resolve=True)
@@ -33,6 +33,30 @@ def load_all_configs(cfg: DictConfig = None):
     load_rag_config(all_configs)
     global global_configs
     global_configs = all_configs
+
+def set_global_config_value(key: str, value):
+    """
+    Set a specific configuration value in the global configs.
+    Supports nested keys using dot notation (e.g., 'rag.retriever.top_k').
+    """
+    global global_configs
+    if global_configs is None:
+        raise ValueError(
+            "Global configs not initialized. Call set_global_configs() first."
+        )
+    
+    keys = key.split('.')
+    current = global_configs
+    
+    # Navigate to the parent of the target key
+    for k in keys[:-1]:
+        if k not in current:
+            current[k] = {}
+        current = current[k]
+    
+    # Set the final value
+    current[keys[-1]] = value
+    logger.debug(f"Set config {key} = {value}")
 
 
 def configs():
@@ -142,7 +166,7 @@ def main():
 
     try:
         # Load all configurations
-        all_configs = load_all_configs()
+        all_configs = set_global_configs()
         print(all_configs)
 
     except Exception as e:

@@ -15,7 +15,7 @@ def test_deepwiki_cli_with_config_modification():
     dict_config.rag.hybrid.enabled = False
     dict_config.rag.embedder.sketch_filling = False
     dict_config.generator.model = "qwen-plus"
-    ragalyze.load_all_configs(dict_config)
+    ragalyze.set_global_configs(dict_config)
     print(ragalyze.configs())
     repo_path = "/home/lyr/test_RAGalyze"
     question = "What is the main function of the project?"

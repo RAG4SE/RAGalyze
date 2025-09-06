@@ -95,7 +95,7 @@ Your question here.
 """
 
 # Load default config
-load_all_configs(load_default_config())
+set_global_configs(load_default_config())
 # Basic usage
 result = query_repository(
     repo_path=repo_path,
@@ -126,7 +126,7 @@ dict_config.rag.hybrid.enabled = False
 # Disable semantic interpretation in dual-vector embedding, only embed code snippets
 dict_config.rag.embedder.sketch_filling = False
 # Modify the global dict-type configs
-load_all_configs(dict_config)
+set_global_configs(dict_config)
 
 result = query_repository(
     repo_path=repo_path,
