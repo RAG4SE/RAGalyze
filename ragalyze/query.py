@@ -25,13 +25,15 @@ from ragalyze.core.types import DualVectorDocument
 logger = get_tqdm_compatible_logger(__name__)
 
 
-def save_query_results(result: Dict[str, Any], repo_path: str, question: str) -> str:
+def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: str, faiss_query: str, question: str) -> str:
     """
     Save query results to reply folder with timestamp
 
     Args:
         result: Query result dictionary
         repo_path: Repository path that was queried
+        bm25_keywords: BM25 keywords
+        faiss_query: FAISS query
         question: Question that was asked
 
     Returns:
@@ -43,21 +45,24 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save response
-    response_file = output_dir / "response.txt"
-    with open(response_file, "w", encoding="utf-8") as f:
-        f.write("=" * 50 + "\n")
-        f.write("QUERY INFORMATION\n")
-        f.write("=" * 50 + "\n")
-        f.write(f"Repository: {repo_path}\n")
-        f.write(f"Question: {question}\n")
-        f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+    if result.get("response"):
+        response_file = output_dir / "response.txt"
+        with open(response_file, "w", encoding="utf-8") as f:
+            f.write("=" * 50 + "\n")
+            f.write("QUERY INFORMATION\n")
+            f.write("=" * 50 + "\n")
+            f.write(f"Repository: {repo_path}\n")
+            f.write(f"BM25 keywords: {bm25_keywords}\n")
+            f.write(f"FAISS query: {faiss_query}\n")
+            f.write(f"Question: {question}\n")
+            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
-        f.write("=" * 50 + "\n")
-        f.write("RESPONSE\n")
-        f.write("=" * 50 + "\n")
-        # Convert escaped newlines to actual line breaks
-        formatted_response = result["response"].replace("\\n", "\n")
-        f.write(formatted_response + "\n")
+            f.write("=" * 50 + "\n")
+            f.write("RESPONSE\n")
+            f.write("=" * 50 + "\n")
+            # Convert escaped newlines to actual line breaks
+            formatted_response = result["response"].replace("\\n", "\n")
+            f.write(formatted_response + "\n")
 
     # Save retrieved documents if available
     if result.get("retrieved_documents"):
@@ -349,9 +354,9 @@ def query_repository_with_format_find_then_do(
     logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
 
     return {
-        "response": rag_answer,
+        # "response": rag_answer,
         "retrieved_documents": retrieved_docs,
-        "context": contexts,
+        # "context": contexts,
         "bm25_docs": (
             repo_rag.retriever.bm25_documents
             if hasattr(repo_rag.retriever, "bm25_documents")
@@ -381,7 +386,7 @@ def query_repository_with_format_find_then_do(
     }
 
 
-def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
+def query_repository_deprecated(repo_path: str, question: str) -> Dict[str, Any]:
     """
     Query a repository about a question and return structured results.
 
@@ -399,7 +404,7 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
         return None
 
     # Call RAG system to retrieve documents
-    result = rag.call(question)
+    result = rag.call(bm25_keywords=None, faiss_query=question)
 
     # result[0] is RetrieverOutput
     retriever_output = result[0] if isinstance(result, list) else result
@@ -428,11 +433,7 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
         raise
 
     # Only use the content of the first choice
-    try:
-        rag_answer = generator_result.data.strip()
-    except Exception as e:
-        logger.error(f"Error catching generator result: {e}")
-        raise
+    rag_answer = generator_result.data.strip()
 
     assert rag_answer, "Generator result is empty"
 
@@ -465,13 +466,89 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
     }
 
 
+def query_repository(
+    repo_path: str, bm25_keywords: str, faiss_query: str, question: str
+) -> Dict[str, Any]:
+    """
+    Query a repository about a question and return structured results.
+
+    Args:
+        repo_path: Path to the repository to analyze
+        bm25_keywords: BM25 keywords
+        faiss_query: FAISS query
+        question: Question to ask about the repository
+    """
+    rag = analyze_repository(repo_path=repo_path)
+    result = rag.call(bm25_keywords=bm25_keywords, faiss_query=faiss_query)
+
+    # result[0] is RetrieverOutput
+    retriever_output = result[0] if isinstance(result, list) else result
+    retrieved_docs = (
+        retriever_output.documents if hasattr(retriever_output, "documents") else []
+    )
+
+    # Generate answer
+    logger.info("🤖 Generating answer...")
+    try:
+        id2doc = pickle.load(open(rag.db_manager.cache_file_path + ".id2doc.pkl", "rb"))
+        contexts = build_contexts(retrieved_docs, id2doc)
+
+        # Handle both standard RAG and query-driven RAG
+        if hasattr(rag, "generator"):
+            generator_result = rag.generator(
+                prompt_kwargs={"input_str": question, "contexts": contexts}
+            )
+        else:
+            # Fallback for standard RAG
+            generator_result = rag.generator(
+                prompt_kwargs={"input_str": question, "contexts": contexts}
+            )
+    except Exception as e:
+        logger.error(f"Error calling generator: {e}")
+        raise
+
+    # Only use the content of the first choice
+    rag_answer = generator_result.data.strip()
+
+    assert rag_answer, "Generator result is empty"
+
+    logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
+
+    return {
+        "response": rag_answer,
+        "retrieved_documents": retrieved_docs,
+        "context": contexts,
+        "bm25_docs": (
+            rag.retriever.bm25_documents
+            if hasattr(rag.retriever, "bm25_documents") and rag.retriever.bm25_documents
+            else []
+        ),
+        "bm25_scores": (
+            rag.retriever.doc_id_to_bm25_scores
+            if hasattr(rag.retriever, "doc_id_to_bm25_scores")
+            else []
+        ),
+        "faiss_scores": (
+            rag.retriever.doc_id_to_faiss_scores
+            if hasattr(rag.retriever, "doc_id_to_faiss_scores")
+            else []
+        ),
+        "rrf_scores": (
+            rag.retriever.doc_id_to_rrf_scores
+            if hasattr(rag.retriever, "doc_id_to_rrf_scores")
+            else []
+        )
+    }
+
+
 def print_result(result: Dict[str, Any]) -> None:
-    print("\n" + "=" * 50)
-    print("RESPONSE:")
-    print("=" * 50)
-    # Convert escaped newlines to actual line breaks for better readability
-    formatted_response = result["response"].replace("\\n", "\n")
-    print(formatted_response)
+    if result.get("response"):
+        print("\n" + "=" * 50)
+        print("RESPONSE:")
+        print("=" * 50)
+        # Convert escaped newlines to actual line breaks for better readability
+        formatted_response = result["response"].replace("\\n", "\n")
+        print(formatted_response)
 
     # if result["retrieved_documents"]:
     #     print("\n" + "=" * 50)

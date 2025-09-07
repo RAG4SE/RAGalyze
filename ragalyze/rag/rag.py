@@ -390,7 +390,7 @@ IMPORTANT FORMATTING RULES:
             self.retriever = HybridRetriever(documents=self.documents)
 
 
-    def call(self, query: str) -> List[RetrieverOutput]:
+    def call(self, bm25_keywords: str, faiss_query: str) -> List[RetrieverOutput]:
         """
         Query the RAG system.
         If you want to ask a question about only a few documents instead of all documents from self.db_manager.prepare_database(), you can pass those documents as the 'documents' argument.
@@ -398,10 +398,10 @@ IMPORTANT FORMATTING RULES:
         if not self.retriever:
             raise ValueError("Retriever not prepared. Call prepare_retriever first.")
 
-        logger.info(f"🏃 Running RAG for query: '{query}'")
+        logger.info(f"🏃 Running RAG for query: 'bm25_keywords: {bm25_keywords}' and 'faiss_query: {faiss_query}'")
 
         try:
-            retrieved_docs = self.retriever.call(query)
+            retrieved_docs = self.retriever.call(bm25_keywords, faiss_query)
             return retrieved_docs
         except Exception as e:
             logger.error(f"Error in RAG call: {str(e)}")

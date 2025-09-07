@@ -244,6 +244,69 @@ Code Snippet:
 89
 ```
 4.
+File Path: libyul/AsmAnalysis.cpp
+Code Snippet:
+```
+_location,
+676: 			"\"" + _identifier.str() + "\" is not a valid identifier (contains consecutive dots)."
+677: 		);
+678: 
+679: 	if (m_dialect.reservedIdentifier(_identifier.str()))
+680: 		m_errorReporter.declarationError(
+681: 			5017_error,
+682: 			_location,
+683: 			"The identifier \"" + _identifier.str() + "\" is reserved and can not be used."
+684: 		);
+685: }
+686: 
+687: bool AsmAnalyzer::validateInstructions(std::string const& _instructionIdentifier, langutil::SourceLocation const& _location)
+688: {
+689: 	// NOTE: This function uses the default EVM version instead of the currently selected one.
+690: 	auto const& defaultEVMDialect = EVMDialect::strictAssemblyForEVM(EVMVersion{}, std::nullopt);
+691: 	auto const builtinHandle = defaultEVMDialect.findBuiltin(_instructionIdentifier);
+692: 	if (builtinHandle && defaultEVMDialect.builtin(*builtinHandle).instruction.has_value())
+693: 		return validateInstructions(*defaultEVMDialect.builtin(*builtinHandle).instruction, _location);
+694: 
+695: 	// TODO: Change `prague()` to `EVMVersion{}` once EOF gets deployed
+696: 	auto const& eofDialect = EVMDialect::strictAssemblyForEVM(EVMVersion::prague(), 1);
+697: 	auto const eofBuiltinHandle = eofDialect.findBuiltin(_instructionIdentifier);
+698: 	if (eofBuiltinHandle && eofDialect.builtin(*eofBuiltinHandle).instruction.has_value())
+699: 		return validateInstructions(*eofDialect.builtin(*eofBuiltinHandle).instruction, _location);
+700: 
+701: 	return false;
+702: }
+703: 
+704: bool AsmAnalyzer::validateInstructions(evmasm::Instruction _instr, SourceLocation const& _location)
+705: {
+706: 	// We assume that returndatacopy, returndatasize and staticcall are either all available
+707: 	// or all not available.
+708: 	yulAssert(m_evmVersion.supportsReturndata() == m_evmVersion.hasStaticCall(), "");
+709: 	// Similarly we assume bitwise shifting and create2 go together.
+710: 	yulAssert(m_evmVersion.hasBitwiseShifting() == m_evmVersion.hasCreate2(), "");
+711: 
+712: 	// These instructions are disabled in the dialect.
+713: 	yulAssert(
+714: 		_instr != evmasm::Instruction::JUMP &&
+715: 		_instr != evmasm::Instruction::JUMPI &&
+716: 		_instr != evmasm::Instruction::JUMPDEST,
+717: 	"");
+718: 
+719: 	auto errorForVM = [&](ErrorId _errorId, std::string const& vmKindMessage) {
+720: 		m_errorReporter.typeError(
+721: 			_errorId,
+722: 			_location,
+723: 			fmt::format(
+724: 				"The \"{instruction}\" instruction is {kind} VMs (you are currently compiling for \"{version}\").",
+725: 				fmt::arg("instruction", boost::to_lower_copy(instructionInfo(_instr, m_evmVersion).name)),
+726: 				fmt::arg("kind", vmKindMessage),
+727: 				fmt::arg("version", m_evmVersion.name())
+728: 			)
+729: 		);
+730: 	};
+731: 
+732: 	// The errors below are meant to be issued when processing
+```
+5.
 File Path: libyul/backends/evm/NoOutputAssembly.h
 Code Snippet:
 ```
@@ -295,7 +358,74 @@ Code Snippet:
 116: 
 117: }
 ```
-5.
+6.
+File Path: deps/nlohmann-json/include/nlohmann/thirdparty/hedley/hedley.hpp
+Code Snippet:
+```
+patch) __has_cpp_attribute(attribute)
+573: #else
+574:     #define JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+575: #endif
+576: 
+577: #if defined(JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE)
+578:     #undef JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE
+579: #endif
+580: #if defined(__has_cpp_attribute) && defined(__cplusplus)
+581:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
+582: #else
+583:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+584: #endif
+585: 
+586: #if defined(JSON_HEDLEY_HAS_BUILTIN)
+587:     #undef JSON_HEDLEY_HAS_BUILTIN
+588: #endif
+589: #if defined(__has_builtin)
+590:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) __has_builtin(builtin)
+591: #else
+592:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) (0)
+593: #endif
+594: 
+595: #if defined(JSON_HEDLEY_GNUC_HAS_BUILTIN)
+596:     #undef JSON_HEDLEY_GNUC_HAS_BUILTIN
+597: #endif
+598: #if defined(__has_builtin)
+599:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+600: #else
+601:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+602: #endif
+603: 
+604: #if defined(JSON_HEDLEY_GCC_HAS_BUILTIN)
+605:     #undef JSON_HEDLEY_GCC_HAS_BUILTIN
+606: #endif
+607: #if defined(__has_builtin)
+608:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+609: #else
+610:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+611: #endif
+612: 
+613: #if defined(JSON_HEDLEY_HAS_FEATURE)
+614:     #undef JSON_HEDLEY_HAS_FEATURE
+615: #endif
+616: #if defined(__has_feature)
+617:     #define JSON_HEDLEY_HAS_FEATURE(feature) __has_feature(feature)
+618: #else
+619:     #define JSON_HEDLEY_HAS_FEATURE(feature) (0)
+620: #endif
+621: 
+622: #if defined(JSON_HEDLEY_GNUC_HAS_FEATURE)
+623:     #undef JSON_HEDLEY_GNUC_HAS_FEATURE
+624: #endif
+625: #if defined(__has_feature)
+626:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) __has_feature(feature)
+627: #else
+628:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+629: #endif
+630: 
+631: #if defined(JSON_HEDLEY_GCC_HAS_FEATURE)
+632:     #undef JSON_HEDLEY_GCC_HAS_FEATURE
+
+```
+7.
 File Path: libyul/backends/evm/NoOutputAssembly.cpp
 Code Snippet:
 ```
@@ -368,378 +498,251 @@ End function without begin function.");
 220: 	return EVMDialect::builtin(_handle);
 221: }
 ```
-6.
-File Path: libyul/backends/evm/EVMDialect.cpp
-Code Snippet:
-```
-	0,
-417: 				EVMDialect::sideEffectsOfInstruction(evmasm::Instruction::RETURNCONTRACT),
-418: 				ControlFlowSideEffects::fromInstruction(evmasm::Instruction::RETURNCONTRACT),
-419: 				{LiteralKind::String, std::nullopt, std::nullopt},
-420: 				[](
-421: 					FunctionCall const& _call,
-422: 					AbstractAssembly& _assembly,
-423: 					BuiltinContext& context
-424: 				) {
-425: 					yulAssert(_call.arguments.size() == 3);
-426: 					Literal const* literal = std::get_if<Literal>(&_call.arguments.front());
-427: 					yulAssert(literal);
-428: 					auto const formattedLiteral = formatLiteral(*literal);
-429: 					yulAssert(!util::contains(formattedLiteral, '.'));
-430: 					auto const* containerID = valueOrNullptr(context.subIDs, formattedLiteral);
-431: 					yulAssert(containerID != nullptr);
-432: 					yulAssert(*containerID <= std::numeric_limits<AbstractAssembly::ContainerID>::max());
-433: 					_assembly.appendReturnContract(static_cast<AbstractAssembly::ContainerID>(*containerID));
-434: 				}
-435: 			));
-436: 	}
-437: 	yulAssert(
-438: 		ranges::all_of(builtins, [](std::optional<BuiltinFunctionForEVM> const& _builtinFunction){
-439: 			return !_builtinFunction || _builtinFunction->name.substr(0, "verbatim_"s.size()) != "verbatim_";
-440: 		}),
-441: 		"Builtin functions besides verbatim should not start with the verbatim_ prefix."
-442: 	);
-443: 	return builtins;
-444: }
-445: 
-446: std::regex const& verbatimPattern()
-447: {
-448: 	std::regex static const pattern{"([1-9]?[0-9])i_([1-9]?[0-9])o"};
-449: 	return pattern;
-450: }
-451: 
-452: }
-453: 
-454: 
-455: EVMDialect::EVMDialect(langutil::EVMVersion _evmVersion, std::optional<uint8_t> _eofVersion, bool _objectAccess):
-456: 	m_objectAccess(_objectAccess),
-457: 	m_evmVersion(_evmVersion),
-458: 	m_eofVersion(_eofVersion),
-459: 	m_functions(createBuiltins(_evmVersion, _eofVersion, _objectAccess)),
-460: 	m_reserved(createReservedIdentifiers(_evmVersion, _eofVersion))
-461: {
-462: 	for (auto const& [index, maybeBuiltin]: m_functions | ranges::views::enumerate)
-463: 		if (maybeBuiltin)
-464: 			// ids are offset by the maximum number of verbatim functions
-465: 			m_builtinFunctionsByName[maybeBuiltin->name] = BuiltinHandle{index + verbatimIDOffset};
-466: 
-467: 	m_discardFunction = findBuiltin("pop");
-468: 	m_equalityFunction = findBuiltin("eq");
-469: 	m_booleanNegationFunction = findBuiltin("iszero");
-470: 	m_memoryStoreFunction = findBuiltin("mstore");
-471: 	m_memoryLoadFunction = findBuiltin("mload");
-472: 	m_storageStoreFunction = findBuiltin("sstore");
-473: 	m_storageLoadFunction = findBuiltin("sload");
-474: 	m_hashFunction = findBuiltin("keccak256");
-475: }
-476: 
-477: std::optional<B
-```
-7.
-File Path: libyul/AsmAnalysis.cpp
-Code Snippet:
-```
-_location,
-676: 			"\"" + _identifier.str() + "\" is not a valid identifier (contains consecutive dots)."
-677: 		);
-678: 
-679: 	if (m_dialect.reservedIdentifier(_identifier.str()))
-680: 		m_errorReporter.declarationError(
-681: 			5017_error,
-682: 			_location,
-683: 			"The identifier \"" + _identifier.str() + "\" is reserved and can not be used."
-684: 		);
-685: }
-686: 
-687: bool AsmAnalyzer::validateInstructions(std::string const& _instructionIdentifier, langutil::SourceLocation const& _location)
-688: {
-689: 	// NOTE: This function uses the default EVM version instead of the currently selected one.
-690: 	auto const& defaultEVMDialect = EVMDialect::strictAssemblyForEVM(EVMVersion{}, std::nullopt);
-691: 	auto const builtinHandle = defaultEVMDialect.findBuiltin(_instructionIdentifier);
-692: 	if (builtinHandle && defaultEVMDialect.builtin(*builtinHandle).instruction.has_value())
-693: 		return validateInstructions(*defaultEVMDialect.builtin(*builtinHandle).instruction, _location);
-694: 
-695: 	// TODO: Change `prague()` to `EVMVersion{}` once EOF gets deployed
-696: 	auto const& eofDialect = EVMDialect::strictAssemblyForEVM(EVMVersion::prague(), 1);
-697: 	auto const eofBuiltinHandle = eofDialect.findBuiltin(_instructionIdentifier);
-698: 	if (eofBuiltinHandle && eofDialect.builtin(*eofBuiltinHandle).instruction.has_value())
-699: 		return validateInstructions(*eofDialect.builtin(*eofBuiltinHandle).instruction, _location);
-700: 
-701: 	return false;
-702: }
-703: 
-704: bool AsmAnalyzer::validateInstructions(evmasm::Instruction _instr, SourceLocation const& _location)
-705: {
-706: 	// We assume that returndatacopy, returndatasize and staticcall are either all available
-707: 	// or all not available.
-708: 	yulAssert(m_evmVersion.supportsReturndata() == m_evmVersion.hasStaticCall(), "");
-709: 	// Similarly we assume bitwise shifting and create2 go together.
-710: 	yulAssert(m_evmVersion.hasBitwiseShifting() == m_evmVersion.hasCreate2(), "");
-711: 
-712: 	// These instructions are disabled in the dialect.
-713: 	yulAssert(
-714: 		_instr != evmasm::Instruction::JUMP &&
-715: 		_instr != evmasm::Instruction::JUMPI &&
-716: 		_instr != evmasm::Instruction::JUMPDEST,
-717: 	"");
-718: 
-719: 	auto errorForVM = [&](ErrorId _errorId, std::string const& vmKindMessage) {
-720: 		m_errorReporter.typeError(
-721: 			_errorId,
-722: 			_location,
-723: 			fmt::format(
-724: 				"The \"{instruction}\" instruction is {kind} VMs (you are currently compiling for \"{version}\").",
-725: 				fmt::arg("instruction", boost::to_lower_copy(instructionInfo(_instr, m_evmVersion).name)),
-726: 				fmt::arg("kind", vmKindMessage),
-727: 				fmt::arg("version", m_evmVersion.name())
-728: 			)
-729: 		);
-730: 	};
-731: 
-732: 	// The errors below are meant to be issued when processing
-```
 8.
-File Path: libyul/backends/evm/EVMDialect.cpp
+File Path: libyul/backends/evm/ConstantOptimiser.cpp
 Code Snippet:
 ```
-(_eofVersion),
-459: 	m_functions(createBuiltins(_evmVersion, _eofVersion, _objectAccess)),
-460: 	m_reserved(createReservedIdentifiers(_evmVersion, _eofVersion))
-461: {
-462: 	for (auto const& [index, maybeBuiltin]: m_functions | ranges::views::enumerate)
-463: 		if (maybeBuiltin)
-464: 			// ids are offset by the maximum number of verbatim functions
-465: 			m_builtinFunctionsByName[maybeBuiltin->name] = BuiltinHandle{index + verbatimIDOffset};
-466: 
-467: 	m_discardFunction = findBuiltin("pop");
-468: 	m_equalityFunction = findBuiltin("eq");
-469: 	m_booleanNegationFunction = findBuiltin("iszero");
-470: 	m_memoryStoreFunction = findBuiltin("mstore");
-471: 	m_memoryLoadFunction = findBuiltin("mload");
-472: 	m_storageStoreFunction = findBuiltin("sstore");
-473: 	m_storageLoadFunction = findBuiltin("sload");
-474: 	m_hashFunction = findBuiltin("keccak256");
-475: }
-476: 
-477: std::optional<BuiltinHandle> EVMDialect::findBuiltin(std::string_view _name) const
-478: {
-479: 	if (m_objectAccess && _name.substr(0, "verbatim_"s.size()) == "verbatim_")
-480: 	{
-481: 		std::smatch match;
-482: 		std::string name(_name.substr("verbatim_"s.size()));
-483: 		if (regex_match(name, match, verbatimPattern()))
-484: 			return verbatimFunction(stoul(match[1]), stoul(match[2]));
-485: 	}
-486: 
-487: 	if (
-488: 		auto it = m_builtinFunctionsByName.find(_name);
-489: 		it != m_builtinFunctionsByName.end()
-490: 	)
-491: 		return it->second;
-492: 
-493: 	return std::nullopt;
-494: }
-495: 
-496: BuiltinFunctionForEVM const& EVMDialect::builtin(BuiltinHandle const& _handle) const
-497: {
-498: 	if (isVerbatimHandle(_handle))
-499: 	{
-500: 		yulAssert(_handle.id < verbatimIDOffset);
-501: 		auto const& verbatimFunctionPtr = m_verbatimFunctions[_handle.id];
-502: 		yulAssert(verbatimFunctionPtr);
-503: 		return *verbatimFunctionPtr;
-504: 	}
-505: 
-506: 	yulAssert(_handle.id - verbatimIDOffset < m_functions.size());
-507: 	auto const& maybeBuiltin = m_functions[_handle.id - verbatimIDOffset];
-508: 	yulAssert(maybeBuiltin.has_value());
-509: 	return *maybeBuiltin;
-510: }
-511: 
-512: 
-513: bool EVMDialect::reservedIdentifier(std::string_view _name) const
-514: {
-515: 	if (m_objectAccess)
-516: 		if (_name.substr(0, "verbatim"s.size()) == "verbatim")
-517: 			return true;
-518: 	return m_reserved.count(_name) != 0;
-519: }
-520: 
-521: EVMDialect const& EVMDialect::strictAssemblyForEVM(langutil::EVMVersion _evmVersion, std::optional<uint8_t> _eofVersion)
-522: {
-523: 	static std::map<std::pair<langutil::EVMVersion, std::optional<uint8_t>>, std::unique_ptr<EVMDialect const>> dialect
+& arg: _arguments)
+53: 			args.emplace_back(eval(arg));
+54: 		switch (_instr)
+55: 		{
+56: 		case evmasm::Instruction::ADD:
+57: 			return args.at(0) + args.at(1);
+58: 		case evmasm::Instruction::SUB:
+59: 			return args.at(0) - args.at(1);
+60: 		case evmasm::Instruction::MUL:
+61: 			return args.at(0) * args.at(1);
+62: 		case evmasm::Instruction::EXP:
+63: 			return exp256(args.at(0), args.at(1));
+64: 		case evmasm::Instruction::SHL:
+65: 			return args.at(0) > 255 ? 0 : (args.at(1) << unsigned(args.at(0)));
+66: 		case evmasm::Instruction::NOT:
+67: 			return ~args.at(0);
+68: 		default:
+69: 			yulAssert(false, "Invalid operation generated in constant optimizer.");
+70: 		}
+71: 		return 0;
+72: 	}
+73: 
+74: 	u256 operator()(FunctionCall const& _funCall)
+75: 	{
+76: 		std::optional<BuiltinHandle> funHandle = m_dialect.findBuiltin(_funCall.functionName.name.str());
+77: 		yulAssert(funHandle, "Expected builtin function.");
+78: 		BuiltinFunctionForEVM const& fun = m_dialect.builtin(*funHandle);
+79: 		yulAssert(fun.instruction, "Expected EVM instruction.");
+80: 		return eval(*fun.instruction, _funCall.arguments);
+81: 	}
+82: 	u256 operator()(Literal const& _literal)
+83: 	{
+84: 		return _literal.value.value();
+85: 	}
+86: 	u256 operator()(Identifier const&) { yulAssert(false, ""); }
+87: 
+88: 	EVMDialect const& m_dialect;
+89: };
+90: }
+91: 
+92: void ConstantOptimiser::visit(Expression& _e)
+93: {
+94: 	if (std::holds_alternative<Literal>(_e))
+95: 	{
+96: 		Literal const& literal = std::get<Literal>(_e);
+97: 		if (literal.kind != LiteralKind::Number)
+98: 			return;
+99: 
+100: 		if (
+101: 			Expression const* repr =
+102: 				RepresentationFinder(m_dialect, m_meter, debugDataOf(_e), m_cache)
+103: 				.tryFindRepresentation(literal.value.value())
+104: 		)
+105: 			_e = ASTCopier{}.translate(*repr);
+106: 	}
+107: 	else
+108: 		ASTModifier::visit(_e);
+109: }
+110: 
+111: Expression const* RepresentationFinder::tryFindRepresentation(u256 const& _value)
+112: {
+113: 	if (_value < 0x10000)
+114: 		return nullptr;
+115: 
+116: 	Representation const& repr = findRepresentation(_value);
+117: 	if (std::holds_alternative<Literal>(*repr.expression))
+118: 		return nullptr;
+119: 	else
+120: 		return repr.expression.get();
+121: }
+122: 
+123: Representation const& RepresentationFinder::findRepresentation(u256 const& _value)
+124: {
+125: 	if (m_cache.count(_value))
+126: 		return m_cache.at(_value);
+127: 
+128: 	Representation routine = represent(_value);
+129: 
+130: 	if (numberEncoding
 ```
 9.
-File Path: libyul/optimiser/OptimizerUtilities.cpp
+File Path: deps/nlohmann-json/tests/abi/include/nlohmann/json_v3_10_5.hpp
 Code Snippet:
 ```
-m/EVMDialect.h>
-24: 
-25: #include <libyul/Dialect.h>
-26: #include <libyul/AST.h>
-27: 
-28: #include <liblangutil/Token.h>
-29: #include <libsolutil/CommonData.h>
-30: 
-31: #include <range/v3/action/remove_if.hpp>
-32: 
-33: using namespace solidity;
-34: using namespace solidity::langutil;
-35: using namespace solidity::util;
-36: using namespace solidity::yul;
-37: 
-38: namespace
-39: {
-40: 
-41: bool hasLeadingOrTrailingDot(std::string_view const _s)
-42: {
-43: 	yulAssert(!_s.empty());
-44: 	return _s.front() == '.' || _s.back() == '.';
-45: }
-46: 
-47: }
-48: 
-49: void yul::removeEmptyBlocks(Block& _block)
-50: {
-51: 	auto isEmptyBlock = [](Statement const& _st) -> bool {
-52: 		return std::holds_alternative<Block>(_st) && std::get<Block>(_st).statements.empty();
-53: 	};
-54: 	ranges::actions::remove_if(_block.statements, isEmptyBlock);
-55: }
-56: 
-57: bool yul::isRestrictedIdentifier(Dialect const& _dialect, YulName const& _identifier)
-58: {
-59: 	return _identifier.empty() || hasLeadingOrTrailingDot(_identifier.str()) || TokenTraits::isYulKeyword(_identifier.str()) || _dialect.reservedIdentifier(_identifier.str());
-60: }
-61: 
-62: std::optional<evmasm::Instruction> yul::toEVMInstruction(Dialect const& _dialect, YulName const& _name)
-63: {
-64: 	if (auto const* dialect = dynamic_cast<EVMDialect const*>(&_dialect))
-65: 		if (std::optional<BuiltinHandle> const builtinHandle = dialect->findBuiltin(_name.str()))
-66: 			return dialect->builtin(*builtinHandle).instruction;
-67: 	return std::nullopt;
-68: }
-69: 
-70: langutil::EVMVersion const yul::evmVersionFromDialect(Dialect const& _dialect)
-71: {
-72: 	if (auto const* dialect = dynamic_cast<EVMDialect const*>(&_dialect))
-73: 		return dialect->evmVersion();
-74: 	return langutil::EVMVersion();
-75: }
-76: 
-77: void StatementRemover::operator()(Block& _block)
-78: {
-79: 	util::iterateReplacing(
-80: 		_block.statements,
-81: 		[&](Statement& _statement) -> std::optional<std::vector<Statement>>
-82: 		{
-83: 			if (m_toRemove.count(&_statement))
-84: 				return {std::vector<Statement>{}};
-85: 			else
-86: 				return std::nullopt;
-87: 		}
-88: 	);
-89: 	ASTModifier::operator()(_block);
-90: }
+ajor,minor,patch)
+754: #endif
+755: 
+756: #if defined(JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE)
+757:     #undef JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE
+758: #endif
+759: #if defined(__has_cpp_attribute) && defined(__cplusplus)
+760:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
+761: #else
+762:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+763: #endif
+764: 
+765: #if defined(JSON_HEDLEY_HAS_BUILTIN)
+766:     #undef JSON_HEDLEY_HAS_BUILTIN
+767: #endif
+768: #if defined(__has_builtin)
+769:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) __has_builtin(builtin)
+770: #else
+771:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) (0)
+772: #endif
+773: 
+774: #if defined(JSON_HEDLEY_GNUC_HAS_BUILTIN)
+775:     #undef JSON_HEDLEY_GNUC_HAS_BUILTIN
+776: #endif
+777: #if defined(__has_builtin)
+778:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+779: #else
+780:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+781: #endif
+782: 
+783: #if defined(JSON_HEDLEY_GCC_HAS_BUILTIN)
+784:     #undef JSON_HEDLEY_GCC_HAS_BUILTIN
+785: #endif
+786: #if defined(__has_builtin)
+787:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+788: #else
+789:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+790: #endif
+791: 
+792: #if defined(JSON_HEDLEY_HAS_FEATURE)
+793:     #undef JSON_HEDLEY_HAS_FEATURE
+794: #endif
+795: #if defined(__has_feature)
+796:     #define JSON_HEDLEY_HAS_FEATURE(feature) __has_feature(feature)
+797: #else
+798:     #define JSON_HEDLEY_HAS_FEATURE(feature) (0)
+799: #endif
+800: 
+801: #if defined(JSON_HEDLEY_GNUC_HAS_FEATURE)
+802:     #undef JSON_HEDLEY_GNUC_HAS_FEATURE
+803: #endif
+804: #if defined(__has_feature)
+805:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) __has_feature(feature)
+806: #else
+807:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+808: #endif
+809: 
+810: #if defined(JSON_HEDLEY_GCC_HAS_FEATURE)
+811:     #undef JSON_HEDLEY_GCC_HAS_FEATURE
+812: #endif
+813: #if defined(__has_feature)
+814:     #define JSON_HEDLEY_GCC_HAS_FEATURE(feature,major,minor,patch) __has_feature(feature)
+815: #else
+816
 ```
 10.
-File Path: test/tools/yulInterpreter/Interpreter.cpp
+File Path: deps/nlohmann-json/single_include/nlohmann/json.hpp
 Code Snippet:
 ```
-	if (!m_scope->subScopes.count(&_block))
-268: 		m_scope->subScopes[&_block] = std::make_unique<Scope>(Scope{
-269: 			{},
-270: 			{},
-271: 			m_scope
-272: 		});
-273: 	m_scope = m_scope->subScopes[&_block].get();
-274: }
-275: 
-276: void Interpreter::leaveScope()
-277: {
-278: 	for (auto const& [var, funDeclaration]: m_scope->names)
-279: 		if (!funDeclaration)
-280: 			m_variables.erase(var);
-281: 	m_scope = m_scope->parent;
-282: 	yulAssert(m_scope, "");
-283: }
-284: 
-285: void Interpreter::incrementStep()
-286: {
-287: 	m_state.numSteps++;
-288: 	if (m_state.maxSteps > 0 && m_state.numSteps >= m_state.maxSteps)
-289: 	{
-290: 		m_state.trace.emplace_back("Interpreter execution step limit reached.");
-291: 		BOOST_THROW_EXCEPTION(StepLimitReached());
-292: 	}
-293: }
-294: 
-295: void ExpressionEvaluator::operator()(Literal const& _literal)
-296: {
-297: 	incrementStep();
-298: 	setValue(_literal.value.value());
-299: }
-300: 
-301: void ExpressionEvaluator::operator()(Identifier const& _identifier)
-302: {
-303: 	solAssert(m_variables.count(_identifier.name), "");
-304: 	incrementStep();
-305: 	setValue(m_variables.at(_identifier.name));
-306: }
-307: 
-308: void ExpressionEvaluator::operator()(FunctionCall const& _funCall)
-309: {
-310: 	std::vector<std::optional<LiteralKind>> const* literalArguments = nullptr;
-311: 	if (std::optional<BuiltinHandle> builtinHandle = m_dialect.findBuiltin(_funCall.functionName.name.str()))
-312: 		if (
-313: 			auto const& args = m_dialect.builtin(*builtinHandle).literalArguments;
-314: 			!args.empty()
-315: 		)
-316: 			literalArguments = &args;
-317: 	evaluateArgs(_funCall.arguments, literalArguments);
-318: 
-319: 	if (EVMDialect const* dialect = dynamic_cast<EVMDialect const*>(&m_dialect))
-320: 	{
-321: 		if (std::optional<BuiltinHandle> builtinHandle = dialect->findBuiltin(_funCall.functionName.name.str()))
-322: 		{
-323: 			auto const& fun = dialect->builtin(*builtinHandle);
-324: 			EVMInstructionInterpreter interpreter(dialect->evmVersion(), m_state, m_disableMemoryTrace);
-325: 
-326: 			u256 const value = interpreter.evalBuiltin(fun, _funCall.arguments, values());
-327: 
-328: 			if (
-329: 				!m_disableExternalCalls &&
-330: 				fun.instruction &&
-331: 				evmasm::isCallInstruction(*fun.instruction)
-332: 			)
-333: 				runExternalCall(*fun.instruction);
-334: 
-335: 			setValue(value);
-336: 			return;
-337: 		}
-338: 	}
-339: 
-340: 	Scope* scope = &m_scope;
-341: 	for (; scope; scope = scope->parent)
-342: 		if (scope->names.count(_funCall.functionName.name))
-343: 			break;
-344: 	yulAssert(scope, "");
-345: 
-346: 	FunctionDefinition const* fun = scope->names.at(_funCall.functionName.name);
-347: 	yulAssert(fun, "Function not found.");
-348: 
+: #else
+883:     #define JSON_HEDLEY_HAS_CPP_ATTRIBUTE_NS(ns,attribute) (0)
+884: #endif
+885: 
+886: #if defined(JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE)
+887:     #undef JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE
+888: #endif
+889: #if defined(__has_cpp_attribute) && defined(__cplusplus)
+890:     #define JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
+891: #else
+892:     #define JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+893: #endif
+894: 
+895: #if defined(JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE)
+896:     #undef JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE
+897: #endif
+898: #if defined(__has_cpp_attribute) && defined(__cplusplus)
+899:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
+900: #else
+901:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+902: #endif
+903: 
+904: #if defined(JSON_HEDLEY_HAS_BUILTIN)
+905:     #undef JSON_HEDLEY_HAS_BUILTIN
+906: #endif
+907: #if defined(__has_builtin)
+908:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) __has_builtin(builtin)
+909: #else
+910:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) (0)
+911: #endif
+912: 
+913: #if defined(JSON_HEDLEY_GNUC_HAS_BUILTIN)
+914:     #undef JSON_HEDLEY_GNUC_HAS_BUILTIN
+915: #endif
+916: #if defined(__has_builtin)
+917:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+918: #else
+919:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+920: #endif
+921: 
+922: #if defined(JSON_HEDLEY_GCC_HAS_BUILTIN)
+923:     #undef JSON_HEDLEY_GCC_HAS_BUILTIN
+924: #endif
+925: #if defined(__has_builtin)
+926:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+927: #else
+928:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+929: #endif
+930: 
+931: #if defined(JSON_HEDLEY_HAS_FEATURE)
+932:     #undef JSON_HEDLEY_HAS_FEATURE
+933: #endif
+934: #if defined(__has_feature)
+935:     #define JSON_HEDLEY_HAS_FEATURE(feature) __has_feature(feature)
+936: #else
+937:     #define JSON_HEDLEY_HAS_FEATURE(feature) (0)
+938: #endif
+939: 
+940: #if defined(JSON_HEDLEY_GNUC_HAS_FEATURE)
+941:     #undef JSON_HEDLEY_GNUC_HAS_FEATURE
+942: #endif
+943: #if defined(__has_feature)
+944
 ```
 <END_OF_CONTEXT>
 <START_OF_USER_PROMPT>
+List every function **definition** (not declaration) where the **body** contains a **CallExpr** to  `EVMDialect::builtin`
+---------- Output Format ----------
 
-List every function **definition** (not declaration)  
-where the **body** contains a **CallExpr** to  
-`EVMDialect::builtin( … )`  
-- exclude any occurrence inside  
-  - return statements  
-  - function signatures  
-  - comments or string literals  
-For each hit, output only the file name of this function + function signature + its body.  
-If no such caller exists, reply “None”.
+<file_name>:
+<the lined code of the function definition including the function signature and body>
+...
+If no such caller exists, only reply "None".
+
+---------- Examples ----------
+
+List every function **definition** (not declaration) where the **body** contains a **CallExpr** to  bar
+67: void foo() {
+68:     bar();
+69:     // other code
+70: }
+
+Expected Output:
+file1.cpp:
+67: void foo() {
+68:     bar();
+69:     // other code
+70: }
+        
 
 <END_OF_USER_PROMPT>

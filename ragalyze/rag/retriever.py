@@ -106,7 +106,7 @@ class BM25Retriever:
 
             filtered_scores = [scores[i] for i in doc_indices]
 
-            logger.info(f"BM25 filtered {len(self.documents)} documents to {len(doc_indices)} candidates")
+            logger.info(f"BM25 filtered {len(doc_indices)} candidates from {len(self.documents)} documents")
             return doc_indices, filtered_scores
 
         except Exception as e:
@@ -462,16 +462,24 @@ class HybridRetriever:
             self.doc_id_to_rrf_scores = {documents[id].id: score for (id, score) in id_to_scores.items()}
         return scores
 
-    def call(self, query: str) -> List[RetrieverOutput]:
+    def call(self, bm25_keywords: str, faiss_query: str) -> List[RetrieverOutput]:
         """Perform hybrid retrieval combining BM25 and FAISS."""
 
         try:
-            bm25_retriever = self._initialize_bm25_retriever(self.documents, top_k=len(self.documents))
-            bm25_indices, bm25_scores = bm25_retriever.filter_and_score(query)
+            if bm25_keywords:
+                bm25_retriever = self._initialize_bm25_retriever(self.documents, top_k=len(self.documents))
+                bm25_indices, bm25_scores = bm25_retriever.filter_and_score(bm25_keywords)
+            else:
+                bm25_indices, bm25_scores = [], []
             faiss_retriever = self._initialize_faiss_retriever(self.documents, top_k=len(self.documents))
-            faiss_results = faiss_retriever.call(query)
-            assert len(faiss_results[0].documents) == len(bm25_indices), f"Mismatch in number of documents between BM25 and FAISS results: {len(bm25_indices)} vs {len(faiss_results[0]['documents'])}"
-            scores = self._mix_bm25_score_faiss_score(self.documents, bm25_indices, bm25_scores, faiss_results)
+            faiss_results = faiss_retriever.call(faiss_query)
+            if bm25_keywords:
+                assert len(faiss_results[0].documents) == len(bm25_indices), f"Mismatch in number of documents between BM25 and FAISS results: {len(bm25_indices)} vs {len(faiss_results[0]['documents'])}"
+                scores = self._mix_bm25_score_faiss_score(self.documents, bm25_indices, bm25_scores, faiss_results)
+            else:
+                scores = [0] * len(faiss_results[0].doc_indices)
+                for i, doc in enumerate(faiss_results[0].doc_indices):
+                    scores[doc] = faiss_results[0].doc_scores[i]
             doc_indices = sorted(
                 range(len(scores)), key=lambda i: scores[i], reverse=True
             )[:self.top_k]
@@ -479,7 +487,7 @@ class HybridRetriever:
                 RetrieverOutput(
                     doc_indices=doc_indices,
                     doc_scores=[scores[i] for i in doc_indices],
-                    query=query,
+                    query=f"BM25 keywords: {bm25_keywords}, FAISS query: {faiss_query}",
                     documents=[self.documents[i] for i in doc_indices],
                 )
             ]
@@ -511,12 +519,13 @@ class QueryDrivenRetriever(HybridRetriever):
         logger.info(f"Query-driven retriever initialized with query_driven_top_k={self.query_driven_top_k}")
         super().__init__(documents)
 
-    def call(self, query: str) -> List[RetrieverOutput]:
+    def call(self, bm25_keywords: str, faiss_query: str) -> List[RetrieverOutput]:
         """
         Retrieve documents using BM25 index and on-demand embedding with FAISS.
 
         Args:
-            query: Query string
+            bm25_keywords: BM25 keywords
+            faiss_query: FAISS query
 
         Returns:
             List of RetrieverOutput objects
@@ -525,7 +534,7 @@ class QueryDrivenRetriever(HybridRetriever):
         # Step 1: BM25 filtering to get candidates
         logger.info("Step 1: BM25 filtering")
         bm25_retriever = self._initialize_bm25_retriever(self.documents, top_k=self.query_driven_top_k)
-        query_related_doc_indices, query_related_doc_scores = bm25_retriever.filter_and_score(query)
+        query_related_doc_indices, query_related_doc_scores = bm25_retriever.filter_and_score(bm25_keywords)
 
         filtered_docs = [self.documents[i] for i in query_related_doc_indices]
         doc_id_to_score = {doc.id if isinstance(doc, Document) else doc.original_doc.id: score for doc, score in zip(filtered_docs, query_related_doc_scores)}
@@ -545,7 +554,7 @@ class QueryDrivenRetriever(HybridRetriever):
 
         try:
             faiss_retriever = self._initialize_faiss_retriever(embedded_docs, top_k=len(embedded_docs))
-            faiss_results = faiss_retriever.call(query)
+            faiss_results = faiss_retriever.call(faiss_query)
             assert len(faiss_results[0].documents) == len(query_related_doc_indices), f"Mismatch in number of documents between BM25 and FAISS results: {len(query_related_doc_indices)} vs {len(faiss_results[0]['documents'])}"
             scores = self._mix_bm25_score_faiss_score(embedded_docs, query_related_doc_indices, query_related_doc_scores, faiss_results)
             doc_indices = sorted(
@@ -555,7 +564,7 @@ class QueryDrivenRetriever(HybridRetriever):
                 RetrieverOutput(
                     doc_indices=doc_indices,
                     doc_scores=[scores[i] for i in doc_indices],
-                    query=query,
+                    query=f"BM25 keywords: {bm25_keywords}, FAISS query: {faiss_query}",
                     documents=[embedded_docs[i] for i in doc_indices],
                 )
             ]
