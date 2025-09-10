@@ -58,7 +58,6 @@ rag:
     model_kwargs:
       temperature: 0.7
       top_p: 0.8
-      max_tokens: 2048
 
   # Query-driven configuration
   query_driven:

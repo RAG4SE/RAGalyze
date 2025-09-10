@@ -366,6 +366,74 @@ class DashScopeBatchEmbedder(adal.BatchEmbedder):
             )
             self.batch_size = 10
 
+    def _process_batch_with_retry(
+        self, 
+        batch_input: List[str], 
+        model_kwargs: Optional[Dict] = {}
+    ) -> EmbedderOutput:
+        """
+        Process a batch with recursive splitting if it exceeds token limits.
+        
+        Args:
+            batch_input: List of input texts
+            model_kwargs: Model parameters
+            
+        Returns:
+            EmbedderOutput with results or error
+        """
+        try:
+            # Try to process the batch normally
+            return self.embedder(input=batch_input, model_kwargs=model_kwargs)
+        except Exception as e:
+            # Check if it's a token limit error
+            error_str = str(e).lower()
+            if "range of input length should be" in error_str:
+                # If the batch has only one item, we can't split further
+                if len(batch_input) <= 1:
+                    log.error(f"Single item exceeds token limit: {batch_input[0] if batch_input else 'empty'}")
+                    raise e
+                
+                # Split the batch in half and recursively process each half
+                mid = len(batch_input) // 2
+                first_half = batch_input[:mid]
+                second_half = batch_input[mid:]
+                
+                log.warning(
+                    f"Batch of {len(batch_input)} items failed due to token limit. "
+                    f"Splitting into two batches of {len(first_half)} and {len(second_half)} items."
+                )
+                
+                # Process each half
+                first_result = self._process_batch_with_retry(first_half, model_kwargs)
+                second_result = self._process_batch_with_retry(second_half, model_kwargs)
+                
+                # Combine results
+                combined_data = []
+                combined_error = None
+                
+                # Add data from first half
+                if first_result.data:
+                    combined_data.extend(first_result.data)
+                if first_result.error:
+                    combined_error = f"First half error: {first_result.error}"
+                    
+                # Add data from second half
+                if second_result.data:
+                    combined_data.extend(second_result.data)
+                if second_result.error:
+                    combined_error = f"{combined_error}; Second half error: {second_result.error}" if combined_error else f"Second half error: {second_result.error}"
+                
+                # Create combined result
+                combined_result = EmbedderOutput(
+                    data=combined_data,
+                    error=combined_error,
+                    raw_response=None
+                )
+                return combined_result
+            else:
+                # Re-raise if it's not a token limit error
+                raise e
+
     def call(
         self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}
     ) -> BatchEmbedderOutputType:
@@ -397,8 +465,9 @@ class DashScopeBatchEmbedder(adal.BatchEmbedder):
             batch_input = input[i : min(i + self.batch_size, n)]
 
             try:
-                batch_output = self.embedder(
-                    input=batch_input, model_kwargs=model_kwargs
+                # Use the retry mechanism with recursive splitting
+                batch_output = self._process_batch_with_retry(
+                    batch_input, model_kwargs
                 )
                 embeddings.append(batch_output)
 
