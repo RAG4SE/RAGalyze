@@ -5,6 +5,7 @@ from typing import List, Optional, Union
 from openai.types.chat import ChatCompletion
 from tqdm import tqdm
 
+import adalflow as adal
 from adalflow.core.types import (
     ModelType,
 )
@@ -13,37 +14,64 @@ from ragalyze.configs import get_code_understanding_client
 
 logger = get_tqdm_compatible_logger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # System prompt designed specifically for the code understanding task
 CODE_UNDERSTANDING_SYSTEM_PROMPT = """
-You are an expert programmer and a master of code analysis.
-Your task is to provide a concise, high-level summary of the given code snippet.
-Focus on the following aspects:
-1.  **Purpose**: What is the main goal or functionality of the code?
-2.  **Inputs**: What are the key inputs, arguments, or parameters?
-3.  **Outputs**: What does the code return or produce?
-4.  **Key Logic**: Briefly describe the core logic or algorithm.
+## Role
+Act as a senior software engineer conducting a code review.
 
-Keep the summary in plain language and easy to understand for someone with technical background but not necessarily familiar with this specific code.
-Do not get lost in implementation details. Provide a "bird's-eye view" of the code.
-The summary should be in English and as concise as possible.
+## Task
+1. For each line of the supplied code snippet, provide a clear, concise natural language explanation of what that line does.
+2. Number each explanation with the corresponding line number.
+3. After all line explanations, provide a concise executive summary of the entire code snippet.
+
+## Output Format Requirements
+Follow this exact format:
+```
+File Path: <absolute or relative path>
+---------------------------
+<line number>: <natural language explanation of what this line does>
+... (repeat for every line)
+---------------------------
+Summary: <concise summary of the entire code snippet in natural language>
+```
+
+## Important Guidelines
+- Provide meaningful explanations, not just restating the code
+- Be concise but clear in your explanations
+- Focus on the purpose and function of each line
+- For the summary, capture the main purpose of the entire code snippet
+
+## Example
+For input code:
+def add(a, b):
+    return a + b
+
+Expected output:
+File Path: example.py
+---------------------------
+1: Define a function named 'add' that takes two parameters 'a' and 'b'
+2: Return the sum of parameters 'a' and 'b'
+---------------------------
+Summary: This code defines a simple function that adds two numbers together and returns the result.
 """
 
-CODE_UNDERSTANDING_SYSTEM_PROMPT = """
-# Task
-You are an expert programmer and a master of code analysis.
-Your task is to provide a concise, high-level summary of the given code snippet.
+# Template for Code Understanding
+CODE_UNDERSTANDING_TEMPLATE = r"""<START_OF_SYS_PROMPT>
+{{system_prompt}}
+<END_OF_SYS_PROMPT>
+<START_OF_USER_PROMPT>
+Analyze the following code snippet:
 
-Keep the summary in plain language and easy to understand for someone with technical background but not necessarily familiar with this specific code.
-Do not get lost in implementation details. Provide a "bird's-eye view" of the code.
-The summary should be in English and as concise as possible.
+File Path: {{file_path}}
 
-# Response Format
-<FILE PATH>
-file path of this code snippet
-</FILE PATH>
-<SUMMARY>
-Summary without the thinking process
-</SUMMARY>
+Code Snippet:
+```
+{{code_snippet}}
+```
+
+Please provide your analysis in the exact format specified in the instructions.
+<END_OF_USER_PROMPT>
 """
 
 
@@ -70,7 +98,18 @@ class CodeUnderstandingGenerator:
             "model_kwargs" in kwargs
         ), f"model_kwargs not found in the hydra config of code_understanding in rag.yaml."
         self.model_kwargs = kwargs["model_kwargs"]
-        self.client = get_code_understanding_client()
+        
+        # Set up the adal.Generator
+        self.generator = adal.Generator(
+            template=CODE_UNDERSTANDING_TEMPLATE,
+            prompt_kwargs={
+                "system_prompt": CODE_UNDERSTANDING_SYSTEM_PROMPT,
+                "file_path": None,
+                "code_snippet": None,
+            },
+            model_client=get_code_understanding_client(),
+            model_kwargs={"model": self.model, **self.model_kwargs},
+        )
 
     def call(
         self, code: Union[str, List[str]], file_path: Union[str, List[str]]
@@ -94,29 +133,16 @@ class CodeUnderstandingGenerator:
         ), f"The number of code snippets ({len(code)}) should be the same as the number of file paths ({len(file_path)})"
         summaries = []
         for i, code_snippet in enumerate(code):
-            prompt = f"File Path: `{file_path[i]}`\n\n```\n{code_snippet}\n```"
             try:
-                result = self.client.call(
-                    api_kwargs={
-                        "model": self.model,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": CODE_UNDERSTANDING_SYSTEM_PROMPT,
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
-                        **self.model_kwargs,
-                    },
-                    model_type=ModelType.LLM,
+                result = self.generator.call(
+                    prompt_kwargs={
+                        "file_path": file_path[i],
+                        "code_snippet": code_snippet,
+                    }
                 )
 
                 # Extract content from GeneratorOutput data field
-                assert isinstance(
-                    result, ChatCompletion
-                ), f"result is not a ChatCompletion: {type(result)}"
-                summary = result.choices[0].message.content
-
+                summary = result.data
                 summaries.append(summary.strip())
             except Exception as e:
                 logger.error(
@@ -149,28 +175,16 @@ class CodeUnderstandingGenerator:
         ), f"The number of code snippets ({len(code)}) should be the same as the number of file paths ({len(file_path)})"
 
         async def _acall(code_snippet, file_path):
-            prompt = f"File Path: `{file_path}`\n\n```\n{code_snippet}\n```"
             try:
-                result = await self.client.acall(
-                    api_kwargs={
-                        "model": self.model,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": CODE_UNDERSTANDING_SYSTEM_PROMPT,
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
-                        **self.model_kwargs,
-                    },
-                    model_type=ModelType.LLM,
+                result = await self.generator.acall(
+                    prompt_kwargs={
+                        "file_path": file_path,
+                        "code_snippet": code_snippet,
+                    }
                 )
 
                 # Extract content from GeneratorOutput data field
-                assert isinstance(
-                    result, ChatCompletion
-                ), f"result is not a ChatCompletion: {type(result)}"
-                summary = result.choices[0].message.content
+                summary = result.data
                 return summary.strip()
             except Exception as e:
                 logger.error(
@@ -192,7 +206,7 @@ class CodeUnderstandingGenerator:
             file_path
         ), f"The number of code snippets ({len(code)}) should be the same as the number of file paths ({len(file_path)})"
         understanding_texts = []
-        for _, code_snippet in enumerate(
+        for i, code_snippet in enumerate(
             tqdm(
                 code,
                 desc="Generating code understanding",
@@ -201,7 +215,9 @@ class CodeUnderstandingGenerator:
             )
         ):
             understanding_text = self.call(code_snippet, file_path[i])
-            understanding_texts.extend(understanding_text)
+            if understanding_text:
+                understanding_texts.extend(understanding_text)
+        return understanding_texts
 
     async def batch_call(
         self, code: List[str], file_path: List[str], batch_size: Optional[int] = None
@@ -247,26 +263,19 @@ class CodeUnderstandingGenerator:
                     f"Processing batch {i//batch_size + 1}: items {i+1}-{batch_end} of {total_items}"
                 )
 
-                # Create tasks for current batch
-                batch_tasks = [
-                    self.acall(code_snippet, file_path_item)
-                    for code_snippet, file_path_item in zip(batch_code, batch_paths)
-                ]
-
-                # Process batch with asyncio.gather for parallel execution within batch
+                # Process batch with acall which handles multiple inputs
                 try:
-                    batch_results = await asyncio.gather(*batch_tasks)
-
-                    # Flatten and collect results from this batch
-                    for result in batch_results:
-                        if result:  # Check if result is not None
-                            all_results.extend(result)
-                        pbar.update(1)
+                    batch_results = await self.acall(batch_code, batch_paths)
+                    
+                    # Collect results from this batch
+                    if batch_results:
+                        all_results.extend(batch_results)
+                    pbar.update(len(batch_code))
 
                 except Exception as e:
                     logger.error(f"Error processing batch {i//batch_size + 1}: {e}")
                     # Update progress bar even on error
-                    pbar.update(len(batch_tasks))
+                    pbar.update(len(batch_code))
                     # Re-raise exception to handle at higher level
                     raise
 

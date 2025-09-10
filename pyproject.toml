@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64.0.0", "wheel"]
+requires = ["setuptools>=64.0.0", "wheel", "numpy>=1.21.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -17,11 +17,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -63,3 +59,12 @@ packages = ["ragalyze", "ragalyze.configs", "ragalyze.rag", "ragalyze.rag.splitt
 
 [tool.setuptools.package-data]
 "ragalyze" = ["configs/*.yaml", "configs/*.yml"]
+
+# Extension modules
+[[tool.setuptools.ext-modules]]
+name = "ragalyze.rag.bm25_c_extension"
+sources = ["ragalyze/rag/bm25_c_extension.c"]
+
+[[tool.setuptools.ext-modules]]
+name = "ragalyze.rag.treesitter_parse"
+sources = ["ragalyze/rag/treesitter_parse.c"]

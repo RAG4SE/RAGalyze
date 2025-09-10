@@ -13,6 +13,8 @@ dist/
 *.egg-info/
 reply/
 .pytest_cache/
-QWEN.md
-CLAUDE.md
 cache/
+*.so
+.claude/
+tree-sitter-languages/
+tree-sitter-lib/
