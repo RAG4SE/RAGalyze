@@ -1,0 +1,748 @@
+<START_OF_SYS_PROMPT>
+
+You are a code assistant which answers user questions on a Github Repo or a local repo.
+You will receive user query, relevant context, and past conversation history.
+
+LANGUAGE DETECTION AND RESPONSE:
+- Detect the language of the user's query
+- Respond in the SAME language as the user's query
+- IMPORTANT:If a specific language is requested in the prompt, prioritize that language over the query language
+
+FORMAT YOUR RESPONSE USING MARKDOWN:
+- Use proper markdown syntax for all formatting
+- For code blocks, use triple backticks with language specification (```python, ```javascript, etc.)
+- Use ## headings for major sections
+- Use bullet points or numbered lists where appropriate
+- Format tables using markdown table syntax when presenting structured data
+- Use **bold** and *italic* for emphasis
+- When referencing file paths, use `inline code` formatting
+
+IMPORTANT FORMATTING RULES:
+1. DO NOT include ```markdown fences at the beginning or end of your answer
+2. Start your response directly with the content
+3. The content will already be rendered as markdown, so just provide the raw markdown content
+
+Think step by step and ensure your answer is well-structured and visually organized.
+
+
+Please provide a comprehensive answer to the user's question based on the provided context.
+
+IMPORTANT FORMATTING RULES:
+1. Respond in the same language as the user's question
+2. Format your response using markdown for better readability
+3. Use code blocks, bullet points, headings, and other markdown features as appropriate
+4. Be clear, concise, and helpful
+5. If you use code examples, make sure they are properly formatted with language-specific syntax highlighting
+6. Structure your answer logically with clear sections if the question is complex
+<END_OF_SYS_PROMPT>
+<START_OF_CONTEXT>
+1.
+File Path: libyul/backends/evm/NoOutputAssembly.cpp
+Code Snippet:
+```
+ implemented.");
+183: }
+184: 
+185: void NoOutputAssembly::appendAuxDataLoadN(uint16_t)
+186: {
+187: 	yulAssert(false, "auxdataloadn not implemented.");
+188: }
+189: 
+190: void NoOutputAssembly::appendEOFCreate(ContainerID)
+191: {
+192: 	yulAssert(false, "eofcreate not implemented.");
+193: 
+194: }
+195: void NoOutputAssembly::appendReturnContract(ContainerID)
+196: {
+197: 	yulAssert(false, "returncontract not implemented.");
+198: }
+199: 
+200: NoOutputEVMDialect::NoOutputEVMDialect(EVMDialect const& _copyFrom):
+201: 	EVMDialect(_copyFrom.evmVersion(), _copyFrom.eofVersion(), _copyFrom.providesObjectAccess())
+202: {
+203: 	for (auto& fun: m_functions)
+204: 		if (fun)
+205: 			modifyBuiltinToNoOutput(*fun);
+206: }
+207: 
+208: BuiltinFunctionForEVM const& NoOutputEVMDialect::builtin(BuiltinHandle const& _handle) const
+209: {
+210: 	if (isVerbatimHandle(_handle))
+211: 		// for verbatims the modification is performed lazily as they are stored in a lookup table fashion
+212: 		if (
+213: 			auto& builtin = m_verbatimFunctions[_handle.id];
+214: 			!builtin
+215: 		)
+216: 		{
+217: 			builtin = std::make_unique<BuiltinFunctionForEVM>(createVerbatimFunctionFromHandle(_handle));
+218: 			modifyBuiltinToNoOutput(*builtin);
+219: 		}
+220: 	return EVMDialect::builtin(_handle);
+221: }
+```
+2.
+File Path: test/libsolidity/syntaxTests/inlineAssembly/solidity_keywords.sol
+Code Snippet:
+```
+
+27:   let internal := 1
+28:   let immutable := 1
+29:   let import := 1
+30:   let is := 1
+31:   let library := 1
+32:   let mapping := 1
+33:   let memory := 1
+34:   let modifier := 1
+35:   let new := 1
+36:   let override := 1
+37:   let payable := 1
+38:   let public := 1
+39:   let pragma := 1
+40:   let private := 1
+41:   let pure := 1
+42:   let receive := 1
+43:   // return is a builtin in EVMDialect
+44:   return(0, 0)
+45:   let returns := 1
+46:   let storage := 1
+47:   let calldata := 1
+48:   let struct := 1
+49:   let throw := 1
+50:   let try := 1
+51:   // type shadows the Solidity function
+52:   let unicode := 1
+53:   let using := 1
+54:   let view := 1
+55:   let virtual := 1
+56:   let while := 1
+57:   let wei := 1
+58:   let gwei := 1
+59:   let ether := 1
+60:   let seconds := 1
+61:   let minutes := 1
+62:   let hours := 1
+63:   let days := 1
+64:   let weeks := 1
+65:   let years := 1
+66:   let int := 1
+67:   let uint := 1
+68:   let bytes := 1
+69:   // byte is a builtin in EVMDialect
+70:   pop(byte(1, 1))
+71:   let string := 1
+72:   // address is a builtin in EVMDialect
+73:   pop(address())
+74:   let bool := 1
+75:   let fixed := 1
+76:   let ufixed := 1
+77:   let after := 1
+78:   let alias := 1
+79:   let apply := 1
+80:   let auto := 1
+81:   // case is a Yul keyword
+82:   let copyof := 1
+83:   // default is a Yul keyword
+84:   let define := 1
+85:   let final := 1
+86:   let implements := 1
+87:   let in := 1
+88:   let inline := 1
+89:   // let is a Yul keyword
+90:   let macro := 1
+91:   let match := 1
+92:   let mutable := 1
+93:   let null := 1
+94:   let of := 1
+95:   let partial := 1
+96:   let promise := 1
+97:   let reference := 1
+98:   let relocatable := 1
+99:   let sealed := 1
+100:   let sizeof := 1
+101:   let static := 1
+102:   let supports := 1
+103:   // switch is a Yul keyword
+104:   let typedef := 1
+105:   let typeof := 1
+106:   let unchecked := 1
+107:   let var := 1
+108:     }
+109:   }
+110: }
+
+```
+3.
+File Path: libyul/backends/evm/EVMDialect.h
+Code Snippet:
+```
+>
+25: 
+26: #include <libyul/backends/evm/AbstractAssembly.h>
+27: #include <libyul/ASTForward.h>
+28: #include <liblangutil/EVMVersion.h>
+29: 
+30: #include <map>
+31: #include <set>
+32: 
+33: namespace solidity::yul
+34: {
+35: 
+36: struct FunctionCall;
+37: class Object;
+38: 
+39: /**
+40:  * Context used during code generation.
+41:  */
+42: struct BuiltinContext
+43: {
+44: 	Object const* currentObject = nullptr;
+45: 	/// Mapping from named objects to abstract assembly sub IDs.
+46: 	std::map<std::string, AbstractAssembly::SubID> subIDs;
+47: 
+48: 	std::map<Scope::Function const*, AbstractAssembly::FunctionID> functionIDs;
+49: };
+50: 
+51: struct BuiltinFunctionForEVM: public BuiltinFunction
+52: {
+53: 	std::optional<evmasm::Instruction> instruction;
+54: 	/// Function to generate code for the given function call and append it to the abstract
+55: 	/// assembly. Expects all non-literal arguments of the call to be on stack in reverse order
+56: 	/// (i.e. right-most argument pushed first).
+57: 	/// Expects the caller to set the source location.
+58: 	std::function<void(FunctionCall const&, AbstractAssembly&, BuiltinContext&)> generateCode;
+59: };
+60: 
+61: 
+62: /**
+63:  * Yul dialect for EVM as a backend.
+64:  * The main difference is that the builtin functions take an AbstractAssembly for the
+65:  * code generation.
+66:  */
+67: class EVMDialect: public Dialect
+68: {
+69: public:
+70: 	/// Constructor, should only be used internally. Use the factory functions below.
+71: 	EVMDialect(langutil::EVMVersion _evmVersion, std::optional<uint8_t> _eofVersion, bool _objectAccess);
+72: 
+73: 	std::optional<BuiltinHandle> findBuiltin(std::string_view _name) const override;
+74: 
+75: 	BuiltinFunctionForEVM const& builtin(BuiltinHandle const& _handle) const override;
+76: 
+77: 	bool reservedIdentifier(std::string_view _name) const override;
+78: 
+79: 	std::optional<BuiltinHandle> discardFunctionHandle() const override { return m_discardFunction; }
+80: 	std::optional<BuiltinHandle> equalityFunctionHandle() const override { return m_equalityFunction; }
+81: 	std::optional<BuiltinHandle> booleanNegationFunctionHandle() const override { return m_booleanNegationFunction; }
+82: 	std::optional<BuiltinHandle> memoryStoreFunctionHandle() const override { return m_memoryStoreFunction; }
+83: 	std::optional<BuiltinHandle> memoryLoadFunctionHandle() const override { return m_memoryLoadFunction; }
+84: 	std::optional<BuiltinHandle> storageStoreFunctionHandle() const override { return m_storageStoreFunction; }
+85: 	std::optional<BuiltinHandle> storageLoadFunctionHandle() const override { return m_storageLoadFunction; }
+86: 	std::optional<BuiltinHandle> hashFunctionHandle() const override { return m_hashFunction; }
+87: 
+88: 	static EVMDialect const& strictAssemblyForEVM(langutil::EVMVersion _evmVersion, std::optional<uint8_t> _eofVersion);
+89
+```
+4.
+File Path: libyul/AsmAnalysis.cpp
+Code Snippet:
+```
+_location,
+676: 			"\"" + _identifier.str() + "\" is not a valid identifier (contains consecutive dots)."
+677: 		);
+678: 
+679: 	if (m_dialect.reservedIdentifier(_identifier.str()))
+680: 		m_errorReporter.declarationError(
+681: 			5017_error,
+682: 			_location,
+683: 			"The identifier \"" + _identifier.str() + "\" is reserved and can not be used."
+684: 		);
+685: }
+686: 
+687: bool AsmAnalyzer::validateInstructions(std::string const& _instructionIdentifier, langutil::SourceLocation const& _location)
+688: {
+689: 	// NOTE: This function uses the default EVM version instead of the currently selected one.
+690: 	auto const& defaultEVMDialect = EVMDialect::strictAssemblyForEVM(EVMVersion{}, std::nullopt);
+691: 	auto const builtinHandle = defaultEVMDialect.findBuiltin(_instructionIdentifier);
+692: 	if (builtinHandle && defaultEVMDialect.builtin(*builtinHandle).instruction.has_value())
+693: 		return validateInstructions(*defaultEVMDialect.builtin(*builtinHandle).instruction, _location);
+694: 
+695: 	// TODO: Change `prague()` to `EVMVersion{}` once EOF gets deployed
+696: 	auto const& eofDialect = EVMDialect::strictAssemblyForEVM(EVMVersion::prague(), 1);
+697: 	auto const eofBuiltinHandle = eofDialect.findBuiltin(_instructionIdentifier);
+698: 	if (eofBuiltinHandle && eofDialect.builtin(*eofBuiltinHandle).instruction.has_value())
+699: 		return validateInstructions(*eofDialect.builtin(*eofBuiltinHandle).instruction, _location);
+700: 
+701: 	return false;
+702: }
+703: 
+704: bool AsmAnalyzer::validateInstructions(evmasm::Instruction _instr, SourceLocation const& _location)
+705: {
+706: 	// We assume that returndatacopy, returndatasize and staticcall are either all available
+707: 	// or all not available.
+708: 	yulAssert(m_evmVersion.supportsReturndata() == m_evmVersion.hasStaticCall(), "");
+709: 	// Similarly we assume bitwise shifting and create2 go together.
+710: 	yulAssert(m_evmVersion.hasBitwiseShifting() == m_evmVersion.hasCreate2(), "");
+711: 
+712: 	// These instructions are disabled in the dialect.
+713: 	yulAssert(
+714: 		_instr != evmasm::Instruction::JUMP &&
+715: 		_instr != evmasm::Instruction::JUMPI &&
+716: 		_instr != evmasm::Instruction::JUMPDEST,
+717: 	"");
+718: 
+719: 	auto errorForVM = [&](ErrorId _errorId, std::string const& vmKindMessage) {
+720: 		m_errorReporter.typeError(
+721: 			_errorId,
+722: 			_location,
+723: 			fmt::format(
+724: 				"The \"{instruction}\" instruction is {kind} VMs (you are currently compiling for \"{version}\").",
+725: 				fmt::arg("instruction", boost::to_lower_copy(instructionInfo(_instr, m_evmVersion).name)),
+726: 				fmt::arg("kind", vmKindMessage),
+727: 				fmt::arg("version", m_evmVersion.name())
+728: 			)
+729: 		);
+730: 	};
+731: 
+732: 	// The errors below are meant to be issued when processing
+```
+5.
+File Path: libyul/backends/evm/NoOutputAssembly.h
+Code Snippet:
+```
+71: 	void appendJumpToIf(LabelID _labelId, JumpType _jumpType) override;
+72: 
+73: 	void appendAssemblySize() override;
+74: 	std::pair<std::shared_ptr<AbstractAssembly>, SubID> createSubAssembly(bool _creation, std::string _name = "") override;
+75: 	FunctionID registerFunction(uint8_t _args, uint8_t _rets) override;
+76: 	void beginFunction(FunctionID) override;
+77: 	void endFunction() override;
+78: 	void appendFunctionCall(FunctionID _functionID) override;
+79: 	void appendFunctionReturn() override;
+80: 	void appendDataOffset(std::vector<SubID> const& _subPath) override;
+81: 	void appendDataSize(std::vector<SubID> const& _subPath) override;
+82: 	SubID appendData(bytes const& _data) override;
+83: 
+84: 	void appendToAuxiliaryData(bytes const&) override {}
+85: 
+86: 	void appendImmutable(std::string const& _identifier) override;
+87: 	void appendImmutableAssignment(std::string const& _identifier) override;
+88: 
+89: 	void appendAuxDataLoadN(uint16_t) override;
+90: 	void appendEOFCreate(ContainerID) override;
+91: 	void appendReturnContract(ContainerID) override;
+92: 
+93: 	void markAsInvalid() override {}
+94: 
+95: 	langutil::EVMVersion evmVersion() const override { return m_evmVersion; }
+96: 
+97: private:
+98: 	NoOutputAssemblyContext m_context = {};
+99: 	int m_stackHeight = 0;
+100: 	FunctionID m_currentFunctionID = 0;
+101: 	langutil::EVMVersion m_evmVersion;
+102: };
+103: 
+104: 
+105: /**
+106:  * EVM dialect that does not generate any code.
+107:  */
+108: class NoOutputEVMDialect: public EVMDialect
+109: {
+110: public:
+111: 	explicit NoOutputEVMDialect(EVMDialect const& _copyFrom);
+112: 
+113: 	BuiltinFunctionForEVM const& builtin(BuiltinHandle const& _handle) const override;
+114: };
+115: 
+116: 
+117: }
+```
+6.
+File Path: deps/nlohmann-json/include/nlohmann/thirdparty/hedley/hedley.hpp
+Code Snippet:
+```
+patch) __has_cpp_attribute(attribute)
+573: #else
+574:     #define JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+575: #endif
+576: 
+577: #if defined(JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE)
+578:     #undef JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE
+579: #endif
+580: #if defined(__has_cpp_attribute) && defined(__cplusplus)
+581:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
+582: #else
+583:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+584: #endif
+585: 
+586: #if defined(JSON_HEDLEY_HAS_BUILTIN)
+587:     #undef JSON_HEDLEY_HAS_BUILTIN
+588: #endif
+589: #if defined(__has_builtin)
+590:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) __has_builtin(builtin)
+591: #else
+592:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) (0)
+593: #endif
+594: 
+595: #if defined(JSON_HEDLEY_GNUC_HAS_BUILTIN)
+596:     #undef JSON_HEDLEY_GNUC_HAS_BUILTIN
+597: #endif
+598: #if defined(__has_builtin)
+599:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+600: #else
+601:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+602: #endif
+603: 
+604: #if defined(JSON_HEDLEY_GCC_HAS_BUILTIN)
+605:     #undef JSON_HEDLEY_GCC_HAS_BUILTIN
+606: #endif
+607: #if defined(__has_builtin)
+608:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+609: #else
+610:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+611: #endif
+612: 
+613: #if defined(JSON_HEDLEY_HAS_FEATURE)
+614:     #undef JSON_HEDLEY_HAS_FEATURE
+615: #endif
+616: #if defined(__has_feature)
+617:     #define JSON_HEDLEY_HAS_FEATURE(feature) __has_feature(feature)
+618: #else
+619:     #define JSON_HEDLEY_HAS_FEATURE(feature) (0)
+620: #endif
+621: 
+622: #if defined(JSON_HEDLEY_GNUC_HAS_FEATURE)
+623:     #undef JSON_HEDLEY_GNUC_HAS_FEATURE
+624: #endif
+625: #if defined(__has_feature)
+626:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) __has_feature(feature)
+627: #else
+628:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+629: #endif
+630: 
+631: #if defined(JSON_HEDLEY_GCC_HAS_FEATURE)
+632:     #undef JSON_HEDLEY_GCC_HAS_FEATURE
+
+```
+7.
+File Path: libyul/backends/evm/NoOutputAssembly.cpp
+Code Snippet:
+```
+End function without begin function.");
+155: 	auto const rets = m_context.functionSignatures.at(m_currentFunctionID).second;
+156: 	yulAssert(rets == 0x80 || m_stackHeight == rets, "Stack height mismatch at function end.");
+157: }
+158: 
+159: void NoOutputAssembly::appendDataOffset(std::vector<AbstractAssembly::SubID> const&)
+160: {
+161: 	appendInstruction(evmasm::Instruction::PUSH1);
+162: }
+163: 
+164: void NoOutputAssembly::appendDataSize(std::vector<AbstractAssembly::SubID> const&)
+165: {
+166: 	appendInstruction(evmasm::Instruction::PUSH1);
+167: }
+168: 
+169: AbstractAssembly::SubID NoOutputAssembly::appendData(bytes const&)
+170: {
+171: 	return 1;
+172: }
+173: 
+174: 
+175: void NoOutputAssembly::appendImmutable(std::string const&)
+176: {
+177: 	yulAssert(false, "loadimmutable not implemented.");
+178: }
+179: 
+180: void NoOutputAssembly::appendImmutableAssignment(std::string const&)
+181: {
+182: 	yulAssert(false, "setimmutable not implemented.");
+183: }
+184: 
+185: void NoOutputAssembly::appendAuxDataLoadN(uint16_t)
+186: {
+187: 	yulAssert(false, "auxdataloadn not implemented.");
+188: }
+189: 
+190: void NoOutputAssembly::appendEOFCreate(ContainerID)
+191: {
+192: 	yulAssert(false, "eofcreate not implemented.");
+193: 
+194: }
+195: void NoOutputAssembly::appendReturnContract(ContainerID)
+196: {
+197: 	yulAssert(false, "returncontract not implemented.");
+198: }
+199: 
+200: NoOutputEVMDialect::NoOutputEVMDialect(EVMDialect const& _copyFrom):
+201: 	EVMDialect(_copyFrom.evmVersion(), _copyFrom.eofVersion(), _copyFrom.providesObjectAccess())
+202: {
+203: 	for (auto& fun: m_functions)
+204: 		if (fun)
+205: 			modifyBuiltinToNoOutput(*fun);
+206: }
+207: 
+208: BuiltinFunctionForEVM const& NoOutputEVMDialect::builtin(BuiltinHandle const& _handle) const
+209: {
+210: 	if (isVerbatimHandle(_handle))
+211: 		// for verbatims the modification is performed lazily as they are stored in a lookup table fashion
+212: 		if (
+213: 			auto& builtin = m_verbatimFunctions[_handle.id];
+214: 			!builtin
+215: 		)
+216: 		{
+217: 			builtin = std::make_unique<BuiltinFunctionForEVM>(createVerbatimFunctionFromHandle(_handle));
+218: 			modifyBuiltinToNoOutput(*builtin);
+219: 		}
+220: 	return EVMDialect::builtin(_handle);
+221: }
+```
+8.
+File Path: libyul/backends/evm/ConstantOptimiser.cpp
+Code Snippet:
+```
+& arg: _arguments)
+53: 			args.emplace_back(eval(arg));
+54: 		switch (_instr)
+55: 		{
+56: 		case evmasm::Instruction::ADD:
+57: 			return args.at(0) + args.at(1);
+58: 		case evmasm::Instruction::SUB:
+59: 			return args.at(0) - args.at(1);
+60: 		case evmasm::Instruction::MUL:
+61: 			return args.at(0) * args.at(1);
+62: 		case evmasm::Instruction::EXP:
+63: 			return exp256(args.at(0), args.at(1));
+64: 		case evmasm::Instruction::SHL:
+65: 			return args.at(0) > 255 ? 0 : (args.at(1) << unsigned(args.at(0)));
+66: 		case evmasm::Instruction::NOT:
+67: 			return ~args.at(0);
+68: 		default:
+69: 			yulAssert(false, "Invalid operation generated in constant optimizer.");
+70: 		}
+71: 		return 0;
+72: 	}
+73: 
+74: 	u256 operator()(FunctionCall const& _funCall)
+75: 	{
+76: 		std::optional<BuiltinHandle> funHandle = m_dialect.findBuiltin(_funCall.functionName.name.str());
+77: 		yulAssert(funHandle, "Expected builtin function.");
+78: 		BuiltinFunctionForEVM const& fun = m_dialect.builtin(*funHandle);
+79: 		yulAssert(fun.instruction, "Expected EVM instruction.");
+80: 		return eval(*fun.instruction, _funCall.arguments);
+81: 	}
+82: 	u256 operator()(Literal const& _literal)
+83: 	{
+84: 		return _literal.value.value();
+85: 	}
+86: 	u256 operator()(Identifier const&) { yulAssert(false, ""); }
+87: 
+88: 	EVMDialect const& m_dialect;
+89: };
+90: }
+91: 
+92: void ConstantOptimiser::visit(Expression& _e)
+93: {
+94: 	if (std::holds_alternative<Literal>(_e))
+95: 	{
+96: 		Literal const& literal = std::get<Literal>(_e);
+97: 		if (literal.kind != LiteralKind::Number)
+98: 			return;
+99: 
+100: 		if (
+101: 			Expression const* repr =
+102: 				RepresentationFinder(m_dialect, m_meter, debugDataOf(_e), m_cache)
+103: 				.tryFindRepresentation(literal.value.value())
+104: 		)
+105: 			_e = ASTCopier{}.translate(*repr);
+106: 	}
+107: 	else
+108: 		ASTModifier::visit(_e);
+109: }
+110: 
+111: Expression const* RepresentationFinder::tryFindRepresentation(u256 const& _value)
+112: {
+113: 	if (_value < 0x10000)
+114: 		return nullptr;
+115: 
+116: 	Representation const& repr = findRepresentation(_value);
+117: 	if (std::holds_alternative<Literal>(*repr.expression))
+118: 		return nullptr;
+119: 	else
+120: 		return repr.expression.get();
+121: }
+122: 
+123: Representation const& RepresentationFinder::findRepresentation(u256 const& _value)
+124: {
+125: 	if (m_cache.count(_value))
+126: 		return m_cache.at(_value);
+127: 
+128: 	Representation routine = represent(_value);
+129: 
+130: 	if (numberEncoding
+```
+9.
+File Path: deps/nlohmann-json/tests/abi/include/nlohmann/json_v3_10_5.hpp
+Code Snippet:
+```
+ajor,minor,patch)
+754: #endif
+755: 
+756: #if defined(JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE)
+757:     #undef JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE
+758: #endif
+759: #if defined(__has_cpp_attribute) && defined(__cplusplus)
+760:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
+761: #else
+762:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+763: #endif
+764: 
+765: #if defined(JSON_HEDLEY_HAS_BUILTIN)
+766:     #undef JSON_HEDLEY_HAS_BUILTIN
+767: #endif
+768: #if defined(__has_builtin)
+769:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) __has_builtin(builtin)
+770: #else
+771:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) (0)
+772: #endif
+773: 
+774: #if defined(JSON_HEDLEY_GNUC_HAS_BUILTIN)
+775:     #undef JSON_HEDLEY_GNUC_HAS_BUILTIN
+776: #endif
+777: #if defined(__has_builtin)
+778:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+779: #else
+780:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+781: #endif
+782: 
+783: #if defined(JSON_HEDLEY_GCC_HAS_BUILTIN)
+784:     #undef JSON_HEDLEY_GCC_HAS_BUILTIN
+785: #endif
+786: #if defined(__has_builtin)
+787:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+788: #else
+789:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+790: #endif
+791: 
+792: #if defined(JSON_HEDLEY_HAS_FEATURE)
+793:     #undef JSON_HEDLEY_HAS_FEATURE
+794: #endif
+795: #if defined(__has_feature)
+796:     #define JSON_HEDLEY_HAS_FEATURE(feature) __has_feature(feature)
+797: #else
+798:     #define JSON_HEDLEY_HAS_FEATURE(feature) (0)
+799: #endif
+800: 
+801: #if defined(JSON_HEDLEY_GNUC_HAS_FEATURE)
+802:     #undef JSON_HEDLEY_GNUC_HAS_FEATURE
+803: #endif
+804: #if defined(__has_feature)
+805:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) __has_feature(feature)
+806: #else
+807:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+808: #endif
+809: 
+810: #if defined(JSON_HEDLEY_GCC_HAS_FEATURE)
+811:     #undef JSON_HEDLEY_GCC_HAS_FEATURE
+812: #endif
+813: #if defined(__has_feature)
+814:     #define JSON_HEDLEY_GCC_HAS_FEATURE(feature,major,minor,patch) __has_feature(feature)
+815: #else
+816
+```
+10.
+File Path: deps/nlohmann-json/single_include/nlohmann/json.hpp
+Code Snippet:
+```
+: #else
+883:     #define JSON_HEDLEY_HAS_CPP_ATTRIBUTE_NS(ns,attribute) (0)
+884: #endif
+885: 
+886: #if defined(JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE)
+887:     #undef JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE
+888: #endif
+889: #if defined(__has_cpp_attribute) && defined(__cplusplus)
+890:     #define JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
+891: #else
+892:     #define JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+893: #endif
+894: 
+895: #if defined(JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE)
+896:     #undef JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE
+897: #endif
+898: #if defined(__has_cpp_attribute) && defined(__cplusplus)
+899:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
+900: #else
+901:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+902: #endif
+903: 
+904: #if defined(JSON_HEDLEY_HAS_BUILTIN)
+905:     #undef JSON_HEDLEY_HAS_BUILTIN
+906: #endif
+907: #if defined(__has_builtin)
+908:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) __has_builtin(builtin)
+909: #else
+910:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) (0)
+911: #endif
+912: 
+913: #if defined(JSON_HEDLEY_GNUC_HAS_BUILTIN)
+914:     #undef JSON_HEDLEY_GNUC_HAS_BUILTIN
+915: #endif
+916: #if defined(__has_builtin)
+917:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+918: #else
+919:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
+920: #endif
+921: 
+922: #if defined(JSON_HEDLEY_GCC_HAS_BUILTIN)
+923:     #undef JSON_HEDLEY_GCC_HAS_BUILTIN
+924: #endif
+925: #if defined(__has_builtin)
+926:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
+927: #else
+928:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
+929: #endif
+930: 
+931: #if defined(JSON_HEDLEY_HAS_FEATURE)
+932:     #undef JSON_HEDLEY_HAS_FEATURE
+933: #endif
+934: #if defined(__has_feature)
+935:     #define JSON_HEDLEY_HAS_FEATURE(feature) __has_feature(feature)
+936: #else
+937:     #define JSON_HEDLEY_HAS_FEATURE(feature) (0)
+938: #endif
+939: 
+940: #if defined(JSON_HEDLEY_GNUC_HAS_FEATURE)
+941:     #undef JSON_HEDLEY_GNUC_HAS_FEATURE
+942: #endif
+943: #if defined(__has_feature)
+944
+```
+<END_OF_CONTEXT>
+<START_OF_USER_PROMPT>
+List every function **definition** (not declaration) where the **body** contains a **CallExpr** to  `EVMDialect::builtin`
+---------- Output Format ----------
+
+<file_name>:
+<the lined code of the function definition including the function signature and body>
+...
+If no such caller exists, only reply "None".
+
+---------- Examples ----------
+
+List every function **definition** (not declaration) where the **body** contains a **CallExpr** to  bar
+67: void foo() {
+68:     bar();
+69:     // other code
+70: }
+
+Expected Output:
+file1.cpp:
+67: void foo() {
+68:     bar();
+69:     // other code
+70: }
+        
+
+<END_OF_USER_PROMPT>

@@ -20,9 +20,9 @@ using RAG (Retrieval-Augmented Generation) technology.
 #     elif name == "print_result":
 #         from .query import print_result
 #         return print_result
-#     elif name == "load_all_configs":
-#         from .configs import load_all_configs
-#         return load_all_configs
+#     elif name == "set_global_configs":
+#         from .configs import set_global_configs
+#         return set_global_configs
 #     elif name == "load_default_config":
 #         from .configs import load_default_config
 #         return load_default_config
@@ -32,15 +32,28 @@ using RAG (Retrieval-Augmented Generation) technology.
 #     else:
 #         raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
-from .query import save_query_results, print_result, query_repository, analyze_repository
-from .configs import configs, load_all_configs, load_default_config
+from .query import (
+    save_query_results,
+    print_result,
+    query_repository,
+    query_repository_with_format_find_then_do,
+    analyze_repository,
+)
+from .configs import (
+    configs,
+    set_global_configs,
+    load_default_config,
+    set_global_config_value,
+)
 
 __all__ = [
     "query_repository",
+    "query_repository_with_format_find_then_do",
     "analyze_repository",
     "save_query_results",
-    "load_all_configs",
+    "set_global_configs",
     "print_result",
     "load_default_config",
     "configs",
+    "set_global_config_value",
 ]

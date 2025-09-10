@@ -62,16 +62,12 @@ log = get_tqdm_compatible_logger(__name__)
 
 def get_first_message_content(completion: ChatCompletion) -> str:
     """When we only need the content of the first message."""
-    log.info(f"🔍 get_first_message_content called with: {type(completion)}")
     log.debug(f"raw completion: {completion}")
 
     if hasattr(completion, "choices") and len(completion.choices) > 0:
         choice = completion.choices[0]
         if hasattr(choice, "message") and hasattr(choice.message, "content"):
             content = choice.message.content
-            log.info(
-                f"✅ Successfully extracted content: {type(content)}, length: {len(content) if content else 0}"
-            )
             return content
         else:
             log.error("❌ Choice doesn't have message.content")

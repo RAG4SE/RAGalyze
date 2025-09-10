@@ -378,20 +378,30 @@ IMPORTANT FORMATTING RULES:
             )
         else:
             # Use HybridRetriever which combines BM25 and FAISS
-            print('document type is', type(self.documents[0]))
             self.retriever = HybridRetriever(documents=self.documents)
 
-    def call(self, query: str, documents: List[Document | DualVectorDocument] = None) -> List[RetrieverOutput]:
+    def prepare_retriever_with_documents(self, documents: List[Document | DualVectorDocument]):
+        self.documents = documents
+        if configs()["rag"]["query_driven"]["enabled"]:
+            # Use QueryDrivenRetriever which employs on-demand embedding
+            self.retriever = QueryDrivenRetriever(documents=self.documents)
+        else:
+            # Use HybridRetriever which combines BM25 and FAISS
+            self.retriever = HybridRetriever(documents=self.documents)
+
+
+    def call(self, bm25_keywords: str, faiss_query: str) -> List[RetrieverOutput]:
         """
         Query the RAG system.
+        If you want to ask a question about only a few documents instead of all documents from self.db_manager.prepare_database(), you can pass those documents as the 'documents' argument.
         """
         if not self.retriever:
             raise ValueError("Retriever not prepared. Call prepare_retriever first.")
 
-        logger.info(f"🏃 Running RAG for query: '{query}'")
+        logger.info(f"🏃 Running RAG for query: 'bm25_keywords: {bm25_keywords}' and 'faiss_query: {faiss_query}'")
 
         try:
-            retrieved_docs = self.retriever.call(query, documents=documents)
+            retrieved_docs = self.retriever.call(bm25_keywords, faiss_query)
             return retrieved_docs
         except Exception as e:
             logger.error(f"Error in RAG call: {str(e)}")

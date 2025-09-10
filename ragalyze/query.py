@@ -13,6 +13,8 @@ import os
 import sys
 import hydra
 
+from adalflow.core.types import RetrieverOutput
+from adalflow.core.types import RetrieverOutput
 from adalflow.core.types import Document
 
 from ragalyze.rag.rag import RAG
@@ -24,13 +26,18 @@ from ragalyze.core.types import DualVectorDocument
 logger = get_tqdm_compatible_logger(__name__)
 
 
-def save_query_results(result: Dict[str, Any], repo_path: str, question: str) -> str:
+def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: str, faiss_query: str, question: str) -> str:
+def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: str, faiss_query: str, question: str) -> str:
     """
     Save query results to reply folder with timestamp
 
     Args:
         result: Query result dictionary
         repo_path: Repository path that was queried
+        bm25_keywords: BM25 keywords
+        faiss_query: FAISS query
+        bm25_keywords: BM25 keywords
+        faiss_query: FAISS query
         question: Question that was asked
 
     Returns:
@@ -42,21 +49,41 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save response
-    response_file = output_dir / "response.txt"
-    with open(response_file, "w", encoding="utf-8") as f:
-        f.write("=" * 50 + "\n")
-        f.write("QUERY INFORMATION\n")
-        f.write("=" * 50 + "\n")
-        f.write(f"Repository: {repo_path}\n")
-        f.write(f"Question: {question}\n")
-        f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+    if result.get("response"):
+        response_file = output_dir / "response.txt"
+        with open(response_file, "w", encoding="utf-8") as f:
+            f.write("=" * 50 + "\n")
+            f.write("QUERY INFORMATION\n")
+            f.write("=" * 50 + "\n")
+            f.write(f"Repository: {repo_path}\n")
+            f.write(f"BM25 keywords: {bm25_keywords}\n")
+            f.write(f"FAISS query: {faiss_query}\n")
+            f.write(f"Question: {question}\n")
+            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+    if result.get("response"):
+        response_file = output_dir / "response.txt"
+        with open(response_file, "w", encoding="utf-8") as f:
+            f.write("=" * 50 + "\n")
+            f.write("QUERY INFORMATION\n")
+            f.write("=" * 50 + "\n")
+            f.write(f"Repository: {repo_path}\n")
+            f.write(f"BM25 keywords: {bm25_keywords}\n")
+            f.write(f"FAISS query: {faiss_query}\n")
+            f.write(f"Question: {question}\n")
+            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
-        f.write("=" * 50 + "\n")
-        f.write("RESPONSE\n")
-        f.write("=" * 50 + "\n")
-        # Convert escaped newlines to actual line breaks
-        formatted_response = result["response"].replace("\\n", "\n")
-        f.write(formatted_response + "\n")
+            f.write("=" * 50 + "\n")
+            f.write("RESPONSE\n")
+            f.write("=" * 50 + "\n")
+            # Convert escaped newlines to actual line breaks
+            formatted_response = result["response"].replace("\\n", "\n")
+            f.write(formatted_response + "\n")
+            f.write("=" * 50 + "\n")
+            f.write("RESPONSE\n")
+            f.write("=" * 50 + "\n")
+            # Convert escaped newlines to actual line breaks
+            formatted_response = result["response"].replace("\\n", "\n")
+            f.write(formatted_response + "\n")
 
     # Save retrieved documents if available
     if result.get("retrieved_documents"):
@@ -87,7 +114,8 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
                     f.write(f"Document ID: {doc.id}\n")
                     f.write("Full Content:\n")
                     f.write(doc.text + "\n")
-    
+
+
     if result.get("context"):
         docs_file = output_dir / "context.txt"
         with open(docs_file, "w", encoding="utf-8") as f:
@@ -101,7 +129,8 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
                 f.write(f"Document ID: {doc.id}\n")
                 f.write("Full Content:\n")
                 f.write(doc.text + "\n")
-    
+
+
     # Save metadata
     metadata_file = output_dir / "metadata.txt"
     with open(metadata_file, "w", encoding="utf-8") as f:
@@ -125,7 +154,8 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
                 if understanding_text:
                     docs_with_understanding += 1
         f.write(f"Documents with Code Understanding: {docs_with_understanding}\n")
-    
+
+
     if result.get("bm25_docs"):
         bm25_doc_file = output_dir / "bm25_retrieved.txt"
         with open(bm25_doc_file, "w", encoding="utf-8") as f:
@@ -134,18 +164,39 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
             f.write("=" * 50 + "\n")
             for i, doc in enumerate(result["bm25_docs"], 1):
                 f.write(
-                    f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}\n"
+                    f"\n{i}. File: {doc.meta_data['file_path'] if isinstance(doc, Document) else doc.original_doc.meta_data['file_path']}\n"
                 )
-                f.write(f"Document ID: {doc.id}\n")
+                f.write(
+                    f"Document ID: {doc.id if isinstance(doc, Document) else doc.original_doc.id}\n"
+                    f"\n{i}. File: {doc.meta_data['file_path'] if isinstance(doc, Document) else doc.original_doc.meta_data['file_path']}\n"
+                )
+                f.write(
+                    f"Document ID: {doc.id if isinstance(doc, Document) else doc.original_doc.id}\n"
+                )
                 f.write("Full Content:\n")
-                f.write(doc.text + "\n")
-    
+                f.write(
+                    doc.text
+                    if isinstance(doc, Document)
+                    else doc.original_doc.text + "\n"
+                )
+
+                f.write(
+                    doc.text
+                    if isinstance(doc, Document)
+                    else doc.original_doc.text + "\n"
+                )
+
     if result.get("bm25_scores"):
         bm25_score_file = output_dir / "bm25_scores.csv"
         with open(bm25_score_file, "w", encoding="utf-8") as f:
             f.write("doc_id, original_score, minmax_score, zscore_score\n")
             # Sort by original score (score[0]) in descending order
-            sorted_scores = sorted(result["bm25_scores"].items(), key=lambda x: x[1][0], reverse=True)
+            sorted_scores = sorted(
+                result["bm25_scores"].items(), key=lambda x: x[1][0], reverse=True
+            )
+            sorted_scores = sorted(
+                result["bm25_scores"].items(), key=lambda x: x[1][0], reverse=True
+            )
             for doc_id, score in sorted_scores:
                 f.write(f"{doc_id}, {score[0]}, {score[1]}, {score[2]}\n")
 
@@ -154,16 +205,49 @@ def save_query_results(result: Dict[str, Any], repo_path: str, question: str) ->
         with open(faiss_score_file, "w", encoding="utf-8") as f:
             f.write("doc_id, original_score, minmax_score, zscore_score\n")
             # Sort by original score (score[0]) in descending order
-            sorted_scores = sorted(result["faiss_scores"].items(), key=lambda x: x[1][0], reverse=True)
+            sorted_scores = sorted(
+                result["faiss_scores"].items(), key=lambda x: x[1][0], reverse=True
+            )
+            sorted_scores = sorted(
+                result["faiss_scores"].items(), key=lambda x: x[1][0], reverse=True
+            )
             for doc_id, score in sorted_scores:
                 f.write(f"{doc_id}, {score[0]}, {score[1]}, {score[2]}\n")
-    
+
+    if result.get("bm25faiss_scores"):
+        bm25faiss_score_file = output_dir / "bm25faiss_scores.csv"
+        with open(bm25faiss_score_file, "w", encoding="utf-8") as f:
+            f.write("doc_id, original_score, minmax_score, zscore_score\n")
+            # Sort by original score (score[0]) in descending order
+            sorted_scores = sorted(
+                result["bm25faiss_scores"].items(), key=lambda x: x[1], reverse=True
+            )
+            for doc_id, score in sorted_scores:
+                f.write(f"{doc_id}, {score}\n")
+
+
+    if result.get("bm25faiss_scores"):
+        bm25faiss_score_file = output_dir / "bm25faiss_scores.csv"
+        with open(bm25faiss_score_file, "w", encoding="utf-8") as f:
+            f.write("doc_id, original_score, minmax_score, zscore_score\n")
+            # Sort by original score (score[0]) in descending order
+            sorted_scores = sorted(
+                result["bm25faiss_scores"].items(), key=lambda x: x[1], reverse=True
+            )
+            for doc_id, score in sorted_scores:
+                f.write(f"{doc_id}, {score}\n")
+
     if result.get("rrf_scores"):
         rrf_score_file = output_dir / "rrf_scores.csv"
         with open(rrf_score_file, "w", encoding="utf-8") as f:
             f.write("doc_id, rrf_score\n")
             # Sort by original score (score[0]) in descending order
-            sorted_scores = sorted(result["rrf_scores"].items(), key=lambda x: x[1], reverse=True)
+            sorted_scores = sorted(
+                result["rrf_scores"].items(), key=lambda x: x[1], reverse=True
+            )
+            sorted_scores = sorted(
+                result["rrf_scores"].items(), key=lambda x: x[1], reverse=True
+            )
             for doc_id, score in sorted_scores:
                 f.write(f"{doc_id}, {score}\n")
 
@@ -202,7 +286,14 @@ def analyze_repository(repo_path: str) -> RAG:
 
     return rag
 
-def build_contexts(retrieved_docs: List[Document | DualVectorDocument], id2doc: Dict[str, Document]) -> List[Document]:
+
+def build_contexts(
+    retrieved_docs: List[Document | DualVectorDocument], id2doc: Dict[str, Document]
+) -> List[Document]:
+
+def build_contexts(
+    retrieved_docs: List[Document | DualVectorDocument], id2doc: Dict[str, Document]
+) -> List[Document]:
     """
     Build context strings from retrieved documents.
 
@@ -216,11 +307,14 @@ def build_contexts(retrieved_docs: List[Document | DualVectorDocument], id2doc: 
         contexts = [doc.original_doc for doc in retrieved_docs]
     else:
         contexts = retrieved_docs
-    
-    if not configs()['rag']['adjacent_documents']['enabled']:
+
+    if not configs()["rag"]["adjacent_documents"]["enabled"]:
+
+    if not configs()["rag"]["adjacent_documents"]["enabled"]:
         return contexts
 
-    count = configs()['rag']['adjacent_documents']['count']
+    count = configs()["rag"]["adjacent_documents"]["count"]
+    count = configs()["rag"]["adjacent_documents"]["count"]
 
     new_contexts = []
 
@@ -228,14 +322,16 @@ def build_contexts(retrieved_docs: List[Document | DualVectorDocument], id2doc: 
         new_doc = deepcopy(doc)
         cnt = 0
         this_doc = doc
-        while(doc.meta_data["prev_doc_id"] is not None and cnt < count):
+        while doc.meta_data["prev_doc_id"] is not None and cnt < count:
+        while doc.meta_data["prev_doc_id"] is not None and cnt < count:
             prev_doc = id2doc[doc.meta_data["prev_doc_id"]]
             new_doc.text = prev_doc.text + new_doc.text
             doc = prev_doc
             cnt += 1
         doc = this_doc
         cnt = 0
-        while(doc.meta_data["next_doc_id"] is not None and cnt < count):
+        while doc.meta_data["next_doc_id"] is not None and cnt < count:
+        while doc.meta_data["next_doc_id"] is not None and cnt < count:
             next_doc = id2doc[doc.meta_data["next_doc_id"]]
             new_doc.text = new_doc.text + next_doc.text
             doc = next_doc
@@ -243,7 +339,14 @@ def build_contexts(retrieved_docs: List[Document | DualVectorDocument], id2doc: 
         new_contexts.append(new_doc)
     return new_contexts
 
-def query_repository_with_format_1(repo_path: str, question: Dict[str, str]) -> Dict[str, Any]:
+
+def query_repository_with_format_find_then_do(
+    repo_path: str, question: Dict[str, str]
+) -> Dict[str, Any]:
+
+def query_repository_with_format_find_then_do(
+    repo_path: str, question: Dict[str, str]
+) -> Dict[str, Any]:
     """
     Query a repository about a structered question and return structured results.
     The question is a dictionary with the following keys:
@@ -258,24 +361,190 @@ def query_repository_with_format_1(repo_path: str, question: Dict[str, str]) -> 
     }
     is a good example of retriving related function calls in Solidity compiler.
     """
-    assert question.keys() == ["what_to_find", "what_to_do"], "Question must contain what_to_find and what_to_do"
+    assert (
+        "what_to_find" in question.keys() and "what_to_do" in question.keys()
+    ), f"Question must contain what_to_find and what_to_do, but got {list(question.keys())}"
+    assert (
+        "what_to_find" in question.keys() and "what_to_do" in question.keys()
+    ), f"Question must contain what_to_find and what_to_do, but got {list(question.keys())}"
 
     what_to_find = question["what_to_find"]
     what_to_do = question["what_to_do"]
 
-    dict_config = load_default_config()
-    dict_config.rag.retriever.bm25.weight = 1.0
+    logger.info(f"🔍 Find {what_to_find}")
+    set_global_config_value("rag.retriever.bm25.weight", 1.0)
+    repo_rag = analyze_repository(repo_path=repo_path)
+    result = repo_rag.call(what_to_find)[0]
+    documents = deepcopy(result.documents)
 
-    rag = analyze_repository(repo_path=repo_path)
+    logger.info(f"🔍 Query '{what_to_do}'")
+    # Prepare retriever
+    set_global_config_value("rag.retriever.bm25.weight", 0.0)
+    set_global_config_value("rag.query_driven.enabled", False)
+    doc_rag = RAG()
+    doc_rag.prepare_retriever_with_documents(documents)
+    result = doc_rag.call(what_to_do)
 
-    result = rag.call(what_to_find)[0]
-    documents = result.documents
-    result = rag.call(what_to_do, documents=documents)
-    #TODO: for tomorrow
-    pass
-    
+    # result[0] is RetrieverOutput
+    retriever_output = result[0] if isinstance(result, list) else result
+    retrieved_docs = (
+        retriever_output.documents if hasattr(retriever_output, "documents") else []
+    )
 
-def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
+    # Generate answer
+    logger.info("🤖 Generating answer...")
+    try:
+        id2doc = pickle.load(
+            open(repo_rag.db_manager.cache_file_path + ".id2doc.pkl", "rb")
+        )
+        contexts = build_contexts(retrieved_docs, id2doc)
+
+        # Handle both standard RAG and query-driven RAG
+        if hasattr(doc_rag, "generator"):
+            generator_result = doc_rag.generator(
+                prompt_kwargs={"input_str": what_to_do, "contexts": contexts}
+            )
+        else:
+            # Fallback for standard RAG
+            generator_result = doc_rag.generator(
+                prompt_kwargs={"input_str": what_to_do, "contexts": contexts}
+            )
+    except Exception as e:
+        logger.error(f"Error calling generator: {e}")
+        raise
+
+    # Only use the content of the first choice
+    try:
+        rag_answer = generator_result.data.strip()
+    except Exception as e:
+        logger.error(f"Error catching generator result: {e}")
+        raise
+
+    assert rag_answer, "Generator result is empty"
+
+    logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
+
+    return {
+        # "response": rag_answer,
+        "retrieved_documents": retrieved_docs,
+        # "context": contexts,
+        "bm25_docs": (
+            repo_rag.retriever.bm25_documents
+            if hasattr(repo_rag.retriever, "bm25_documents")
+            and repo_rag.retriever.bm25_documents
+            else []
+        ),
+        "bm25_scores": (
+            repo_rag.retriever.doc_id_to_bm25_scores
+            if hasattr(repo_rag.retriever, "doc_id_to_bm25_scores")
+            else []
+        ),
+        "faiss_scores": (
+            doc_rag.retriever.doc_id_to_faiss_scores
+            if hasattr(doc_rag.retriever, "doc_id_to_faiss_scores")
+            else []
+        ),
+        "bm25faiss_scores": (
+            doc_rag.retriever.doc_id_to_bm25faiss_scores
+            if hasattr(doc_rag.retriever, "doc_id_to_bm25faiss_scores")
+            else []
+        ),
+        "rrf_scores": (
+            doc_rag.retriever.doc_id_to_rrf_scores
+            if hasattr(doc_rag.retriever, "doc_id_to_rrf_scores")
+            else []
+        ),
+    }
+
+
+def query_repository_deprecated(repo_path: str, question: str) -> Dict[str, Any]:
+    logger.info(f"🔍 Find {what_to_find}")
+    set_global_config_value("rag.retriever.bm25.weight", 1.0)
+    repo_rag = analyze_repository(repo_path=repo_path)
+    result = repo_rag.call(what_to_find)[0]
+    documents = deepcopy(result.documents)
+
+    logger.info(f"🔍 Query '{what_to_do}'")
+    # Prepare retriever
+    set_global_config_value("rag.retriever.bm25.weight", 0.0)
+    set_global_config_value("rag.query_driven.enabled", False)
+    doc_rag = RAG()
+    doc_rag.prepare_retriever_with_documents(documents)
+    result = doc_rag.call(what_to_do)
+
+    # result[0] is RetrieverOutput
+    retriever_output = result[0] if isinstance(result, list) else result
+    retrieved_docs = (
+        retriever_output.documents if hasattr(retriever_output, "documents") else []
+    )
+
+    # Generate answer
+    logger.info("🤖 Generating answer...")
+    try:
+        id2doc = pickle.load(
+            open(repo_rag.db_manager.cache_file_path + ".id2doc.pkl", "rb")
+        )
+        contexts = build_contexts(retrieved_docs, id2doc)
+
+        # Handle both standard RAG and query-driven RAG
+        if hasattr(doc_rag, "generator"):
+            generator_result = doc_rag.generator(
+                prompt_kwargs={"input_str": what_to_do, "contexts": contexts}
+            )
+        else:
+            # Fallback for standard RAG
+            generator_result = doc_rag.generator(
+                prompt_kwargs={"input_str": what_to_do, "contexts": contexts}
+            )
+    except Exception as e:
+        logger.error(f"Error calling generator: {e}")
+        raise
+
+    # Only use the content of the first choice
+    try:
+        rag_answer = generator_result.data.strip()
+    except Exception as e:
+        logger.error(f"Error catching generator result: {e}")
+        raise
+
+    assert rag_answer, "Generator result is empty"
+
+    logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
+
+    return {
+        # "response": rag_answer,
+        "retrieved_documents": retrieved_docs,
+        # "context": contexts,
+        "bm25_docs": (
+            repo_rag.retriever.bm25_documents
+            if hasattr(repo_rag.retriever, "bm25_documents")
+            and repo_rag.retriever.bm25_documents
+            else []
+        ),
+        "bm25_scores": (
+            repo_rag.retriever.doc_id_to_bm25_scores
+            if hasattr(repo_rag.retriever, "doc_id_to_bm25_scores")
+            else []
+        ),
+        "faiss_scores": (
+            doc_rag.retriever.doc_id_to_faiss_scores
+            if hasattr(doc_rag.retriever, "doc_id_to_faiss_scores")
+            else []
+        ),
+        "bm25faiss_scores": (
+            doc_rag.retriever.doc_id_to_bm25faiss_scores
+            if hasattr(doc_rag.retriever, "doc_id_to_bm25faiss_scores")
+            else []
+        ),
+        "rrf_scores": (
+            doc_rag.retriever.doc_id_to_rrf_scores
+            if hasattr(doc_rag.retriever, "doc_id_to_rrf_scores")
+            else []
+        ),
+    }
+
+
+def query_repository_deprecated(repo_path: str, question: str) -> Dict[str, Any]:
     """
     Query a repository about a question and return structured results.
 
@@ -284,10 +553,8 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
         question: Question to ask about the repository
 
     Returns:
-        Dict containing:
-            - response: The assistant's response text
-            - retrieved_documents: List of retrieved documents with metadata
-            - error_msg: Error message if any (empty string if no error)
+        Dict containing several dimensions
+        Dict containing several dimensions
     """
     # Analyze repository
     rag = analyze_repository(repo_path=repo_path)
@@ -295,71 +562,252 @@ def query_repository(repo_path: str, question: str) -> Dict[str, Any]:
     if question == "":
         return None
 
-    logger.info(f"🔍 Processing question: {question}")
-
     # Call RAG system to retrieve documents
-    result = rag.call(question)
+    result = rag.call(bm25_keywords=None, faiss_query=question)
+    result = rag.call(bm25_keywords=None, faiss_query=question)
 
-    if result and len(result) > 0:
-        # result[0] is RetrieverOutput
-        retriever_output = result[0] if isinstance(result, list) else result
-        retrieved_docs = (
-            retriever_output.documents if hasattr(retriever_output, "documents") else []
-        )
+    # result[0] is RetrieverOutput
+    retriever_output = result[0] if isinstance(result, list) else result
+    retrieved_docs = (
+        retriever_output.documents if hasattr(retriever_output, "documents") else []
+    )
+    # result[0] is RetrieverOutput
+    retriever_output = result[0] if isinstance(result, list) else result
+    retrieved_docs = (
+        retriever_output.documents if hasattr(retriever_output, "documents") else []
+    )
 
-        # Generate answer
-        logger.info("🤖 Generating answer...")
-        try:
-            id2doc = pickle.load(open(rag.db_manager.cache_file_path + ".id2doc.pkl", "rb"))
-            contexts = build_contexts(retrieved_docs, id2doc)
+    # Generate answer
+    logger.info("🤖 Generating answer...")
+    try:
+        id2doc = pickle.load(open(rag.db_manager.cache_file_path + ".id2doc.pkl", "rb"))
+        contexts = build_contexts(retrieved_docs, id2doc)
+    # Generate answer
+    logger.info("🤖 Generating answer...")
+    try:
+        id2doc = pickle.load(open(rag.db_manager.cache_file_path + ".id2doc.pkl", "rb"))
+        contexts = build_contexts(retrieved_docs, id2doc)
 
-            # Handle both standard RAG and query-driven RAG
-            if hasattr(rag, "generator"):
-                generator_result = rag.generator(
-                    prompt_kwargs={"input_str": question, "contexts": contexts}
-                )
-            else:
-                # Fallback for standard RAG
-                generator_result = rag.generator(
-                    prompt_kwargs={"input_str": question, "contexts": contexts}
-                )
-        except Exception as e:
-            logger.error(f"Error calling generator: {e}")
-            raise
-
-        # Only use the content of the first choice
-        try:
-            rag_answer = generator_result.data.strip()
-        except Exception as e:
-            logger.error(f"Error catching generator result: {e}")
-            raise
-
-        assert rag_answer, "Generator result is empty"
-
-        logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
-
-        return {
-            "response": rag_answer,
-            "retrieved_documents": retrieved_docs,
-            "context": contexts,
-            "bm25_docs": rag.retriever.bm25_documents if hasattr(rag.retriever, 'bm25_documents') and rag.retriever.bm25_documents else [],
-            "bm25_scores": rag.retriever.doc_id_to_bm25_scores if hasattr(rag.retriever, 'doc_id_to_bm25_scores') else [],
-            "faiss_scores": rag.retriever.doc_id_to_faiss_scores if hasattr(rag.retriever, 'doc_id_to_faiss_scores') else [],
-            "rrf_scores": rag.retriever.doc_id_to_rrf_scores if hasattr(rag.retriever, 'doc_id_to_rrf_scores') else []
-        }
-
-    else:
-        logger.error("❌ No rag output retrieved")
+        # Handle both standard RAG and query-driven RAG
+        if hasattr(rag, "generator"):
+            generator_result = rag.generator(
+                prompt_kwargs={"input_str": question, "contexts": contexts}
+            )
+        else:
+            # Fallback for standard RAG
+            generator_result = rag.generator(
+                prompt_kwargs={"input_str": question, "contexts": contexts}
+            )
+    except Exception as e:
+        logger.error(f"Error calling generator: {e}")
         raise
+        # Handle both standard RAG and query-driven RAG
+        if hasattr(rag, "generator"):
+            generator_result = rag.generator(
+                prompt_kwargs={"input_str": question, "contexts": contexts}
+            )
+        else:
+            # Fallback for standard RAG
+            generator_result = rag.generator(
+                prompt_kwargs={"input_str": question, "contexts": contexts}
+            )
+    except Exception as e:
+        logger.error(f"Error calling generator: {e}")
+        raise
+
+    # Only use the content of the first choice
+    rag_answer = generator_result.data.strip()
+    # Only use the content of the first choice
+    rag_answer = generator_result.data.strip()
+
+    assert rag_answer, "Generator result is empty"
+    assert rag_answer, "Generator result is empty"
+
+    logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
+    logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
+
+    return {
+        "response": rag_answer,
+        "retrieved_documents": retrieved_docs,
+        "context": contexts,
+        "bm25_docs": (
+            rag.retriever.bm25_documents
+            if hasattr(rag.retriever, "bm25_documents") and rag.retriever.bm25_documents
+            else []
+        ),
+        "bm25_scores": (
+            rag.retriever.doc_id_to_bm25_scores
+            if hasattr(rag.retriever, "doc_id_to_bm25_scores")
+            else []
+        ),
+        "faiss_scores": (
+            rag.retriever.doc_id_to_faiss_scores
+            if hasattr(rag.retriever, "doc_id_to_faiss_scores")
+            else []
+        ),
+        "rrf_scores": (
+            rag.retriever.doc_id_to_rrf_scores
+            if hasattr(rag.retriever, "doc_id_to_rrf_scores")
+            else []
+        ),
+    }
+    return {
+        "response": rag_answer,
+        "retrieved_documents": retrieved_docs,
+        "context": contexts,
+        "bm25_docs": (
+            rag.retriever.bm25_documents
+            if hasattr(rag.retriever, "bm25_documents") and rag.retriever.bm25_documents
+            else []
+        ),
+        "bm25_scores": (
+            rag.retriever.doc_id_to_bm25_scores
+            if hasattr(rag.retriever, "doc_id_to_bm25_scores")
+            else []
+        ),
+        "faiss_scores": (
+            rag.retriever.doc_id_to_faiss_scores
+            if hasattr(rag.retriever, "doc_id_to_faiss_scores")
+            else []
+        ),
+        "rrf_scores": (
+            rag.retriever.doc_id_to_rrf_scores
+            if hasattr(rag.retriever, "doc_id_to_rrf_scores")
+            else []
+        ),
+    }
+
+
+def query_repository(
+    repo_path: str, bm25_keywords: str, faiss_query: str, question: str
+) -> Dict[str, Any]:
+    """
+    Query a repository about a question and return structured results.
+
+    Args:
+        repo_path: Path to the repository to analyze
+        bm25_keywords: BM25 keywords
+        faiss_query: FAISS query
+        question: Question to ask about the repository
+    """
+    rag = analyze_repository(repo_path=repo_path)
+    result = rag.call(bm25_keywords=bm25_keywords, faiss_query=faiss_query)
+
+    # result[0] is RetrieverOutput
+    retriever_output = result[0] if isinstance(result, list) else result
+    retrieved_docs = (
+        retriever_output.documents if hasattr(retriever_output, "documents") else []
+    )
+
+    # Generate answer
+    logger.info("🤖 Generating answer...")
+    try:
+        id2doc = pickle.load(open(rag.db_manager.cache_file_path + ".id2doc.pkl", "rb"))
+        contexts = build_contexts(retrieved_docs, id2doc)
+
+        # Handle both standard RAG and query-driven RAG
+        if hasattr(rag, "generator"):
+            generator_result = rag.generator(
+                prompt_kwargs={"input_str": question, "contexts": contexts}
+            )
+        else:
+            # Fallback for standard RAG
+            generator_result = rag.generator(
+                prompt_kwargs={"input_str": question, "contexts": contexts}
+            )
+    except Exception as e:
+        logger.error(f"Error calling generator: {e}")
+
+def query_repository(
+    repo_path: str, bm25_keywords: str, faiss_query: str, question: str
+) -> Dict[str, Any]:
+    """
+    Query a repository about a question and return structured results.
+
+    Args:
+        repo_path: Path to the repository to analyze
+        bm25_keywords: BM25 keywords
+        faiss_query: FAISS query
+        question: Question to ask about the repository
+    """
+    rag = analyze_repository(repo_path=repo_path)
+    result = rag.call(bm25_keywords=bm25_keywords, faiss_query=faiss_query)
+
+    # result[0] is RetrieverOutput
+    retriever_output = result[0] if isinstance(result, list) else result
+    retrieved_docs = (
+        retriever_output.documents if hasattr(retriever_output, "documents") else []
+    )
+
+    # Generate answer
+    logger.info("🤖 Generating answer...")
+    try:
+        id2doc = pickle.load(open(rag.db_manager.cache_file_path + ".id2doc.pkl", "rb"))
+        contexts = build_contexts(retrieved_docs, id2doc)
+
+        # Handle both standard RAG and query-driven RAG
+        if hasattr(rag, "generator"):
+            generator_result = rag.generator(
+                prompt_kwargs={"input_str": question, "contexts": contexts}
+            )
+        else:
+            # Fallback for standard RAG
+            generator_result = rag.generator(
+                prompt_kwargs={"input_str": question, "contexts": contexts}
+            )
+    except Exception as e:
+        logger.error(f"Error calling generator: {e}")
+        raise
+
+    # Only use the content of the first choice
+    rag_answer = generator_result.data.strip()
+
+    assert rag_answer, "Generator result is empty"
+
+    logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
+
+    return {
+        "response": rag_answer,
+        "context": contexts,
+        "retrieved_documents": retrieved_docs,
+        "bm25_docs": (
+            rag.retriever.bm25_documents
+            if hasattr(rag.retriever, "bm25_documents") and rag.retriever.bm25_documents
+            else []
+        ),
+        "bm25_scores": (
+            rag.retriever.doc_id_to_bm25_scores
+            if hasattr(rag.retriever, "doc_id_to_bm25_scores")
+            else []
+        ),
+        "faiss_scores": (
+            rag.retriever.doc_id_to_faiss_scores
+            if hasattr(rag.retriever, "doc_id_to_faiss_scores")
+            else []
+        ),
+        "rrf_scores": (
+            rag.retriever.doc_id_to_rrf_scores
+            if hasattr(rag.retriever, "doc_id_to_rrf_scores")
+            else []
+        )
+    }
 
 
 def print_result(result: Dict[str, Any]) -> None:
-    print("\n" + "=" * 50)
-    print("RESPONSE:")
-    print("=" * 50)
-    # Convert escaped newlines to actual line breaks for better readability
-    formatted_response = result["response"].replace("\\n", "\n")
-    print(formatted_response)
+    if result.get("response"):
+        print("\n" + "=" * 50)
+        print("RESPONSE:")
+        print("=" * 50)
+        # Convert escaped newlines to actual line breaks for better readability
+        formatted_response = result["response"].replace("\\n", "\n")
+        print(formatted_response)
+    if result.get("response"):
+        print("\n" + "=" * 50)
+        print("RESPONSE:")
+        print("=" * 50)
+        # Convert escaped newlines to actual line breaks for better readability
+        formatted_response = result["response"].replace("\\n", "\n")
+        print(formatted_response)
 
     # if result["retrieved_documents"]:
     #     print("\n" + "=" * 50)
@@ -385,7 +833,8 @@ def print_result(result: Dict[str, Any]) -> None:
 
 def main(cfg: DictConfig) -> None:
     assert cfg.repo_path, "repo_path must be set"
-    load_all_configs(cfg)
+    set_global_configs(cfg)
+    set_global_configs(cfg)
     try:
         result = query_repository(repo_path=cfg.repo_path, question=cfg.question)
 

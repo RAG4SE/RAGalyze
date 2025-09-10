@@ -40,7 +40,7 @@ class ToEmbeddings(DataComponent):
         logger.info(
             f"Starting to process embeddings for {len(embedder_input)} documents"
         )
-
+        
         # Batch process embeddings
         outputs: List[EmbedderOutput] = self.embedder(input=embedder_input)
 
