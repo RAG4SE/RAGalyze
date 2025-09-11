@@ -17,48 +17,86 @@ import shutil
 ENABLE_TREESITTER = True  # Enable tree-sitter integration
 ENABLE_LANGUAGE_PARSERS = True  # Download language parsers (set to False for now)
 
-def get_pcre2_config():
-    """Get PCRE2 configuration"""
-    try:
-        pcre2_prefix = subprocess.check_output(['brew', '--prefix', 'pcre2'], text=True).strip()
-    except Exception:
-        pcre2_prefix = '/opt/homebrew/opt/pcre2'
+# def get_pcre2_config():
+#     """Get PCRE2 configuration"""
+#     try:
+#         pcre2_prefix = subprocess.check_output(['brew', '--prefix', 'pcre2'], text=True).strip()
+#     except Exception:
+#         pcre2_prefix = '/opt/homebrew/opt/pcre2'
     
-    return {
-        'include_dirs': [os.path.join(pcre2_prefix, 'include')],
-        'library_dirs': [os.path.join(pcre2_prefix, 'lib')],
-        'libraries': ['pcre2-8']
-    }
+#     return {
+#         'include_dirs': [os.path.join(pcre2_prefix, 'include')],
+#         'library_dirs': [os.path.join(pcre2_prefix, 'lib')],
+#         'libraries': ['pcre2-8']
+#     }
 
-def get_tree_sitter_system_config():
-    """Get tree-sitter configuration from system installation"""
+tree_sitter_version = '0.25.9'  # Updated to a more recent version
+
+def download_tree_sitter_core():
+    """Download tree-sitter core library"""
+    tree_sitter_lib_dir = "tree-sitter-lib"
+    
+    if not os.path.exists(tree_sitter_lib_dir):
+        os.makedirs(tree_sitter_lib_dir)
+    
+    # Download tree-sitter core library
+    core_url = f"https://github.com/tree-sitter/tree-sitter/archive/v{tree_sitter_version}.tar.gz"
+    core_archive = os.path.join(tree_sitter_lib_dir, f"tree-sitter-{tree_sitter_version}.tar.gz")
+    core_extract_dir = os.path.join(tree_sitter_lib_dir, f"tree-sitter-{tree_sitter_version}")
+
+    if not os.path.exists(core_extract_dir) and not os.path.exists(core_archive):
+        try:
+            print("Downloading tree-sitter core library...")
+            urllib.request.urlretrieve(core_url, core_archive)
+            
+            with tarfile.open(core_archive, "r:gz") as tar:
+                tar.extractall(tree_sitter_lib_dir)
+            
+            # Clean up archive
+            os.remove(core_archive)
+            
+        except Exception as e:
+            print(f"Failed to download tree-sitter core library: {e}")
+            return None
+    
+    return core_extract_dir
+
+def build_tree_sitter_core(core_dir):
+    """Build tree-sitter core library using make"""
+    if not core_dir or not os.path.exists(core_dir):
+        print("Tree-sitter core directory not found")
+        return None
+        
     try:
-        # Try to get tree-sitter from Homebrew
-        tree_sitter_prefix = subprocess.check_output(['brew', '--prefix', 'tree-sitter'], text=True).strip()
-        
-        include_dirs = [
-            os.path.join(tree_sitter_prefix, 'include')
-        ]
-        
-        library_dirs = [
-            os.path.join(tree_sitter_prefix, 'lib')
-        ]
-        
-        libraries = ['tree-sitter']
-        
-        print(f"Found system tree-sitter at: {tree_sitter_prefix}")
-        
-        return {
-            'include_dirs': include_dirs,
-            'library_dirs': library_dirs,
-            'libraries': libraries
-        }
+        # Run make in the tree-sitter core directory
+        print(f"Building tree-sitter core library in {core_dir}")
+        makefile_path = os.path.join(core_dir, "Makefile")
+        if os.path.exists(makefile_path):
+            result = subprocess.run(["make"], cwd=core_dir, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"Make failed with error: {result.stderr}")
+                return None
+            print("Tree-sitter core library built successfully")
+        else:
+            print("No Makefile found, skipping build step")
+            
+        return core_dir
     except Exception as e:
-        print(f"System tree-sitter not found: {e}")
+        print(f"Failed to build tree-sitter core library: {e}")
         return None
 
+parser_versions = {
+    'python': '0.25.0',
+    'cpp': '0.23.4',
+    'java': '0.23.5',
+    'c': '0.24.1',
+    'javascript': '0.25.0',
+    'go': '0.25.0',
+    'rust': '0.24.0'
+}
+
 def download_tree_sitter_languages():
-    """Download tree-sitter language parsers only (not core library)"""
+    """Download tree-sitter language parsers"""
     tree_sitter_dir = "tree-sitter-languages"
     
     if not os.path.exists(tree_sitter_dir):
@@ -66,13 +104,13 @@ def download_tree_sitter_languages():
     
     # Language parsers to download (using more reliable URLs)
     languages = {
-        'python': 'https://github.com/tree-sitter/tree-sitter-python/archive/v0.20.4.tar.gz',
-        'cpp': 'https://github.com/tree-sitter/tree-sitter-cpp/archive/v0.20.3.tar.gz',
-        'java': 'https://github.com/tree-sitter/tree-sitter-java/archive/v0.20.2.tar.gz',
-        'c': 'https://github.com/tree-sitter/tree-sitter-c/archive/v0.20.7.tar.gz',
-        'javascript': 'https://github.com/tree-sitter/tree-sitter-javascript/archive/v0.20.1.tar.gz',
-        'go': 'https://github.com/tree-sitter/tree-sitter-go/archive/v0.20.0.tar.gz',
-        'rust': 'https://github.com/tree-sitter/tree-sitter-rust/archive/v0.20.4.tar.gz'
+        'python': f'https://github.com/tree-sitter/tree-sitter-python/archive/v{parser_versions["python"]}.tar.gz',
+        'cpp': f'https://github.com/tree-sitter/tree-sitter-cpp/archive/v{parser_versions["cpp"]}.tar.gz',
+        'java': f'https://github.com/tree-sitter/tree-sitter-java/archive/v{parser_versions["java"]}.tar.gz',
+        'c': f'https://github.com/tree-sitter/tree-sitter-c/archive/v{parser_versions["c"]}.tar.gz',
+        'javascript': f'https://github.com/tree-sitter/tree-sitter-javascript/archive/v{parser_versions["javascript"]}.tar.gz',
+        'go': f'https://github.com/tree-sitter/tree-sitter-go/archive/v{parser_versions["go"]}.tar.gz',
+        'rust': f'https://github.com/tree-sitter/tree-sitter-rust/archive/v{parser_versions["rust"]}.tar.gz'
     }
     
     # Download and extract language parsers
@@ -98,70 +136,94 @@ def download_tree_sitter_languages():
     return tree_sitter_dir
 
 def get_tree_sitter_config():
-    """Get tree-sitter configuration using system installation and downloaded languages"""
+    """Get tree-sitter configuration using downloaded libraries"""
+    # Download tree-sitter core library
+    core_dir = download_tree_sitter_core()
+    if not core_dir:
+        print("Failed to download tree-sitter core library")
+        return {'include_dirs': [], 'sources': [], 'libraries': []}
     
-    # First try system tree-sitter
-    system_config = get_tree_sitter_system_config()
-    if system_config:
-        # Download language parsers if enabled
-        if ENABLE_LANGUAGE_PARSERS:
-            lang_dir = download_tree_sitter_languages()
-            
-            # Add language parser sources
-            sources = []
-            
-            # Find downloaded language parsers
-            for lang in ['python', 'cpp', 'java', 'c', 'javascript', 'go', 'rust']:
-                lang_parser_dir = os.path.join(lang_dir, f"tree-sitter-{lang}-{get_version_for_lang(lang)}")
-                if os.path.exists(lang_parser_dir):
-                    parser_file = os.path.join(lang_parser_dir, "src", "parser.c")
-                    if os.path.exists(parser_file):
-                        sources.append(parser_file)
-                    
-                    # Check for scanner files
-                    scanner_c = os.path.join(lang_parser_dir, "src", "scanner.c")
-                    scanner_cc = os.path.join(lang_parser_dir, "src", "scanner.cc")
-                    if os.path.exists(scanner_c):
-                        sources.append(scanner_c)
-                    elif os.path.exists(scanner_cc):
-                        sources.append(scanner_cc)
-            
-            system_config['sources'] = sources
-        else:
-            system_config['sources'] = []
-        return system_config
+    # Build tree-sitter core library
+    build_tree_sitter_core(core_dir)
     
-    # Fallback: use minimal implementation without tree-sitter
-    print("Tree-sitter not available, using minimal implementation")
-    return {'include_dirs': [], 'sources': [], 'libraries': []}
+    # Set up include directories for tree-sitter
+    include_dirs = [
+        os.path.join(core_dir, 'lib', 'include'),
+        os.path.join(core_dir, 'lib', 'src')
+    ]
+    
+    # Download language parsers if enabled
+    sources = []
+    if ENABLE_LANGUAGE_PARSERS:
+        # lang_dir = download_tree_sitter_languages() # haoyang
+        lang_dir = "tree-sitter-languages"
+        
+        # Find downloaded language parsers
+        for lang in ['python', 'cpp', 'java', 'c', 'javascript', 'go', 'rust']:
+            # Try both versioned and unversioned directory names
+            possible_dirs = [
+                os.path.join(lang_dir, f"tree-sitter-{lang}-{get_version_for_lang(lang)}"),
+                os.path.join(lang_dir, f"tree-sitter-{lang}")
+            ]
+            
+            lang_parser_dir = None
+            for dir_path in possible_dirs:
+                if os.path.exists(dir_path):
+                    lang_parser_dir = dir_path
+                    break
+            
+            if lang_parser_dir:
+                parser_file = os.path.join(lang_parser_dir, "src", "parser.c")
+                if os.path.exists(parser_file):
+                    sources.append(parser_file)
+                    print(f"Added parser for {lang}: {parser_file}")
+                else:
+                    print(f"Parser file not found for {lang}: {parser_file}")
+                
+                # Check for scanner files
+                scanner_c = os.path.join(lang_parser_dir, "src", "scanner.c")
+                scanner_cc = os.path.join(lang_parser_dir, "src", "scanner.cc")
+                if os.path.exists(scanner_c):
+                    sources.append(scanner_c)
+                    print(f"Added scanner for {lang}: {scanner_c}")
+                elif os.path.exists(scanner_cc):
+                    sources.append(scanner_cc)
+                    print(f"Added scanner.cc for {lang}: {scanner_cc}")
+        
+        print(f"Found {len(sources)} language parser source files")
+    
+    # Add tree-sitter library source
+    core_source = os.path.join(core_dir, 'lib', 'src', 'lib.c')
+    assert os.path.exists(core_source), f"Core source not found: {core_source}"
+    sources.append(core_source)
+    print(f"Added tree-sitter core source: {core_source}")
+    
+    return {
+        'include_dirs': include_dirs,
+        'sources': sources,
+        'libraries': []
+    }
 
 def get_version_for_lang(lang):
     """Get version string for language parser"""
-    versions = {
-        'python': '0.20.4',
-        'cpp': '0.20.3',
-        'java': '0.20.2',
-        'c': '0.20.7',
-        'javascript': '0.20.1',
-        'go': '0.20.0',
-        'rust': '0.20.4'
-    }
-    return versions.get(lang, '0.20.0')
+    if lang not in parser_versions:
+        raise ValueError(f"Unsupported language: {lang}")
+    return parser_versions[lang]
 
 # Get configurations
-pcre2_config = get_pcre2_config()
+# pcre2_config = get_pcre2_config()
 tree_sitter_config = get_tree_sitter_config() if ENABLE_TREESITTER else {'include_dirs': [], 'sources': []}
 
-# BM25 C extension with PCRE2
-bm25_c_extension = Extension(
-    'ragalyze.rag.bm25_c_extension',
-    sources=['ragalyze/rag/bm25_c_extension.c'],
-    include_dirs=[np.get_include()] + pcre2_config['include_dirs'],
-    library_dirs=pcre2_config['library_dirs'],
-    libraries=pcre2_config['libraries'],
-    language='c',
-    extra_compile_args=['-std=c99', '-O3']
-)
+# # BM25 C extension with PCRE2
+# bm25_c_extension = Extension(
+#     'ragalyze.rag.bm25_c_extension',
+#     sources=['ragalyze/rag/bm25_c_extension.c'],
+#     include_dirs=[np.get_include()] + pcre2_config['include_dirs'],
+#     library_dirs=pcre2_config['library_dirs'],
+#     libraries=pcre2_config['libraries'],
+#     language='c',
+#     extra_compile_args=['-std=c99', '-O3']
+# )
 
 # Tree-sitter extension with real tree-sitter integration
 treesitter_sources = ['ragalyze/rag/treesitter_parse.c']
@@ -170,25 +232,30 @@ treesitter_include_dirs = [np.get_include()]
 if 'include_dirs' in tree_sitter_config:
     treesitter_include_dirs.extend(tree_sitter_config['include_dirs'])
 
-# Add tree-sitter include directory
-treesitter_include_dirs.append('tree-sitter-lib/tree-sitter-0.20.8/lib/include')
+# Add language parser sources
+if 'sources' in tree_sitter_config:
+    treesitter_sources.extend(tree_sitter_config['sources'])
+
+print("treesitter_sources:", treesitter_sources)
+print("treesitter_include_dirs:", treesitter_include_dirs)
 
 treesitter_extension = Extension(
     'ragalyze.rag.treesitter_parse',
     sources=treesitter_sources,
     include_dirs=treesitter_include_dirs,
-    library_dirs=tree_sitter_config.get('library_dirs', []),
-    libraries=tree_sitter_config.get('libraries', []),
+    library_dirs=[],
+    libraries=[],
     language='c',
-    extra_compile_args=['-std=c99', '-O3']
+    define_macros=[("TS_DEBUG", "1")],  # 👈 开启 LOG
 )
 
 # Setup configuration
 setup(
     name='RAGalyze-unified',
     version='1.0',
-    description='Unified C/C++ extensions for RAGalyze with tree-sitter integration',
-    ext_modules=[bm25_c_extension, treesitter_extension],
+    description='Unified C extensions for RAGalyze with tree-sitter integration',
+    # ext_modules=[bm25_c_extension, treesitter_extension],
+    ext_modules=[treesitter_extension],
     cmdclass={},
     zip_safe=False,
     install_requires=['numpy'],

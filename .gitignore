@@ -18,3 +18,5 @@ cache/
 .claude/
 tree-sitter-languages/
 tree-sitter-lib/
+*.backup
+prompt_str.txt

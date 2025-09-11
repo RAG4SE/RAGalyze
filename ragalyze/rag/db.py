@@ -4,6 +4,9 @@ import glob
 import re
 import fnmatch
 import pickle
+import asyncio
+import aiofiles
+from functools import partial
 
 import adalflow as adal
 from adalflow.core.types import Document, List
@@ -25,7 +28,7 @@ MAX_EMBEDDING_LENGTH = 1000000
 logger = get_tqdm_compatible_logger(__name__)
 
 
-def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
+async def safe_read_file_async(file_path: str) -> Tuple[Optional[str], str]:
     """
     Safely read a file with multiple encoding attempts and binary file detection.
 
@@ -40,21 +43,21 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
 
     # Check if file is likely binary by examining first few bytes
     try:
-        with open(file_path, "rb") as f:
+        async with aiofiles.open(file_path, "rb") as f:
             # Read first 8192 bytes to check for binary content
-            chunk = f.read(8192)
+            chunk = await f.read(8192)
             if not chunk:
                 return None, "empty_file"
 
             # Check for common binary file signatures
             binary_signatures = [
                 b"\x00",  # NULL byte (common in binary files)
-                b"\xFF\xD8\xFF",  # JPEG
+                b"\xff\xd8\xff",  # JPEG
                 b"\x89PNG",  # PNG
                 b"GIF8",  # GIF
                 b"%PDF",  # PDF
                 b"\x50\x4B",  # ZIP/JAR/etc
-                b"\x7FELF",  # ELF executable
+                b"\x7fELF",  # ELF executable
                 b"MZ",  # DOS/Windows executable
             ]
 
@@ -95,8 +98,8 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
         import chardet
 
         try:
-            with open(file_path, "rb") as f:
-                raw_data = f.read()
+            async with aiofiles.open(file_path, "rb") as f:
+                raw_data = await f.read()
                 detected = chardet.detect(raw_data)
                 if detected["encoding"] and detected["confidence"] > 0.7:
                     detected_encoding = detected["encoding"].lower()
@@ -113,8 +116,8 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
     # Try each encoding
     for encoding in encodings_to_try:
         try:
-            with open(file_path, "r", encoding=encoding, errors="strict") as f:
-                content = f.read()
+            async with aiofiles.open(file_path, "r", encoding=encoding, errors="strict") as f:
+                content = await f.read()
 
                 # Additional validation for the content
                 if not content.strip():
@@ -137,8 +140,8 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
 
     # If all encodings failed, try one more time with errors='replace'
     try:
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
+        async with aiofiles.open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            content = await f.read()
             if content.strip():
                 logger.warning(
                     f"Read {file_path} with character replacement (some characters may be corrupted)"
@@ -150,18 +153,115 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
     return None, "all_encodings_failed"
 
 
-def read_all_documents(path: str):
+def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
+    """Synchronous wrapper for safe_read_file_async for backward compatibility."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If we're already in an event loop, run in a thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, safe_read_file_async(file_path))
+                return future.result()
+        else:
+            # Otherwise, just run the async function
+            return asyncio.run(safe_read_file_async(file_path))
+    except Exception:
+        # Fallback to sync version if asyncio fails
+        return _safe_read_file_sync(file_path)
+
+
+def _safe_read_file_sync(file_path: str) -> Tuple[Optional[str], str]:
+    """Synchronous implementation for fallback."""
+    # Check if file is likely binary by examining first few bytes
+    try:
+        with open(file_path, "rb") as f:
+            chunk = f.read(8192)
+            if not chunk:
+                return None, "empty_file"
+
+            binary_signatures = [
+                b"\x00", b"\xff\xd8\xff", b"\x89PNG", b"GIF8", b"%PDF", 
+                b"\x50\x4B", b"\x7fELF", b"MZ"
+            ]
+
+            if b"\x00" in chunk:
+                return None, "binary_file_null_bytes"
+
+            for sig in binary_signatures:
+                if chunk.startswith(sig):
+                    return None, f"binary_file_signature_{sig.hex()}"
+
+            printable_chars = sum(
+                1 for byte in chunk
+                if 32 <= byte <= 126 or byte in [9, 10, 13] or byte >= 128
+            )
+            if len(chunk) > 0 and printable_chars / len(chunk) < 0.7:
+                return None, "binary_file_non_printable"
+
+    except (IOError, OSError) as e:
+        logger.error(f"File access error for {file_path}: {e}")
+        raise
+
+    encodings_to_try = [
+        "utf-8", "utf-8-sig", "latin1", "cp1252", "iso-8859-1", "ascii"
+    ]
+
+    try:
+        import chardet
+        try:
+            with open(file_path, "rb") as f:
+                raw_data = f.read()
+                detected = chardet.detect(raw_data)
+                if detected["encoding"] and detected["confidence"] > 0.7:
+                    detected_encoding = detected["encoding"].lower()
+                    if detected_encoding not in [enc.lower() for enc in encodings_to_try]:
+                        encodings_to_try.insert(0, detected["encoding"])
+        except Exception:
+            pass
+    except ImportError:
+        pass
+
+    for encoding in encodings_to_try:
+        try:
+            with open(file_path, "r", encoding=encoding, errors="strict") as f:
+                content = f.read()
+                if not content.strip():
+                    return None, "empty_content"
+                if encoding != "utf-8":
+                    logger.debug(f"Successfully read {file_path} with {encoding} encoding")
+                return content, f"success_{encoding}"
+        except UnicodeDecodeError as e:
+            logger.debug(f"Failed to read {file_path} with {encoding}: {e}")
+            continue
+        except (IOError, OSError) as e:
+            logger.error(f"File error for {file_path}: {e}")
+            return None, f"file_error: {e}"
+
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+            if content.strip():
+                logger.warning(f"Read {file_path} with character replacement")
+                return content, "success_utf8_with_replacement"
+    except Exception as e:
+        logger.error(f"Final fallback failed for {file_path}: {e}")
+
+    return None, "all_encodings_failed"
+
+
+async def read_all_documents_async(path: str, max_concurrent: int = 50):
     """
-    Recursively reads all documents in a directory and its subdirectories.
+    Recursively reads all documents in a directory and its subdirectories using multicoroutine for acceleration.
 
     Args:
         path (str): The root directory path.
+        max_concurrent (int): Maximum number of concurrent coroutines for file processing.
 
     Returns:
         list: A list of Document objects with metadata.
     """
 
-    documents = []
     excluded_patterns = list(
         set(
             configs()["repo"]["file_filters"]["excluded_patterns"]
@@ -171,7 +271,7 @@ def read_all_documents(path: str):
     code_extensions = configs()["repo"]["file_extensions"]["code_extensions"]
     doc_extensions = configs()["repo"]["file_extensions"]["doc_extensions"]
 
-    logger.info(f"Reading documents from {path}")
+    logger.info(f"Reading documents from {path} with {max_concurrent} concurrent coroutines")
 
     def should_process_file(
         file_path: str,
@@ -184,7 +284,6 @@ def read_all_documents(path: str):
         Args:
             file_path (str): The file path to check
             excluded_patterns (List[str]): List of patterns to exclude (supports glob patterns)
-            extra_exclude_patterns (List[str]): List of extra patterns to exclude (supports glob patterns)
 
         Returns:
             bool: True if the file should be processed, False otherwise
@@ -206,118 +305,244 @@ def read_all_documents(path: str):
 
         return True
 
-    # Process code files first
+    async def process_file_async(file_path: str, path: str, is_code: bool) -> Optional[Document]:
+        """Process a single file asynchronously and return Document object or None if skipped."""
+        # Check if file should be processed based on inclusion/exclusion rules
+        if not should_process_file(file_path, excluded_patterns):
+            return None
+
+        # Safely read file with encoding detection
+        content, status = await safe_read_file_async(file_path)
+
+        if content is None:
+            # Log specific reasons for skipping files
+            relative_path = os.path.relpath(file_path, path)
+            if status.startswith("binary_file"):
+                logger.debug(f"Skipping binary file {relative_path}: {status}")
+            elif status == "empty_file" or status == "empty_content":
+                logger.debug(f"Skipping empty file {relative_path}")
+            elif status == "all_encodings_failed":
+                logger.warning(
+                    f"Skipping file {relative_path}: Unable to decode with any encoding"
+                )
+            else:
+                logger.warning(f"Skipping file {relative_path}: {status}")
+            return None
+
+        relative_path = os.path.relpath(file_path, path)
+
+        # Check token count
+        if len(content) > MAX_EMBEDDING_LENGTH:
+            logger.warning(
+                f"Skipping large file {relative_path}: Token count ({len(content)}) exceeds limit"
+            )
+            return None
+
+        try:
+            if is_code:
+                # Determine if this is an implementation file
+                is_implementation = (
+                    not relative_path.startswith("test_")
+                    and not relative_path.startswith("app_")
+                    and not relative_path.startswith("build")
+                    and "test" not in relative_path.lower()
+                )
+                ext = os.path.splitext(relative_path)[1]
+                
+                return Document(
+                    text=content,
+                    meta_data={
+                        "file_path": relative_path,
+                        "type": ext[1:] if ext else "",
+                        "is_code": True,
+                        "is_implementation": is_implementation,
+                        "title": relative_path,
+                        "encoding_status": status,
+                    },
+                )
+            else:
+                ext = os.path.splitext(relative_path)[1]
+                return Document(
+                    text=content,
+                    meta_data={
+                        "file_path": relative_path,
+                        "type": ext[1:] if ext else "",
+                        "is_code": False,
+                        "is_implementation": False,
+                        "title": relative_path,
+                        "encoding_status": status,
+                    },
+                )
+        except Exception as e:
+            logger.error(f"Error processing {file_path}: {e}")
+            return None
+
+    # Collect all files to process
+    all_files = []
+    
+    # Process code files
     for ext in set(code_extensions):
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
         for file_path in files:
-            # Check if file should be processed based on inclusion/exclusion rules
-            if not should_process_file(
-                file_path,
-                excluded_patterns,
-            ):
+            all_files.append((file_path, True))  # True indicates code file
+    
+    # Process documentation files
+    for ext in set(doc_extensions):
+        files = glob.glob(f"{path}/**/*{ext}", recursive=True)
+        for file_path in files:
+            all_files.append((file_path, False))  # False indicates documentation file
+
+    logger.info(f"Found {len(all_files)} files to process")
+
+    # Process files concurrently with asyncio
+    semaphore = asyncio.Semaphore(max_concurrent)
+    
+    async def process_with_semaphore(file_path: str, path: str, is_code: bool) -> Optional[Document]:
+        async with semaphore:
+            return await process_file_async(file_path, path, is_code)
+
+    # Create tasks for all files
+    tasks = [
+        process_with_semaphore(file_path, path, is_code)
+        for file_path, is_code in all_files
+    ]
+    
+    # Wait for all tasks to complete and collect results
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    documents = []
+    for i, result in enumerate(results):
+        file_path, _ = all_files[i]
+        if isinstance(result, Exception):
+            logger.error(f"Error processing file {file_path}: {result}")
+        elif result is not None:
+            documents.append(result)
+
+    logger.info(f"Successfully processed {len(documents)} files")
+    return documents
+
+
+def read_all_documents(path: str, max_concurrent: int = 50):
+    """
+    Synchronous wrapper for read_all_documents_async for backward compatibility.
+    
+    Args:
+        path (str): The root directory path.
+        max_concurrent (int): Maximum number of concurrent coroutines for file processing.
+    
+    Returns:
+        list: A list of Document objects with metadata.
+    """
+    try:
+        return asyncio.run(read_all_documents_async(path, max_concurrent))
+    except Exception as e:
+        logger.error(f"Async processing failed, falling back to sync: {e}")
+        # Fallback to sync implementation if async fails
+        return _read_all_documents_sync(path, max_concurrent)
+
+
+def _read_all_documents_sync(path: str, max_workers: int = 8):
+    """Fallback synchronous implementation."""
+    # This is the original implementation for fallback
+    excluded_patterns = list(
+        set(
+            configs()["repo"]["file_filters"]["excluded_patterns"]
+            + configs()["repo"]["file_filters"]["extra_excluded_patterns"]
+        )
+    )
+    code_extensions = configs()["repo"]["file_extensions"]["code_extensions"]
+    doc_extensions = configs()["repo"]["file_extensions"]["doc_extensions"]
+
+    logger.info(f"Reading documents from {path} (sync fallback with {max_workers} workers)")
+
+    def should_process_file(file_path: str, excluded_patterns: List[str]) -> bool:
+        normalized_path = os.path.normpath(file_path).replace("\\", "/")
+        def matches_pattern(text: str, pattern: str) -> bool:
+            return fnmatch.fnmatch(text, pattern)
+        for excluded_pattern in excluded_patterns:
+            if matches_pattern(normalized_path, excluded_pattern):
+                return False
+        return True
+
+    documents = []
+    
+    # Process code files
+    for ext in set(code_extensions):
+        files = glob.glob(f"{path}/**/*{ext}", recursive=True)
+        for file_path in files:
+            if not should_process_file(file_path, excluded_patterns):
                 continue
-
-            # Safely read file with encoding detection
             content, status = safe_read_file(file_path)
-
             if content is None:
-                # Log specific reasons for skipping files
                 relative_path = os.path.relpath(file_path, path)
                 if status.startswith("binary_file"):
                     logger.debug(f"Skipping binary file {relative_path}: {status}")
-                elif status == "empty_file" or status == "empty_content":
+                elif status in ["empty_file", "empty_content"]:
                     logger.debug(f"Skipping empty file {relative_path}")
                 elif status == "all_encodings_failed":
-                    logger.warning(
-                        f"Skipping file {relative_path}: Unable to decode with any encoding"
-                    )
+                    logger.warning(f"Skipping file {relative_path}: Unable to decode")
                 else:
                     logger.warning(f"Skipping file {relative_path}: {status}")
                 continue
-
             relative_path = os.path.relpath(file_path, path)
-
-            # Determine if this is an implementation file
+            if len(content) > MAX_EMBEDDING_LENGTH:
+                logger.warning(f"Skipping large file {relative_path}: exceeds limit")
+                continue
             is_implementation = (
                 not relative_path.startswith("test_")
                 and not relative_path.startswith("app_")
                 and not relative_path.startswith("build")
                 and "test" not in relative_path.lower()
             )
-
-            # Check token count
-            if len(content) > MAX_EMBEDDING_LENGTH:
-                logger.warning(
-                    f"Skipping large file {relative_path}: Token count ({len(content)}) exceeds limit"
-                )
-                continue
-
+            ext = os.path.splitext(relative_path)[1]
             doc = Document(
                 text=content,
                 meta_data={
                     "file_path": relative_path,
-                    "type": ext[1:],
+                    "type": ext[1:] if ext else "",
                     "is_code": True,
                     "is_implementation": is_implementation,
                     "title": relative_path,
-                    "encoding_status": status,  # Track how file was read
+                    "encoding_status": status,
                 },
             )
             documents.append(doc)
 
-    # Then process documentation files
+    # Process documentation files
     for ext in set(doc_extensions):
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
         for file_path in files:
-            # Check if file should be processed based on inclusion/exclusion rules
-            if not should_process_file(
-                file_path,
-                excluded_patterns,
-            ):
+            if not should_process_file(file_path, excluded_patterns):
                 continue
-
-            # Safely read file with encoding detection
             content, status = safe_read_file(file_path)
-
             if content is None:
-                # Log specific reasons for skipping files
                 relative_path = os.path.relpath(file_path, path)
                 if status.startswith("binary_file"):
                     logger.debug(f"Skipping binary file {relative_path}: {status}")
-                elif status == "empty_file" or status == "empty_content":
+                elif status in ["empty_file", "empty_content"]:
                     logger.debug(f"Skipping empty file {relative_path}")
                 elif status == "all_encodings_failed":
-                    logger.warning(
-                        f"Skipping file {relative_path}: Unable to decode with any encoding"
-                    )
+                    logger.warning(f"Skipping file {relative_path}: Unable to decode")
                 else:
                     logger.warning(f"Skipping file {relative_path}: {status}")
                 continue
-
-            try:
-                relative_path = os.path.relpath(file_path, path)
-
-                # Check token count
-                if len(content) > MAX_EMBEDDING_LENGTH:
-                    logger.warning(
-                        f"Skipping large file {relative_path}: Token count ({len(content)}) exceeds limit"
-                    )
-                    continue
-
-                doc = Document(
-                    text=content,
-                    meta_data={
-                        "file_path": relative_path,
-                        "type": ext[1:],
-                        "is_code": False,
-                        "is_implementation": False,
-                        "title": relative_path,
-                        "encoding_status": status,  # Track how file was read
-                    },
-                )
-                documents.append(doc)
-            except Exception as e:
-                logger.error(f"Error processing {file_path}: {e}")
+            relative_path = os.path.relpath(file_path, path)
+            if len(content) > MAX_EMBEDDING_LENGTH:
+                logger.warning(f"Skipping large file {relative_path}: exceeds limit")
+                continue
+            ext = os.path.splitext(relative_path)[1]
+            doc = Document(
+                text=content,
+                meta_data={
+                    "file_path": relative_path,
+                    "type": ext[1:] if ext else "",
+                    "is_code": False,
+                    "is_implementation": False,
+                    "title": relative_path,
+                    "encoding_status": status,
+                },
+            )
+            documents.append(doc)
 
     logger.info(f"Found {len(documents)} files to be processed")
     return documents
@@ -581,7 +806,6 @@ class DatabaseManager:
         if not documents:
             return []
 
-        logger.info(f"Updating database with {len(documents)} new documents...")
         key = (
             os.path.basename(self.db_info["db_file_path"])
             if self.db_info

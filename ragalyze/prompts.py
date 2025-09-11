@@ -164,5 +164,72 @@ Code:
 )
 
 
-if __name__ == "__main__":
-    print(FIND_FUNCTION_CALL_TEMPLATE.call(function_name="EVMDialect::builtin()"))
+"""
+How to use?
+result = FIND_DECLARATION_DEFINITION_TEMPLATE.call(
+      target_name="process_data",
+      calling_function="handle_request",
+      calling_function_body="void handle_request() { DataProcessor p; p.process_data(data); }",
+  )
+
+"""
+# Prompt for finding declaration and definition in codebase
+FIND_DECLARATION_DEFINITION_TEMPLATE = Prompt(
+    PROMPT_TEMPLATE.call(
+        task_description="Find the true definition of {{target_name}} that is being called in function {{calling_function}}",
+        context=r"{{calling_function_body}}",
+        instructions=r"""1. Analyze the calling function context to understand how {{target_name}} is being used
+2. Examine the retrieved documents between <START_OF_CONTEXT> and <END_OF_CONTEXT> to identify all candidate definitions of {{target_name}}
+3. Determine which specific definition is being called based on:
+   - Function parameter types and counts
+   - Template arguments (if applicable)
+   - Object type and inheritance hierarchy
+   - Function signature matching
+   - Context of the call site
+4. If multiple valid candidates exist, explain why one is more likely than others
+5. Provide the exact code snippet with line numbers if available
+6. Include the file path for each found declaration/definition
+7. If the target cannot be resolved with the given context, state this clearly""",
+        output_format=r"""Resolved Definition:
+[File path]: [Line numbers]
+[Code snippet]
+""",
+#         example=r"""Target: process_data
+# Calling Function: handle_request
+
+# Calling Function Context:
+# void handle_request(Request req) {
+#     // ...
+#     DataProcessor processor;
+#     processor.process_data(req.get_payload());
+#     // ...
+# }
+
+# Retrieved Documents:
+# data_processor.h:25: virtual void DataProcessor::process_data(const std::string& data);
+# data_processor.cpp:50: void DataProcessor::process_data(const std::string& data) { /* generic implementation */ }
+# json_processor.h:30: class JsonProcessor : public DataProcessor {
+#     void process_data(const std::string& data) override;
+# }
+# json_processor.cpp:40: void JsonProcessor::process_data(const std::string& data) { /* JSON-specific implementation */ }
+
+# Expected Output:
+# Resolved Definition:
+# data_processor.cpp:50: void DataProcessor::process_data(const std::string& data) { /* generic implementation */ }
+
+# Analysis:
+# The calling function creates a DataProcessor object (not JsonProcessor), so the base class implementation is called. The parameter type matches (std::string), and there's no template specialization or override that would change this resolution.
+
+# Other Candidates:
+# json_processor.cpp:40: void JsonProcessor::process_data(const std::string& data) { /* JSON-specific implementation */ }
+# This override would only be called if the object was of type JsonProcessor.
+
+# Call Site Context:
+# process_data is called on a DataProcessor object with a std::string parameter from req.get_payload()""",
+    )
+)
+
+
+if __name__ == "__main__":   
+    print(PROMPT_TEMPLATE.call(
+        task_description="Summarize the following text", context='1'))

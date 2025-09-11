@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "RAGalyze"
-version = "0.2.3"
+version = "0.1.0"
 description = "Repository Analysis and Query Library with RAG capabilities"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = {file = "LICENSE"}
 authors = [
     {name = "Haoyang Ma", email = "haoyanghkust@gmail.com"},
@@ -61,9 +61,6 @@ packages = ["ragalyze", "ragalyze.configs", "ragalyze.rag", "ragalyze.rag.splitt
 "ragalyze" = ["configs/*.yaml", "configs/*.yml"]
 
 # Extension modules
-[[tool.setuptools.ext-modules]]
-name = "ragalyze.rag.bm25_c_extension"
-sources = ["ragalyze/rag/bm25_c_extension.c"]
 
 [[tool.setuptools.ext-modules]]
 name = "ragalyze.rag.treesitter_parse"

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import treesitter_parse
 """
 Tree-sitter AST Parser
 
@@ -28,16 +29,28 @@ test_codes_bm25_funcs = [
         ('python', "class TestClass: def method(self): self.attr.method_call()", sorted(["[CLASS]TestClass", "[FUNC]method", "[CALL]method_call"])),
         # 测试不同语言的函数调用
         ('cpp', "std::cout << obj->method();", sorted(["[CALL]method"])),  # C++ pointer call
+        ('cpp', "std::cout << obj->method1()->method2();", sorted(["[CALL]method1", "[CALL]method2"])),  # C++ pointer call
         ('javascript', "obj.property.method();", sorted(["[CALL]method"])),  # JavaScript/Python style
         ('javascript', "document.getElementById('test').addEventListener('click', handler);", sorted(["[CALL]getElementById", "[CALL]addEventListener"])),  # Complex JS call
         # 测试额外的边缘情况
         ('cpp', "int function_name(param) {}", sorted(["[FUNC]function_name"])),  # C++ prototype
         ('cpp', "void method();", sorted(["[FUNC]method"])),  # C++ prototype
         ('java', "public static int getValue();", sorted(["[FUNC]getValue"])),  # Java prototype
-        ('cpp', "CodeTransform::operator()", sorted(["CodeTransform", "[CALL]operator"])),
-        ('cpp', "void CodeTransform::operator()()", sorted(["CodeTransform", "[FUNC]operator", "[]operator"])),
+        ('cpp', "CodeTransform::operator()", sorted(["[CALL]CodeTransform::operator()", "[CALL]operator()"])),
+        ('cpp', "void CodeTransform::operator()();", sorted(["[CALL]operator()", "[FUNC]CodeTransform::operator()"])),
         # 测试类方法调用
-        ('cpp', "std::vector<int>::push_back(value)", sorted(["[CALL]push_back"])),  # Another C++ class method call
+        # ('cpp', "std::vector<int>::push_back(value)", sorted(["[CALL]push_back"])),  # Another C++ class method call
+        ('cpp', 'BuiltinFunctionForEVM const& builtin(BuiltinHandle const& _handle) const override;', sorted(["[FUNC]builtin"])),  # C++ method with override - CORRECT SYNTAX
+        ('cpp', """
+541: void CodeTransform::operator()(Break const& _break)
+542: {
+543: 	yulAssert(!m_context->forLoopStack.empty(), "Invalid break-statement. Requires surrounding for-loop in code generation.");
+544: 	m_assembly.setSourceLocation(originLocationOf(_break));
+545: 
+546: 	Context::JumpInfo const& jump = m_context->forLoopStack.top().done;
+547: 	m_assembly.appendJumpTo(jump.label, appendPopUntil(jump.targetStackHeight));
+548: }
+         """, sorted(['[CALL]appendJumpTo', '[CALL]appendPopUntil', '[CALL]empty', '[CALL]operator()', '[CALL]originLocationOf', '[CALL]setSourceLocation', '[CALL]top', '[CALL]yulAssert', '[FUNC]CodeTransform::operator()']))
     ]
 
 def parse_code(code, language):
@@ -52,8 +65,7 @@ def parse_code(code, language):
         str: A string representation of the parsed AST
     """
     try:
-        # Import the C extension
-        import treesitter_parse
+        # Import the C extension - try both absolute and relative imports
         return treesitter_parse.parse_code_with_treesitter(code, language)
     except ImportError:
         # Fallback implementation if C extension is not available
@@ -71,8 +83,7 @@ def tokenize_for_bm25(code, language=None):
         list: List of tokens with prefixes like [FUNC]function_name, [CALL]function_name
     """
     try:
-        # Try to import the C extension directly first
-        import treesitter_parse
+        # Try to import the C extension - try both absolute and relative imports
         return treesitter_parse.tokenize_for_bm25(code, language)
     except ImportError:
         raise RuntimeError("C extension treesitter_parse is not available.")
@@ -81,6 +92,9 @@ def main():
     """Test the Tree-sitter parser with the provided test cases."""
     print("Tree-sitter AST Parser Test")
     print("==========================")
+    
+    # 1: open the debug mode, 0: close the debug mode
+    treesitter_parse.set_debug_mode(1)
     
     # For each test code, parse with different languages
     for i, (lang, code, expected_tokens) in enumerate(test_codes_bm25_funcs):  # Only first 5 for brevity

@@ -1,5 +1,5 @@
 from ragalyze import *
-from ragalyze.prompts import FIND_FUNCTION_CALL_TEMPLATE
+from ragalyze.prompts import FIND_DECLARATION_DEFINITION_TEMPLATE
 
 repo_path = "/Users/mac/repo/solidity"
 # repo_path = "/home/lyr/solidity"
@@ -17,14 +17,29 @@ dict_config.rag.query_driven.top_k = 100
 # 排序策略
 dict_config.rag.retriever.fusion = "normal_add"
 
-dict_config.rag.embedder.force_embedding = True
+# dict_config.rag.embedder.force_embedding = True
 
 set_global_configs(dict_config)
 
-bm25_keywords = "[CALL]CodeTransform::operator() builtin"
+
+bm25_keywords = "[FUNC]CodeTransform::operator() [CALL]builtin"
 faiss_query = "CodeTransform::operator() calls builtin"
 # question = FIND_FUNCTION_CALL_TEMPLATE.call(function_name="EVMDialect::builtin")
-question = "How does CodeTransform::operator() call EVMDialect::builtin? Retrieve relevant code snippets to answer this question."
+question = FIND_DECLARATION_DEFINITION_TEMPLATE.call(
+    function_name="operator()",
+    calling_function="builtin",
+    calling_function_body="""
+void CodeTransform::operator()(FunctionCall const& _call)
+{
+	yulAssert(m_scope, "");
+
+	m_assembly.setSourceLocation(originLocationOf(_call));
+	if (std::optional<BuiltinHandle> builtinHandle = m_dialect.findBuiltin(_call.functionName.name.str()))
+	{
+		BuiltinFunctionForEVM const& builtin = m_dialect.builtin(*builtinHandle);
+		for (auto&& [i, arg]: _call.arguments | ranges::views::enumerate | ranges::views 
+"""
+)
 
 result = query_repository(
     repo_path=repo_path,
@@ -35,3 +50,4 @@ result = query_repository(
 
 print_result(result)
 save_query_results(result, repo_path, bm25_keywords, faiss_query, question)
+

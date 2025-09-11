@@ -2,6 +2,6 @@
 
 # Import the treesitter_parse module if available
 try:
-    from . import treesitter_parse
+    from . import treesitter_parse_interface
 except ImportError:
     pass

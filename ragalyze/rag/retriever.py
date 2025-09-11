@@ -417,7 +417,6 @@ class BM25Retriever:
             return []
 
     def filter_and_score(self, query: str) -> tuple[List[int], List[float]]:
-    def filter_and_score(self, query: str) -> tuple[List[int], List[float]]:
         """Filter documents using BM25 and return document indices and normalized scores."""
         try:
             # Get BM25 scores for all documents
@@ -427,11 +426,9 @@ class BM25Retriever:
             doc_indices = sorted(
                 range(len(scores)), key=lambda i: scores[i], reverse=True
             )[:self.top_k]
-            )[:self.top_k]
 
             filtered_scores = [scores[i] for i in doc_indices]
 
-            logger.info(f"BM25 filtered {len(doc_indices)} candidates from {len(self.documents)} documents")
             logger.info(f"BM25 filtered {len(doc_indices)} candidates from {len(self.documents)} documents")
             return doc_indices, filtered_scores
 
@@ -509,10 +506,7 @@ class SingleVectorRetriever(FAISSRetriever):
         retrieved_docs = [self.original_doc[i] for i in first_output.doc_indices]
         doc_indices = first_output.doc_indices
         doc_scores = first_output.doc_scores
-        # Get the documents based on the indices
-        retrieved_docs = [self.original_doc[i] for i in first_output.doc_indices]
-        doc_indices = first_output.doc_indices
-        doc_scores = first_output.doc_scores
+
 
         # Create a new RetrieverOutput with the documents
         return [
@@ -548,7 +542,6 @@ class DualVectorRetriever:
         )
 
     def _build_indices(self):
-    def _build_indices(self):
         """Builds the code index and the summary index."""
         if not self.dual_docs:
             logger.warning("No documents available for building indices")
@@ -570,7 +563,6 @@ class DualVectorRetriever:
 
         self.code_retriever = FAISSRetriever(
             top_k=self.top_k,
-            top_k=self.top_k,
             embedder=self.embedder,
             documents=code_docs,
             document_map_func=lambda doc: doc.vector,
@@ -590,14 +582,12 @@ class DualVectorRetriever:
 
         self.understanding_retriever = FAISSRetriever(
             top_k=self.top_k,
-            top_k=self.top_k,
             embedder=self.embedder,
             documents=understanding_docs,
             document_map_func=lambda doc: doc.vector,
         )
         logger.info("Understanding FAISS index built successfully.")
 
-    def call(self, query_str: str) -> RetrieverOutputType:
     def call(self, query_str: str) -> RetrieverOutputType:
         """
         Performs dual retrieval.
@@ -613,7 +603,6 @@ class DualVectorRetriever:
         ), f"Query must be a string, got {type(query_str)}"
 
         self._build_indices()
-        self._build_indices()
 
         if not self.dual_docs:
             return RetrieverOutput(
@@ -622,10 +611,8 @@ class DualVectorRetriever:
 
         # 1. Retrieve from the code index
         code_results = self.code_retriever.call(query_str, top_k=self.top_k)[0]
-        code_results = self.code_retriever.call(query_str, top_k=self.top_k)[0]
         # 2. Retrieve from the summary index
         understanding_results = self.understanding_retriever.call(
-            query_str, top_k=self.top_k
             query_str, top_k=self.top_k
         )[0]
 
@@ -666,7 +653,6 @@ class DualVectorRetriever:
         doc_indices = []
         doc_scores = []
         for idx, chunk_id in enumerate(
-            sorted_chunk_ids[: min(self.top_k, len(sorted_chunk_ids))]
             sorted_chunk_ids[: min(self.top_k, len(sorted_chunk_ids))]
         ):
             if chunk_id in self.doc_map:
@@ -729,13 +715,11 @@ class HybridRetriever:
         )
 
     def _initialize_faiss_retriever(self, documents: List[Document | DualVectorDocument], top_k: int):
-    def _initialize_faiss_retriever(self, documents: List[Document | DualVectorDocument], top_k: int):
         """Initialize FAISS retriever based on vector type."""
         if self.use_dual_vector:
             faiss_retriever = DualVectorRetriever(
                 dual_docs=documents,
                 embedder=self.embedder,
-                top_k=top_k,
                 top_k=top_k,
             )
         else:
@@ -743,13 +727,11 @@ class HybridRetriever:
                 documents=documents,
                 embedder=self.embedder,
                 top_k=top_k,
-                top_k=top_k,
                 document_map_func=lambda doc: doc.vector,
             )
         logger.info(f"FAISS retriever initialized successfully")
         return faiss_retriever
 
-    def _initialize_bm25_retriever(self, documents: List[Document | DualVectorDocument], top_k: int) -> BM25Retriever:
     def _initialize_bm25_retriever(self, documents: List[Document | DualVectorDocument], top_k: int) -> BM25Retriever:
         """Initialize BM25 retriever."""
         bm25_retriever = BM25Retriever(
@@ -798,14 +780,12 @@ class HybridRetriever:
             for i, doc in enumerate(faiss_indices):
                 scores[faiss_indices[i]] += zscore_faiss_scores[i] * (1 - self.bm25_weight)
             self.doc_id_to_bm25faiss_scores = {documents[id].id: scores[id] for id in bm25_indices}
-            self.doc_id_to_bm25faiss_scores = {documents[id].id: scores[id] for id in bm25_indices}
         else:
             id_to_scores = self._rrf([bm25_indices, faiss_indices], [self.bm25_weight, 1 - self.bm25_weight])
             scores = list(id_to_scores.values())
             self.doc_id_to_rrf_scores = {documents[id].id: score for (id, score) in id_to_scores.items()}
         return scores
 
-    def call(self, bm25_keywords: str, faiss_query: str) -> List[RetrieverOutput]:
     def call(self, bm25_keywords: str, faiss_query: str) -> List[RetrieverOutput]:
         """Perform hybrid retrieval combining BM25 and FAISS."""
 
@@ -825,30 +805,13 @@ class HybridRetriever:
                 scores = [0] * len(faiss_results[0].doc_indices)
                 for i, doc in enumerate(faiss_results[0].doc_indices):
                     scores[doc] = faiss_results[0].doc_scores[i]
-            if bm25_keywords:
-                bm25_retriever = self._initialize_bm25_retriever(self.documents, top_k=len(self.documents))
-                bm25_indices, bm25_scores = bm25_retriever.filter_and_score(bm25_keywords)
-            else:
-                bm25_indices, bm25_scores = [], []
-            faiss_retriever = self._initialize_faiss_retriever(self.documents, top_k=len(self.documents))
-            faiss_results = faiss_retriever.call(faiss_query)
-            if bm25_keywords:
-                assert len(faiss_results[0].documents) == len(bm25_indices), f"Mismatch in number of documents between BM25 and FAISS results: {len(bm25_indices)} vs {len(faiss_results[0]['documents'])}"
-                scores = self._mix_bm25_score_faiss_score(self.documents, bm25_indices, bm25_scores, faiss_results)
-            else:
-                scores = [0] * len(faiss_results[0].doc_indices)
-                for i, doc in enumerate(faiss_results[0].doc_indices):
-                    scores[doc] = faiss_results[0].doc_scores[i]
             doc_indices = sorted(
                 range(len(scores)), key=lambda i: scores[i], reverse=True
-            )[:self.top_k]
             )[:self.top_k]
             return [
                 RetrieverOutput(
                     doc_indices=doc_indices,
                     doc_scores=[scores[i] for i in doc_indices],
-                    query=f"BM25 keywords: {bm25_keywords}, FAISS query: {faiss_query}",
-                    documents=[self.documents[i] for i in doc_indices],
                     query=f"BM25 keywords: {bm25_keywords}, FAISS query: {faiss_query}",
                     documents=[self.documents[i] for i in doc_indices],
                 )
@@ -883,7 +846,6 @@ class QueryDrivenRetriever(HybridRetriever):
         super().__init__(documents, **kwargs)
 
     def call(self, bm25_keywords: str, faiss_query: str) -> List[RetrieverOutput]:
-    def call(self, bm25_keywords: str, faiss_query: str) -> List[RetrieverOutput]:
         """
         Retrieve documents using BM25 index and on-demand embedding with FAISS.
 
@@ -902,21 +864,13 @@ class QueryDrivenRetriever(HybridRetriever):
         bm25_retriever = self._initialize_bm25_retriever(self.documents, top_k=self.query_driven_top_k)
         query_related_doc_indices, query_related_doc_scores = bm25_retriever.filter_and_score(bm25_keywords)
 
-        bm25_retriever = self._initialize_bm25_retriever(self.documents, top_k=self.query_driven_top_k)
-        query_related_doc_indices, query_related_doc_scores = bm25_retriever.filter_and_score(bm25_keywords)
-
         filtered_docs = [self.documents[i] for i in query_related_doc_indices]
         doc_id_to_score = {doc.id if isinstance(doc, Document) else doc.original_doc.id: score for doc, score in zip(filtered_docs, query_related_doc_scores)}
-        doc_id_to_score = {doc.id if isinstance(doc, Document) else doc.original_doc.id: score for doc, score in zip(filtered_docs, query_related_doc_scores)}
 
-        self.bm25_documents = deepcopy(filtered_docs)
         self.bm25_documents = deepcopy(filtered_docs)
         # Step 2: Use database manager to embed and cache documents
         logger.info("Step 2: Embedding and caching documents using DatabaseManager")
-        if self.update_database:
-            embedded_docs = self.update_database(filtered_docs)
-        else:
-            embedded_docs = filtered_docs
+
         if self.update_database:
             embedded_docs = self.update_database(filtered_docs)
         else:
@@ -949,122 +903,3 @@ class QueryDrivenRetriever(HybridRetriever):
                 f"Query-based retrieval failed: {e}, falling back to pure FAISS search"
             )
             raise
-
-def test_multithreading():
-    """Test the multithreading implementation for correctness and performance."""
-    import time
-    import numpy as np
-    
-    # 创建更多测试数据以更好地展示多线程效果
-    codes = [
-        "def add(a, b): return a + b",
-        "def call_add(): x = add(1, 2) return x",
-        "def mul(a, b): return a * b",
-        "def main(): print(add(3, 4))",
-        "def use_add(): print(add(3, 4))",
-        "class Calculator: pass",
-        "def subtract(a, b): return a - b",
-        "int const& foo(S* s) { return s->add(); }",
-        # 测试C++关键字不会被误识别为函数调用
-        "for (int i = 0; i < 10; i++) { print(i); }",
-        # 测试Java关键字不会被误识别为函数调用
-        "public static void main(String[] args) { System.out.println(\"Hello\"); }",
-        # 测试JavaScript关键字不会被误识别为函数调用
-        "function test() { if (true) { return; } }",
-        # 测试更复杂的函数调用
-        "def complex_call(): obj.method1().method2(param1, param2)",
-        "def nested_call(): outer(inner(a, b), c)",
-        "class TestClass: def method(self): self.attr.method_call()",
-        # 测试不同语言的函数调用
-        "std::cout << obj->method();",  # C++ pointer call
-        "obj.property.method();",  # JavaScript/Python style
-        "document.getElementById('test').addEventListener('click', handler);",  # Complex JS call
-        # 测试额外的边缘情况
-        "int function_name(param);",  # C++ prototype
-        "void method();",  # C++ prototype
-        "public static int getValue();",  # Java prototype
-        "CodeTransform::operator()",
-        "CodeTransform::operator()()",
-        # 测试类方法调用
-        "std::vector<int>::push_back(value)",  # Another C++ class method call
-    ] 
-
-    docs = [Document(text=code, id=str(i)) for i, code in enumerate(codes)]
-    
-    # 测试单线程版本
-    start_time = time.time()
-    bm25_retriever_single = BM25Retriever(documents=docs, use_multithreading=False)
-    single_thread_time = time.time() - start_time
-    
-    # 测试多线程版本
-    start_time = time.time()
-    bm25_retriever_multi = BM25Retriever(documents=docs, use_multithreading=True)
-    multi_thread_time = time.time() - start_time
-    
-    print(f"Single-threaded initialization time: {single_thread_time:.4f} seconds")
-    print(f"Multi-threaded initialization time: {multi_thread_time:.4f} seconds")
-    print(f"Speedup: {single_thread_time / multi_thread_time:.2f}x")
-    
-    # 验证结果一致性
-    query = "CodeTransform [CLASSCALL]operator"
-    scores_single = bm25_retriever_single.get_scores(query)
-    scores_multi = bm25_retriever_multi.get_scores(query)
-    
-    # 检查结果是否相同 (使用numpy.allclose处理浮点数比较)
-    if np.allclose(scores_single, scores_multi):
-        print("✓ Results are consistent between single-threaded and multi-threaded versions")
-    else:
-        print("✗ Results differ between single-threaded and multi-threaded versions")
-        print(f"Max difference: {np.max(np.abs(np.array(scores_single) - np.array(scores_multi)))}")
-        
-    return single_thread_time, multi_thread_time
-
-
-if __name__ == "__main__":
-
-    # 原始测试代码
-    # 假设有一批函数体（与test-faiss.py中使用的相同）
-    codes = [
-        "def add(a, b): return a + b",
-        "def call_add(): x = add(1, 2) return x",
-        "def mul(a, b): return a * b",
-        "def main(): print(add(3, 4))",
-        "def use_add(): print(add(3, 4))",
-        "class Calculator: pass",
-        "def subtract(a, b): return a - b",
-        "int const& foo(S* s) { return s->add(); }",
-        # 测试C++关键字不会被误识别为函数调用
-        "for (int i = 0; i < 10; i++) { print(i); }",
-        # 测试Java关键字不会被误识别为函数调用
-        "public static void main(String[] args) { System.out.println(\"Hello\"); }",
-        # 测试JavaScript关键字不会被误识别为函数调用
-        "function test() { if (true) { return; } }",
-        # 测试更复杂的函数调用
-        "def complex_call(): obj.method1().method2(param1, param2)",
-        "def nested_call(): outer(inner(a, b), c)",
-        "class TestClass: def method(self): self.attr.method_call()",
-        # 测试不同语言的函数调用
-        "std::cout << obj->method();",  # C++ pointer call
-        "obj.property.method();",  # JavaScript/Python style
-        "document.getElementById('test').addEventListener('click', handler);",  # Complex JS call
-        # 测试额外的边缘情况
-        "int function_name(param);",  # C++ prototype
-        "void method();",  # C++ prototype
-        "public static int getValue();",  # Java prototype
-        "CodeTransform::operator()",
-        "CodeTransform::operator()()",
-        # 测试类方法调用
-        "std::vector<int>::push_back(value)",  # Another C++ class method call
-    ]
-
-    docs = [Document(text=code, id=str(i)) for i, code in enumerate(codes)]
-    # 初始化BM25检索器
-    bm25_retriever = BM25Retriever(documents=docs, use_multithreading=False)
-
-    # 查询
-    query = "CodeTransform [CLASSCALL]operator"
-    scores = bm25_retriever.get_scores(query)
-
-    print("Results:")
-    for idx, score in enumerate(scores):
-        print(f"score={score:.3f} code: {codes[idx]}")

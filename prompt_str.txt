@@ -37,142 +37,58 @@ IMPORTANT FORMATTING RULES:
 <END_OF_SYS_PROMPT>
 <START_OF_CONTEXT>
 1.
-File Path: libyul/backends/evm/NoOutputAssembly.cpp
+File Path: libyul/backends/evm/NoOutputAssembly.h
 Code Snippet:
 ```
- implemented.");
-183: }
-184: 
-185: void NoOutputAssembly::appendAuxDataLoadN(uint16_t)
-186: {
-187: 	yulAssert(false, "auxdataloadn not implemented.");
-188: }
-189: 
-190: void NoOutputAssembly::appendEOFCreate(ContainerID)
-191: {
-192: 	yulAssert(false, "eofcreate not implemented.");
-193: 
-194: }
-195: void NoOutputAssembly::appendReturnContract(ContainerID)
-196: {
-197: 	yulAssert(false, "returncontract not implemented.");
-198: }
-199: 
-200: NoOutputEVMDialect::NoOutputEVMDialect(EVMDialect const& _copyFrom):
-201: 	EVMDialect(_copyFrom.evmVersion(), _copyFrom.eofVersion(), _copyFrom.providesObjectAccess())
-202: {
-203: 	for (auto& fun: m_functions)
-204: 		if (fun)
-205: 			modifyBuiltinToNoOutput(*fun);
-206: }
-207: 
-208: BuiltinFunctionForEVM const& NoOutputEVMDialect::builtin(BuiltinHandle const& _handle) const
-209: {
-210: 	if (isVerbatimHandle(_handle))
-211: 		// for verbatims the modification is performed lazily as they are stored in a lookup table fashion
-212: 		if (
-213: 			auto& builtin = m_verbatimFunctions[_handle.id];
-214: 			!builtin
-215: 		)
-216: 		{
-217: 			builtin = std::make_unique<BuiltinFunctionForEVM>(createVerbatimFunctionFromHandle(_handle));
-218: 			modifyBuiltinToNoOutput(*builtin);
-219: 		}
-220: 	return EVMDialect::builtin(_handle);
-221: }
+71: 	void appendJumpToIf(LabelID _labelId, JumpType _jumpType) override;
+72: 
+73: 	void appendAssemblySize() override;
+74: 	std::pair<std::shared_ptr<AbstractAssembly>, SubID> createSubAssembly(bool _creation, std::string _name = "") override;
+75: 	FunctionID registerFunction(uint8_t _args, uint8_t _rets) override;
+76: 	void beginFunction(FunctionID) override;
+77: 	void endFunction() override;
+78: 	void appendFunctionCall(FunctionID _functionID) override;
+79: 	void appendFunctionReturn() override;
+80: 	void appendDataOffset(std::vector<SubID> const& _subPath) override;
+81: 	void appendDataSize(std::vector<SubID> const& _subPath) override;
+82: 	SubID appendData(bytes const& _data) override;
+83: 
+84: 	void appendToAuxiliaryData(bytes const&) override {}
+85: 
+86: 	void appendImmutable(std::string const& _identifier) override;
+87: 	void appendImmutableAssignment(std::string const& _identifier) override;
+88: 
+89: 	void appendAuxDataLoadN(uint16_t) override;
+90: 	void appendEOFCreate(ContainerID) override;
+91: 	void appendReturnContract(ContainerID) override;
+92: 
+93: 	void markAsInvalid() override {}
+94: 
+95: 	langutil::EVMVersion evmVersion() const override { return m_evmVersion; }
+96: 
+97: private:
+98: 	NoOutputAssemblyContext m_context = {};
+99: 	int m_stackHeight = 0;
+100: 	FunctionID m_currentFunctionID = 0;
+101: 	langutil::EVMVersion m_evmVersion;
+102: };
+103: 
+104: 
+105: /**
+106:  * EVM dialect that does not generate any code.
+107:  */
+108: class NoOutputEVMDialect: public EVMDialect
+109: {
+110: public:
+111: 	explicit NoOutputEVMDialect(EVMDialect const& _copyFrom);
+112: 
+113: 	BuiltinFunctionForEVM const& builtin(BuiltinHandle const& _handle) const override;
+114: };
+115: 
+116: 
+117: }
 ```
 2.
-File Path: test/libsolidity/syntaxTests/inlineAssembly/solidity_keywords.sol
-Code Snippet:
-```
-
-27:   let internal := 1
-28:   let immutable := 1
-29:   let import := 1
-30:   let is := 1
-31:   let library := 1
-32:   let mapping := 1
-33:   let memory := 1
-34:   let modifier := 1
-35:   let new := 1
-36:   let override := 1
-37:   let payable := 1
-38:   let public := 1
-39:   let pragma := 1
-40:   let private := 1
-41:   let pure := 1
-42:   let receive := 1
-43:   // return is a builtin in EVMDialect
-44:   return(0, 0)
-45:   let returns := 1
-46:   let storage := 1
-47:   let calldata := 1
-48:   let struct := 1
-49:   let throw := 1
-50:   let try := 1
-51:   // type shadows the Solidity function
-52:   let unicode := 1
-53:   let using := 1
-54:   let view := 1
-55:   let virtual := 1
-56:   let while := 1
-57:   let wei := 1
-58:   let gwei := 1
-59:   let ether := 1
-60:   let seconds := 1
-61:   let minutes := 1
-62:   let hours := 1
-63:   let days := 1
-64:   let weeks := 1
-65:   let years := 1
-66:   let int := 1
-67:   let uint := 1
-68:   let bytes := 1
-69:   // byte is a builtin in EVMDialect
-70:   pop(byte(1, 1))
-71:   let string := 1
-72:   // address is a builtin in EVMDialect
-73:   pop(address())
-74:   let bool := 1
-75:   let fixed := 1
-76:   let ufixed := 1
-77:   let after := 1
-78:   let alias := 1
-79:   let apply := 1
-80:   let auto := 1
-81:   // case is a Yul keyword
-82:   let copyof := 1
-83:   // default is a Yul keyword
-84:   let define := 1
-85:   let final := 1
-86:   let implements := 1
-87:   let in := 1
-88:   let inline := 1
-89:   // let is a Yul keyword
-90:   let macro := 1
-91:   let match := 1
-92:   let mutable := 1
-93:   let null := 1
-94:   let of := 1
-95:   let partial := 1
-96:   let promise := 1
-97:   let reference := 1
-98:   let relocatable := 1
-99:   let sealed := 1
-100:   let sizeof := 1
-101:   let static := 1
-102:   let supports := 1
-103:   // switch is a Yul keyword
-104:   let typedef := 1
-105:   let typeof := 1
-106:   let unchecked := 1
-107:   let var := 1
-108:     }
-109:   }
-110: }
-
-```
-3.
 File Path: libyul/backends/evm/EVMDialect.h
 Code Snippet:
 ```
@@ -243,506 +159,2512 @@ Code Snippet:
 88: 	static EVMDialect const& strictAssemblyForEVM(langutil::EVMVersion _evmVersion, std::optional<uint8_t> _eofVersion);
 89
 ```
-4.
-File Path: libyul/AsmAnalysis.cpp
+3.
+File Path: libyul/optimiser/Semantics.h
 Code Snippet:
 ```
-_location,
-676: 			"\"" + _identifier.str() + "\" is not a valid identifier (contains consecutive dots)."
-677: 		);
-678: 
-679: 	if (m_dialect.reservedIdentifier(_identifier.str()))
-680: 		m_errorReporter.declarationError(
-681: 			5017_error,
-682: 			_location,
-683: 			"The identifier \"" + _identifier.str() + "\" is reserved and can not be used."
-684: 		);
-685: }
-686: 
-687: bool AsmAnalyzer::validateInstructions(std::string const& _instructionIdentifier, langutil::SourceLocation const& _location)
-688: {
-689: 	// NOTE: This function uses the default EVM version instead of the currently selected one.
-690: 	auto const& defaultEVMDialect = EVMDialect::strictAssemblyForEVM(EVMVersion{}, std::nullopt);
-691: 	auto const builtinHandle = defaultEVMDialect.findBuiltin(_instructionIdentifier);
-692: 	if (builtinHandle && defaultEVMDialect.builtin(*builtinHandle).instruction.has_value())
-693: 		return validateInstructions(*defaultEVMDialect.builtin(*builtinHandle).instruction, _location);
-694: 
-695: 	// TODO: Change `prague()` to `EVMVersion{}` once EOF gets deployed
-696: 	auto const& eofDialect = EVMDialect::strictAssemblyForEVM(EVMVersion::prague(), 1);
-697: 	auto const eofBuiltinHandle = eofDialect.findBuiltin(_instructionIdentifier);
-698: 	if (eofBuiltinHandle && eofDialect.builtin(*eofBuiltinHandle).instruction.has_value())
-699: 		return validateInstructions(*eofDialect.builtin(*eofBuiltinHandle).instruction, _location);
-700: 
-701: 	return false;
-702: }
-703: 
-704: bool AsmAnalyzer::validateInstructions(evmasm::Instruction _instr, SourceLocation const& _location)
-705: {
-706: 	// We assume that returndatacopy, returndatasize and staticcall are either all available
-707: 	// or all not available.
-708: 	yulAssert(m_evmVersion.supportsReturndata() == m_evmVersion.hasStaticCall(), "");
-709: 	// Similarly we assume bitwise shifting and create2 go together.
-710: 	yulAssert(m_evmVersion.hasBitwiseShifting() == m_evmVersion.hasCreate2(), "");
-711: 
-712: 	// These instructions are disabled in the dialect.
-713: 	yulAssert(
-714: 		_instr != evmasm::Instruction::JUMP &&
-715: 		_instr != evmasm::Instruction::JUMPI &&
-716: 		_instr != evmasm::Instruction::JUMPDEST,
-717: 	"");
-718: 
-719: 	auto errorForVM = [&](ErrorId _errorId, std::string const& vmKindMessage) {
-720: 		m_errorReporter.typeError(
-721: 			_errorId,
-722: 			_location,
-723: 			fmt::format(
-724: 				"The \"{instruction}\" instruction is {kind} VMs (you are currently compiling for \"{version}\").",
-725: 				fmt::arg("instruction", boost::to_lower_copy(instructionInfo(_instr, m_evmVersion).name)),
-726: 				fmt::arg("kind", vmKindMessage),
-727: 				fmt::arg("version", m_evmVersion.name())
-728: 			)
-729: 		);
-730: 	};
-731: 
-732: 	// The errors below are meant to be issued when processing
+103: 
+104: 	bool canBeRemoved(bool _allowMSizeModification = false) const
+105: 	{
+106: 		if (_allowMSizeModification)
+107: 			return m_sideEffects.canBeRemovedIfNoMSize;
+108: 		else
+109: 			return m_sideEffects.canBeRemoved;
+110: 	}
+111: 	bool cannotLoop() const { return m_sideEffects.cannotLoop; }
+112: 	bool invalidatesStorage() const { return m_sideEffects.storage == SideEffects::Write; }
+113: 	bool invalidatesMemory() const { return m_sideEffects.memory == SideEffects::Write; }
+114: 
+115: 	SideEffects sideEffects() { return m_sideEffects; }
+116: 
+117: private:
+118: 	Dialect const& m_dialect;
+119: 	std::map<YulName, SideEffects> const* m_functionSideEffects = nullptr;
+120: 	SideEffects m_sideEffects;
+121: };
+122: 
+123: /**
+124:  * This class can be used to determine the side-effects of user-defined functions.
+125:  *
+126:  * It is given a dialect and a mapping that represents the direct calls from user-defined
+127:  * functions to other user-defined functions and built-in functions.
+128:  */
+129: class SideEffectsPropagator
+130: {
+131: public:
+132: 	static std::map<YulName, SideEffects> sideEffects(
+133: 		Dialect const& _dialect,
+134: 		CallGraph const& _directCallGraph
+135: 	);
+136: };
+137: 
+138: /**
+139:  * Class that can be used to find out if certain code contains the MSize instruction
+140:  * or a verbatim bytecode builtin (which is always assumed that it could contain MSize).
+141:  *
+142:  * Note that this is a purely syntactic property meaning that even if this is false,
+143:  * the code can still contain calls to functions that contain the msize instruction.
+144:  *
+145:  * The only safe way to determine this is by passing the full AST.
+146:  */
+147: class MSizeFinder: public ASTWalker
+148: {
+149: public:
+150: 	static bool containsMSize(Dialect const& _dialect, Block const& _ast);
+151: 	static bool containsMSize(Dialect const& _dialect, Object const& _object);
+152: 
+153: 	using ASTWalker::operator();
+154: 	void operator()(FunctionCall const& _funCall) override;
+155: 
+156: private:
+157: 	MSizeFinder(Dialect const& _dialect): m_dialect(_dialect) {}
+158: 	Dialect const& m_dialect;
+159: 	bool m_msizeFound = false;
+160: };
+161: 
+162: /**
+163:  * Class that can be used to find out if the given function contains the ``leave`` statement.
+164:  *
+165:  * Returns true even in the case where the function definition contains another function definition
+166:  * that contains the leave statement.
+167:  */
+168: class LeaveFinder: public ASTWalker
+169: {
+170: public:
+171: 	static bool containsLeave(FunctionDefinition const& _fun)
+172: 	{
+173: 		LeaveFinder f;
+174: 		f(_fun);
+175: 		return f.m_leaveFound;
+176: 	}
+177: 
+178: 	using ASTWalker::operator();
+179: 	void operator()(Leave const&) override { m_leaveFound = true; }
+180:
+```
+4.
+File Path: docs/_static/css/custom-dark.css
+Code Snippet:
+```
+0: 
+1: 
+2: /* DARK MODE STYLING */
+3: 
+4: /* code directives */
+5: 
+6: :root[style*=dark] .method dt,
+7: :root[style*=dark] .class dt,
+8: :root[style*=dark] .data dt,
+9: :root[style*=dark] .attribute dt,
+10: :root[style*=dark] .function dt,
+11: :root[style*=dark] .classmethod dt,
+12: :root[style*=dark] .exception dt,
+13: :root[style*=dark] .descclassname,
+14: :root[style*=dark] .descname {
+15:   background-color: #2d2d2d !important;
+16: }
+17: 
+18: :root[style*=dark] .rst-content dl:not(.docutils) dt {
+19:   background-color: #0008;
+20:   border-top: solid 3px #fff2;
+21:   border-left: solid 3px #fff2;
+22: }
+23: 
+24: :root[style*=dark] em.property {
+25:   color: #888888;
+26: }
+27: 
+28: 
+29: /* tables */
+30: 
+31: :root[style*=dark] .rst-content table.docutils td {
+32:   border: 0px;
+33: }
+34: 
+35: :root[style*=dark] .rst-content table.docutils:not(.field-list) tr:nth-child(2n-1) td {
+36:   background-color: #0002;
+37: }
+38: 
+39: :root[style*=dark] .rst-content pre {
+40:   background: none;
+41: }
+42: 
+43: /* inlined code highlights */
+44: 
+45: :root[style*=dark] .xref,
+46: :root[style*=dark] .py-meth {
+47:   color: #aaddff !important;
+48:   font-weight: normal !important;
+49: }
+50: 
+51: /* highlight color search text */
+52: 
+53: :root[style*=dark] .rst-content .highlighted {
+54:   background: #ff5722;
+55:   box-shadow: 0 0 0 2px #f0978b;
+56: }
+57: 
+58: /* notes, warnings
 ```
 5.
-File Path: libyul/backends/evm/NoOutputAssembly.h
+File Path: docs/_static/css/custom-dark.css
 Code Snippet:
 ```
-71: 	void appendJumpToIf(LabelID _labelId, JumpType _jumpType) override;
-72: 
-73: 	void appendAssemblySize() override;
-74: 	std::pair<std::shared_ptr<AbstractAssembly>, SubID> createSubAssembly(bool _creation, std::string _name = "") override;
-75: 	FunctionID registerFunction(uint8_t _args, uint8_t _rets) override;
-76: 	void beginFunction(FunctionID) override;
-77: 	void endFunction() override;
-78: 	void appendFunctionCall(FunctionID _functionID) override;
-79: 	void appendFunctionReturn() override;
-80: 	void appendDataOffset(std::vector<SubID> const& _subPath) override;
-81: 	void appendDataSize(std::vector<SubID> const& _subPath) override;
-82: 	SubID appendData(bytes const& _data) override;
+0: 
+1: 
+2: /* DARK MODE STYLING */
+3: 
+4: /* code directives */
+5: 
+6: :root[style*=dark] .method dt,
+7: :root[style*=dark] .class dt,
+8: :root[style*=dark] .data dt,
+9: :root[style*=dark] .attribute dt,
+10: :root[style*=dark] .function dt,
+11: :root[style*=dark] .classmethod dt,
+12: :root[style*=dark] .exception dt,
+13: :root[style*=dark] .descclassname,
+14: :root[style*=dark] .descname {
+15:   background-color: #2d2d2d !important;
+16: }
+17: 
+18: :root[style*=dark] .rst-content dl:not(.docutils) dt {
+19:   background-color: #0008;
+20:   border-top: solid 3px #fff2;
+21:   border-left: solid 3px #fff2;
+22: }
+23: 
+24: :root[style*=dark] em.property {
+25:   color: #888888;
+26: }
+27: 
+28: 
+29: /* tables */
+30: 
+31: :root[style*=dark] .rst-content table.docutils td {
+32:   border: 0px;
+33: }
+34: 
+35: :root[style*=dark] .rst-content table.docutils:not(.field-list) tr:nth-child(2n-1) td {
+36:   background-color: #0002;
+37: }
+38: 
+39: :root[style*=dark] .rst-content pre {
+40:   background: none;
+41: }
+42: 
+43: /* inlined code highlights */
+44: 
+45: :root[style*=dark] .xref,
+46: :root[style*=dark] .py-meth {
+47:   color: #aaddff !important;
+48:   font-weight: normal !important;
+49: }
+50: 
+51: /* highlight color search text */
+52: 
+53: :root[style*=dark] .rst-content .highlighted {
+54:   background: #ff5722;
+55:   box-shadow: 0 0 0 2px #f0978b;
+56: }
+57: 
+58: /* notes, warnings, hints */
+59: 
+60: :root[style*=dark] .hint .admonition-title {
+61:   background: #2aa87c !important;
+62: }
+63: 
+64: :root[style*=dark] .warning .admonition-title {
+65:   background: #cc4444 !important;
+66: }
+67: 
+68: :root[style*=dark] .admonition-title {
+69:   background: #3a7ca8 !important;
+70: }
+71: 
+72: :root[style*=dark] .admonition,
+73: :root[style*=dark] .note {
+74:   background-color: #0008 !important;
+75: }
+76: 
+77: 
+78: /* table of contents */
+79: 
+80: :root[style*=dark] .sidebar {
+81:   background-color: #191919 !important;
+82: }
 83: 
-84: 	void appendToAuxiliaryData(bytes const&) override {}
-85: 
-86: 	void appendImmutable(std::string const& _identifier) override;
-87: 	void appendImmutableAssignment(std::string const& _identifier) override;
-88: 
-89: 	void appendAuxDataLoadN(uint16_t) override;
-90: 	void appendEOFCreate(ContainerID) override;
-91: 	void appendReturnContract(ContainerID) override;
-92: 
-93: 	void markAsInvalid() override {}
-94: 
-95: 	langutil::EVMVersion evmVersion() const override { return m_evmVersion; }
-96: 
-97: private:
-98: 	NoOutputAssemblyContext m_context = {};
-99: 	int m_stackHeight = 0;
-100: 	FunctionID m_currentFunctionID = 0;
-101: 	langutil::EVMVersion m_evmVersion;
-102: };
-103: 
-104: 
-105: /**
-106:  * EVM dialect that does not generate any code.
-107:  */
-108: class NoOutputEVMDialect: public EVMDialect
-109: {
-110: public:
-111: 	explicit NoOutputEVMDialect(EVMDialect const& _copyFrom);
-112: 
-113: 	BuiltinFunctionForEVM const& builtin(BuiltinHandle const& _handle) const override;
-114: };
-115: 
-116: 
-117: }
+84: :root[style*=dark] .sidebar-title {
+85:   background-color: #2b2b2b !important;
+86: }
+87: 
+88: :root[style*=dark] .wy-menu-vertical code.docutils.literal.notranslate {
+89
 ```
 6.
-File Path: deps/nlohmann-json/include/nlohmann/thirdparty/hedley/hedley.hpp
+File Path: docs/_static/css/custom-dark.css
 Code Snippet:
 ```
-patch) __has_cpp_attribute(attribute)
-573: #else
-574:     #define JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
-575: #endif
-576: 
-577: #if defined(JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE)
-578:     #undef JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE
-579: #endif
-580: #if defined(__has_cpp_attribute) && defined(__cplusplus)
-581:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
-582: #else
-583:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
-584: #endif
-585: 
-586: #if defined(JSON_HEDLEY_HAS_BUILTIN)
-587:     #undef JSON_HEDLEY_HAS_BUILTIN
-588: #endif
-589: #if defined(__has_builtin)
-590:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) __has_builtin(builtin)
-591: #else
-592:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) (0)
-593: #endif
-594: 
-595: #if defined(JSON_HEDLEY_GNUC_HAS_BUILTIN)
-596:     #undef JSON_HEDLEY_GNUC_HAS_BUILTIN
-597: #endif
-598: #if defined(__has_builtin)
-599:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
-600: #else
-601:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
-602: #endif
-603: 
-604: #if defined(JSON_HEDLEY_GCC_HAS_BUILTIN)
-605:     #undef JSON_HEDLEY_GCC_HAS_BUILTIN
-606: #endif
-607: #if defined(__has_builtin)
-608:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
-609: #else
-610:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
-611: #endif
-612: 
-613: #if defined(JSON_HEDLEY_HAS_FEATURE)
-614:     #undef JSON_HEDLEY_HAS_FEATURE
-615: #endif
-616: #if defined(__has_feature)
-617:     #define JSON_HEDLEY_HAS_FEATURE(feature) __has_feature(feature)
-618: #else
-619:     #define JSON_HEDLEY_HAS_FEATURE(feature) (0)
-620: #endif
-621: 
-622: #if defined(JSON_HEDLEY_GNUC_HAS_FEATURE)
-623:     #undef JSON_HEDLEY_GNUC_HAS_FEATURE
-624: #endif
-625: #if defined(__has_feature)
-626:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) __has_feature(feature)
-627: #else
-628:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
-629: #endif
-630: 
-631: #if defined(JSON_HEDLEY_GCC_HAS_FEATURE)
-632:     #undef JSON_HEDLEY_GCC_HAS_FEATURE
-
+27: 
+28: 
+29: /* tables */
+30: 
+31: :root[style*=dark] .rst-content table.docutils td {
+32:   border: 0px;
+33: }
+34: 
+35: :root[style*=dark] .rst-content table.docutils:not(.field-list) tr:nth-child(2n-1) td {
+36:   background-color: #0002;
+37: }
+38: 
+39: :root[style*=dark] .rst-content pre {
+40:   background: none;
+41: }
+42: 
+43: /* inlined code highlights */
+44: 
+45: :root[style*=dark] .xref,
+46: :root[style*=dark] .py-meth {
+47:   color: #aaddff !important;
+48:   font-weight: normal !important;
+49: }
+50: 
+51: /* highlight color search text */
+52: 
+53: :root[style*=dark] .rst-content .highlighted {
+54:   background: #ff5722;
+55:   box-shadow: 0 0 0 2px #f0978b;
+56: }
+57: 
+58: /* notes, warnings, hints */
+59: 
+60: :root[style*=dark] .hint .admonition-title {
+61:   background: #2aa87c !important;
+62: }
+63: 
+64: :root[style*=dark] .warning .admonition-title {
+65:   background: #cc4444 !important;
+66: }
+67: 
+68: :root[style*=dark] .admonition-title {
+69:   background: #3a7ca8 !important;
+70: }
+71: 
+72: :root[style*=dark] .admonition,
+73: :root[style*=dark] .note {
+74:   background-color: #0008 !important;
+75: }
+76: 
+77: 
+78: /* table of contents */
+79: 
+80: :root[style*=dark] .sidebar {
+81:   background-color: #191919 !important;
+82: }
+83: 
+84: :root[style*=dark] .sidebar-title {
+85:   background-color: #2b2b2b !important;
+86: }
+87: 
+88: :root[style*=dark] .wy-menu-vertical code.docutils.literal.notranslate {
+89:   background: none !important;
+90:   border: none !important;
+91: }
+92: 
+93: 
+94: :root[style*=dark] .toc-backref {
+95:   color: grey !important;
+96: }
+97: 
+98: :root[style*=dark] .highlight {
+99:   background: #0008;
+100:   color: #f8f8f2
+101: }
+102: 
+103: :root[style*=dark] .highlight .c {
+104:   color: #888
+105: }
+106: 
+107: 
+108: /* Comment */
+109: 
+110: :root[style*=dark] .highlight .err {
+111:   color: #960050;
+112:   background-color: #1e0010
+113: }
+114: 
+115: 
+116: /* Error */
+117: 
+118: :root[style*=dark] .highlight .k {
+119:   color: #66d9ef
+120: }
+121: 
+122: 
+123: /* Keyword */
+124: 
+125: :root[style*=dark] .highlight .l {
+126:   color: #ae81ff
+127: }
+128
 ```
 7.
-File Path: libyul/backends/evm/NoOutputAssembly.cpp
+File Path: docs/_static/css/custom-dark.css
 Code Snippet:
 ```
-End function without begin function.");
-155: 	auto const rets = m_context.functionSignatures.at(m_currentFunctionID).second;
-156: 	yulAssert(rets == 0x80 || m_stackHeight == rets, "Stack height mismatch at function end.");
-157: }
-158: 
-159: void NoOutputAssembly::appendDataOffset(std::vector<AbstractAssembly::SubID> const&)
-160: {
-161: 	appendInstruction(evmasm::Instruction::PUSH1);
+, hints */
+59: 
+60: :root[style*=dark] .hint .admonition-title {
+61:   background: #2aa87c !important;
+62: }
+63: 
+64: :root[style*=dark] .warning .admonition-title {
+65:   background: #cc4444 !important;
+66: }
+67: 
+68: :root[style*=dark] .admonition-title {
+69:   background: #3a7ca8 !important;
+70: }
+71: 
+72: :root[style*=dark] .admonition,
+73: :root[style*=dark] .note {
+74:   background-color: #0008 !important;
+75: }
+76: 
+77: 
+78: /* table of contents */
+79: 
+80: :root[style*=dark] .sidebar {
+81:   background-color: #191919 !important;
+82: }
+83: 
+84: :root[style*=dark] .sidebar-title {
+85:   background-color: #2b2b2b !important;
+86: }
+87: 
+88: :root[style*=dark] .wy-menu-vertical code.docutils.literal.notranslate {
+89:   background: none !important;
+90:   border: none !important;
+91: }
+92: 
+93: 
+94: :root[style*=dark] .toc-backref {
+95:   color: grey !important;
+96: }
+97: 
+98: :root[style*=dark] .highlight {
+99:   background: #0008;
+100:   color: #f8f8f2
+101: }
+102: 
+103: :root[style*=dark] .highlight .c {
+104:   color: #888
+105: }
+106: 
+107: 
+108: /* Comment */
+109: 
+110: :root[style*=dark] .highlight .err {
+111:   color: #960050;
+112:   background-color: #1e0010
+113: }
+114: 
+115: 
+116: /* Error */
+117: 
+118: :root[style*=dark] .highlight .k {
+119:   color: #66d9ef
+120: }
+121: 
+122: 
+123: /* Keyword */
+124: 
+125: :root[style*=dark] .highlight .l {
+126:   color: #ae81ff
+127: }
+128: 
+129: 
+130: /* Literal */
+131: 
+132: :root[style*=dark] .highlight .n {
+133:   color: #f8f8f2
+134: }
+135: 
+136: 
+137: /* Name */
+138: 
+139: :root[style*=dark] .highlight .o {
+140:   color: #f92672
+141: }
+142: 
+143: 
+144: /* Operator */
+145: 
+146: :root[style*=dark] .highlight .p {
+147:   color: #f8f8f2
+148: }
+149: 
+150: 
+151: /* Punctuation */
+152: 
+153: :root[style*=dark] .highlight .ch {
+154:   color: #888
+155: }
+156: 
+157: 
+158: /* Comment.Hashbang */
+159: 
+160: :root[style*=dark] .highlight .cm {
+161:   color: #888
 162: }
 163: 
-164: void NoOutputAssembly::appendDataSize(std::vector<AbstractAssembly::SubID> const&)
-165: {
-166: 	appendInstruction(evmasm::Instruction::PUSH1);
-167: }
-168: 
-169: AbstractAssembly::SubID NoOutputAssembly::appendData(bytes const&)
-170: {
-171: 	return 1;
-172: }
-173: 
-174: 
-175: void NoOutputAssembly::appendImmutable(std::string const&)
-176: {
-177: 	yulAssert(false, "loadimmutable not implemented.");
-178: }
-179: 
-180: void NoOutputAssembly::appendImmutableAssignment(std::string const&)
-181: {
-182: 	yulAssert(false, "setimmutable not implemented.");
-183: }
-184: 
-185: void NoOutputAssembly::appendAuxDataLoadN(uint16_t)
-186: {
-187: 	yulAssert(false, "auxdataloadn not implemented.");
-188: }
-189: 
-190: void NoOutputAssembly::appendEOFCreate(ContainerID)
-191: {
-192: 	yulAssert(false, "eofcreate not implemented.");
-193: 
-194: }
-195: void NoOutputAssembly::appendReturnContract(ContainerID)
-196: {
-197: 	yulAssert(false, "returncontract not implemented.");
-198: }
-199: 
-200: NoOutputEVMDialect::NoOutputEVMDialect(EVMDialect const& _copyFrom):
-201: 	EVMDialect(_copyFrom.evmVersion(), _copyFrom.eofVersion(), _copyFrom.providesObjectAccess())
-202: {
-203: 	for (auto& fun: m_functions)
-204: 		if (fun)
-205: 			modifyBuiltinToNoOutput(*fun);
-206: }
-207: 
-208: BuiltinFunctionForEVM const& NoOutputEVMDialect::builtin(BuiltinHandle const& _handle) const
-209: {
-210: 	if (isVerbatimHandle(_handle))
-211: 		// for verbatims the modification is performed lazily as they are stored in a lookup table fashion
-212: 		if (
-213: 			auto& builtin = m_verbatimFunctions[_handle.id];
-214: 			!builtin
-215: 		)
-216: 		{
-217: 			builtin = std::make_unique<BuiltinFunctionForEVM>(createVerbatimFunctionFromHandle(_handle));
-218: 			modifyBuiltinToNoOutput(*builtin);
-219: 		}
-220: 	return EVMDialect::builtin(_handle);
-221: }
+164: 
+165: /* Comment.Multiline */
+166: 
+167: :root[style*=dark] .highlight .cp {
+168:   color: #888
+169: }
+170: 
+171: 
+172
 ```
 8.
-File Path: libyul/backends/evm/ConstantOptimiser.cpp
+File Path: docs/_static/css/custom-dark.css
 Code Snippet:
 ```
-& arg: _arguments)
-53: 			args.emplace_back(eval(arg));
-54: 		switch (_instr)
-55: 		{
-56: 		case evmasm::Instruction::ADD:
-57: 			return args.at(0) + args.at(1);
-58: 		case evmasm::Instruction::SUB:
-59: 			return args.at(0) - args.at(1);
-60: 		case evmasm::Instruction::MUL:
-61: 			return args.at(0) * args.at(1);
-62: 		case evmasm::Instruction::EXP:
-63: 			return exp256(args.at(0), args.at(1));
-64: 		case evmasm::Instruction::SHL:
-65: 			return args.at(0) > 255 ? 0 : (args.at(1) << unsigned(args.at(0)));
-66: 		case evmasm::Instruction::NOT:
-67: 			return ~args.at(0);
-68: 		default:
-69: 			yulAssert(false, "Invalid operation generated in constant optimizer.");
-70: 		}
-71: 		return 0;
-72: 	}
-73: 
-74: 	u256 operator()(FunctionCall const& _funCall)
-75: 	{
-76: 		std::optional<BuiltinHandle> funHandle = m_dialect.findBuiltin(_funCall.functionName.name.str());
-77: 		yulAssert(funHandle, "Expected builtin function.");
-78: 		BuiltinFunctionForEVM const& fun = m_dialect.builtin(*funHandle);
-79: 		yulAssert(fun.instruction, "Expected EVM instruction.");
-80: 		return eval(*fun.instruction, _funCall.arguments);
-81: 	}
-82: 	u256 operator()(Literal const& _literal)
-83: 	{
-84: 		return _literal.value.value();
-85: 	}
-86: 	u256 operator()(Identifier const&) { yulAssert(false, ""); }
-87: 
-88: 	EVMDialect const& m_dialect;
-89: };
-90: }
-91: 
-92: void ConstantOptimiser::visit(Expression& _e)
-93: {
-94: 	if (std::holds_alternative<Literal>(_e))
-95: 	{
-96: 		Literal const& literal = std::get<Literal>(_e);
-97: 		if (literal.kind != LiteralKind::Number)
-98: 			return;
-99: 
-100: 		if (
-101: 			Expression const* repr =
-102: 				RepresentationFinder(m_dialect, m_meter, debugDataOf(_e), m_cache)
-103: 				.tryFindRepresentation(literal.value.value())
-104: 		)
-105: 			_e = ASTCopier{}.translate(*repr);
-106: 	}
-107: 	else
-108: 		ASTModifier::visit(_e);
-109: }
-110: 
-111: Expression const* RepresentationFinder::tryFindRepresentation(u256 const& _value)
-112: {
-113: 	if (_value < 0x10000)
-114: 		return nullptr;
+:   background: none !important;
+90:   border: none !important;
+91: }
+92: 
+93: 
+94: :root[style*=dark] .toc-backref {
+95:   color: grey !important;
+96: }
+97: 
+98: :root[style*=dark] .highlight {
+99:   background: #0008;
+100:   color: #f8f8f2
+101: }
+102: 
+103: :root[style*=dark] .highlight .c {
+104:   color: #888
+105: }
+106: 
+107: 
+108: /* Comment */
+109: 
+110: :root[style*=dark] .highlight .err {
+111:   color: #960050;
+112:   background-color: #1e0010
+113: }
+114: 
 115: 
-116: 	Representation const& repr = findRepresentation(_value);
-117: 	if (std::holds_alternative<Literal>(*repr.expression))
-118: 		return nullptr;
-119: 	else
-120: 		return repr.expression.get();
-121: }
+116: /* Error */
+117: 
+118: :root[style*=dark] .highlight .k {
+119:   color: #66d9ef
+120: }
+121: 
 122: 
-123: Representation const& RepresentationFinder::findRepresentation(u256 const& _value)
-124: {
-125: 	if (m_cache.count(_value))
-126: 		return m_cache.at(_value);
-127: 
-128: 	Representation routine = represent(_value);
+123: /* Keyword */
+124: 
+125: :root[style*=dark] .highlight .l {
+126:   color: #ae81ff
+127: }
+128: 
 129: 
-130: 	if (numberEncoding
+130: /* Literal */
+131: 
+132: :root[style*=dark] .highlight .n {
+133:   color: #f8f8f2
+134: }
+135: 
+136: 
+137: /* Name */
+138: 
+139: :root[style*=dark] .highlight .o {
+140:   color: #f92672
+141: }
+142: 
+143: 
+144: /* Operator */
+145: 
+146: :root[style*=dark] .highlight .p {
+147:   color: #f8f8f2
+148: }
+149: 
+150: 
+151: /* Punctuation */
+152: 
+153: :root[style*=dark] .highlight .ch {
+154:   color: #888
+155: }
+156: 
+157: 
+158: /* Comment.Hashbang */
+159: 
+160: :root[style*=dark] .highlight .cm {
+161:   color: #888
+162: }
+163: 
+164: 
+165: /* Comment.Multiline */
+166: 
+167: :root[style*=dark] .highlight .cp {
+168:   color: #888
+169: }
+170: 
+171: 
+172: /* Comment.Preproc */
+173: 
+174: :root[style*=dark] .highlight .cpf {
+175:   color: #888
+176: }
+177: 
+178: 
+179: /* Comment.PreprocFile */
+180: 
+181: :root[style*=dark] .highlight .c1 {
+182:   color: #888
+183: }
+184: 
+185: 
+186: /* Comment.Single */
+187: 
+188: :root[style*=dark] .highlight .cs {
+189:   color: #888
+190: }
+191: 
+192: 
+193: /* Comment.Special */
+194: 
+195: :root[style*=dark] .highlight .gd {
+196:   color: #f92672
+197: }
+198: 
+199: 
+200: /* Generic.Deleted */
+201: 
+202: :root[style*=dark] .highlight .ge {
+203:   font-style: italic
+204: }
+205: 
+206: 
+207: /* Generic.Emph */
+208: 
+209: :root[style*=dark] .highlight .gi {
+210:   color: #a6e22e
+211: }
+212: 
+213: 
+214: /* Generic
 ```
 9.
-File Path: deps/nlohmann-json/tests/abi/include/nlohmann/json_v3_10_5.hpp
+File Path: docs/_static/css/custom-dark.css
 Code Snippet:
 ```
-ajor,minor,patch)
-754: #endif
-755: 
-756: #if defined(JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE)
-757:     #undef JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE
-758: #endif
-759: #if defined(__has_cpp_attribute) && defined(__cplusplus)
-760:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
-761: #else
-762:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
-763: #endif
-764: 
-765: #if defined(JSON_HEDLEY_HAS_BUILTIN)
-766:     #undef JSON_HEDLEY_HAS_BUILTIN
-767: #endif
-768: #if defined(__has_builtin)
-769:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) __has_builtin(builtin)
-770: #else
-771:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) (0)
-772: #endif
-773: 
-774: #if defined(JSON_HEDLEY_GNUC_HAS_BUILTIN)
-775:     #undef JSON_HEDLEY_GNUC_HAS_BUILTIN
-776: #endif
-777: #if defined(__has_builtin)
-778:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
-779: #else
-780:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
-781: #endif
-782: 
-783: #if defined(JSON_HEDLEY_GCC_HAS_BUILTIN)
-784:     #undef JSON_HEDLEY_GCC_HAS_BUILTIN
-785: #endif
-786: #if defined(__has_builtin)
-787:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
-788: #else
-789:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
-790: #endif
-791: 
-792: #if defined(JSON_HEDLEY_HAS_FEATURE)
-793:     #undef JSON_HEDLEY_HAS_FEATURE
-794: #endif
-795: #if defined(__has_feature)
-796:     #define JSON_HEDLEY_HAS_FEATURE(feature) __has_feature(feature)
-797: #else
-798:     #define JSON_HEDLEY_HAS_FEATURE(feature) (0)
-799: #endif
-800: 
-801: #if defined(JSON_HEDLEY_GNUC_HAS_FEATURE)
-802:     #undef JSON_HEDLEY_GNUC_HAS_FEATURE
-803: #endif
-804: #if defined(__has_feature)
-805:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) __has_feature(feature)
-806: #else
-807:     #define JSON_HEDLEY_GNUC_HAS_FEATURE(feature,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
-808: #endif
-809: 
-810: #if defined(JSON_HEDLEY_GCC_HAS_FEATURE)
-811:     #undef JSON_HEDLEY_GCC_HAS_FEATURE
-812: #endif
-813: #if defined(__has_feature)
-814:     #define JSON_HEDLEY_GCC_HAS_FEATURE(feature,major,minor,patch) __has_feature(feature)
-815: #else
-816
+: 
+129: 
+130: /* Literal */
+131: 
+132: :root[style*=dark] .highlight .n {
+133:   color: #f8f8f2
+134: }
+135: 
+136: 
+137: /* Name */
+138: 
+139: :root[style*=dark] .highlight .o {
+140:   color: #f92672
+141: }
+142: 
+143: 
+144: /* Operator */
+145: 
+146: :root[style*=dark] .highlight .p {
+147:   color: #f8f8f2
+148: }
+149: 
+150: 
+151: /* Punctuation */
+152: 
+153: :root[style*=dark] .highlight .ch {
+154:   color: #888
+155: }
+156: 
+157: 
+158: /* Comment.Hashbang */
+159: 
+160: :root[style*=dark] .highlight .cm {
+161:   color: #888
+162: }
+163: 
+164: 
+165: /* Comment.Multiline */
+166: 
+167: :root[style*=dark] .highlight .cp {
+168:   color: #888
+169: }
+170: 
+171: 
+172: /* Comment.Preproc */
+173: 
+174: :root[style*=dark] .highlight .cpf {
+175:   color: #888
+176: }
+177: 
+178: 
+179: /* Comment.PreprocFile */
+180: 
+181: :root[style*=dark] .highlight .c1 {
+182:   color: #888
+183: }
+184: 
+185: 
+186: /* Comment.Single */
+187: 
+188: :root[style*=dark] .highlight .cs {
+189:   color: #888
+190: }
+191: 
+192: 
+193: /* Comment.Special */
+194: 
+195: :root[style*=dark] .highlight .gd {
+196:   color: #f92672
+197: }
+198: 
+199: 
+200: /* Generic.Deleted */
+201: 
+202: :root[style*=dark] .highlight .ge {
+203:   font-style: italic
+204: }
+205: 
+206: 
+207: /* Generic.Emph */
+208: 
+209: :root[style*=dark] .highlight .gi {
+210:   color: #a6e22e
+211: }
+212: 
+213: 
+214: /* Generic.Inserted */
+215: 
+216: :root[style*=dark] .highlight .gs {
+217:   font-weight: bold
+218: }
+219: 
+220: 
+221: /* Generic.Strong */
+222: 
+223: :root[style*=dark] .highlight .gu {
+224:   color: #888
+225: }
+226: 
+227: 
+228: /* Generic.Subheading */
+229: 
+230: :root[style*=dark] .highlight .kc {
+231:   color: #66d9ef
+232: }
+233: 
+234: 
+235: /* Keyword.Constant */
+236: 
+237: :root[style*=dark] .highlight .kd {
+238:   color: #66d9ef
+239: }
+240: 
+241: 
+242: /* Keyword.Declaration */
+243: 
+244: :root[style*=dark] .highlight .kn {
+245:   color: #f92672
+246: }
+247: 
+248: 
+249: /* Keyword.Namespace */
+250: 
+251: :root[style*=dark] .highlight .kp {
+252:   color: #66d9ef
+253: }
+254: 
+255: 
+256: /* Keyword.P
 ```
 10.
-File Path: deps/nlohmann-json/single_include/nlohmann/json.hpp
+File Path: docs/_static/css/custom-dark.css
 Code Snippet:
 ```
-: #else
-883:     #define JSON_HEDLEY_HAS_CPP_ATTRIBUTE_NS(ns,attribute) (0)
-884: #endif
-885: 
-886: #if defined(JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE)
-887:     #undef JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE
-888: #endif
-889: #if defined(__has_cpp_attribute) && defined(__cplusplus)
-890:     #define JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
-891: #else
-892:     #define JSON_HEDLEY_GNUC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
-893: #endif
-894: 
-895: #if defined(JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE)
-896:     #undef JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE
-897: #endif
-898: #if defined(__has_cpp_attribute) && defined(__cplusplus)
-899:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) __has_cpp_attribute(attribute)
-900: #else
-901:     #define JSON_HEDLEY_GCC_HAS_CPP_ATTRIBUTE(attribute,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
-902: #endif
-903: 
-904: #if defined(JSON_HEDLEY_HAS_BUILTIN)
-905:     #undef JSON_HEDLEY_HAS_BUILTIN
-906: #endif
-907: #if defined(__has_builtin)
-908:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) __has_builtin(builtin)
-909: #else
-910:     #define JSON_HEDLEY_HAS_BUILTIN(builtin) (0)
-911: #endif
-912: 
-913: #if defined(JSON_HEDLEY_GNUC_HAS_BUILTIN)
-914:     #undef JSON_HEDLEY_GNUC_HAS_BUILTIN
-915: #endif
-916: #if defined(__has_builtin)
-917:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
-918: #else
-919:     #define JSON_HEDLEY_GNUC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GNUC_VERSION_CHECK(major,minor,patch)
-920: #endif
-921: 
-922: #if defined(JSON_HEDLEY_GCC_HAS_BUILTIN)
-923:     #undef JSON_HEDLEY_GCC_HAS_BUILTIN
-924: #endif
-925: #if defined(__has_builtin)
-926:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) __has_builtin(builtin)
-927: #else
-928:     #define JSON_HEDLEY_GCC_HAS_BUILTIN(builtin,major,minor,patch) JSON_HEDLEY_GCC_VERSION_CHECK(major,minor,patch)
-929: #endif
-930: 
-931: #if defined(JSON_HEDLEY_HAS_FEATURE)
-932:     #undef JSON_HEDLEY_HAS_FEATURE
-933: #endif
-934: #if defined(__has_feature)
-935:     #define JSON_HEDLEY_HAS_FEATURE(feature) __has_feature(feature)
-936: #else
-937:     #define JSON_HEDLEY_HAS_FEATURE(feature) (0)
-938: #endif
-939: 
-940: #if defined(JSON_HEDLEY_GNUC_HAS_FEATURE)
-941:     #undef JSON_HEDLEY_GNUC_HAS_FEATURE
-942: #endif
-943: #if defined(__has_feature)
-944
+: /* Comment.Preproc */
+173: 
+174: :root[style*=dark] .highlight .cpf {
+175:   color: #888
+176: }
+177: 
+178: 
+179: /* Comment.PreprocFile */
+180: 
+181: :root[style*=dark] .highlight .c1 {
+182:   color: #888
+183: }
+184: 
+185: 
+186: /* Comment.Single */
+187: 
+188: :root[style*=dark] .highlight .cs {
+189:   color: #888
+190: }
+191: 
+192: 
+193: /* Comment.Special */
+194: 
+195: :root[style*=dark] .highlight .gd {
+196:   color: #f92672
+197: }
+198: 
+199: 
+200: /* Generic.Deleted */
+201: 
+202: :root[style*=dark] .highlight .ge {
+203:   font-style: italic
+204: }
+205: 
+206: 
+207: /* Generic.Emph */
+208: 
+209: :root[style*=dark] .highlight .gi {
+210:   color: #a6e22e
+211: }
+212: 
+213: 
+214: /* Generic.Inserted */
+215: 
+216: :root[style*=dark] .highlight .gs {
+217:   font-weight: bold
+218: }
+219: 
+220: 
+221: /* Generic.Strong */
+222: 
+223: :root[style*=dark] .highlight .gu {
+224:   color: #888
+225: }
+226: 
+227: 
+228: /* Generic.Subheading */
+229: 
+230: :root[style*=dark] .highlight .kc {
+231:   color: #66d9ef
+232: }
+233: 
+234: 
+235: /* Keyword.Constant */
+236: 
+237: :root[style*=dark] .highlight .kd {
+238:   color: #66d9ef
+239: }
+240: 
+241: 
+242: /* Keyword.Declaration */
+243: 
+244: :root[style*=dark] .highlight .kn {
+245:   color: #f92672
+246: }
+247: 
+248: 
+249: /* Keyword.Namespace */
+250: 
+251: :root[style*=dark] .highlight .kp {
+252:   color: #66d9ef
+253: }
+254: 
+255: 
+256: /* Keyword.Pseudo */
+257: 
+258: :root[style*=dark] .highlight .kr {
+259:   color: #66d9ef
+260: }
+261: 
+262: 
+263: /* Keyword.Reserved */
+264: 
+265: :root[style*=dark] .highlight .kt {
+266:   color: #66d9ef
+267: }
+268: 
+269: 
+270: /* Keyword.Type */
+271: 
+272: :root[style*=dark] .highlight .ld {
+273:   color: #e6db74
+274: }
+275: 
+276: 
+277: /* Literal.Date */
+278: 
+279: :root[style*=dark] .highlight .m {
+280:   color: #ae81ff
+281: }
+282: 
+283: 
+284: /* Literal.Number */
+285: 
+286: :root[style*=dark] .highlight .s {
+287:   color: #e6db74
+288: }
+289: 
+290: 
+291: /* Literal.String */
+292: 
+293: :root[style*=dark] .highlight .na {
+294:   color: #a6e22e
+295: }
+296: 
+297: 
+298
+```
+11.
+File Path: docs/_static/css/custom-dark.css
+Code Snippet:
+```
+.Inserted */
+215: 
+216: :root[style*=dark] .highlight .gs {
+217:   font-weight: bold
+218: }
+219: 
+220: 
+221: /* Generic.Strong */
+222: 
+223: :root[style*=dark] .highlight .gu {
+224:   color: #888
+225: }
+226: 
+227: 
+228: /* Generic.Subheading */
+229: 
+230: :root[style*=dark] .highlight .kc {
+231:   color: #66d9ef
+232: }
+233: 
+234: 
+235: /* Keyword.Constant */
+236: 
+237: :root[style*=dark] .highlight .kd {
+238:   color: #66d9ef
+239: }
+240: 
+241: 
+242: /* Keyword.Declaration */
+243: 
+244: :root[style*=dark] .highlight .kn {
+245:   color: #f92672
+246: }
+247: 
+248: 
+249: /* Keyword.Namespace */
+250: 
+251: :root[style*=dark] .highlight .kp {
+252:   color: #66d9ef
+253: }
+254: 
+255: 
+256: /* Keyword.Pseudo */
+257: 
+258: :root[style*=dark] .highlight .kr {
+259:   color: #66d9ef
+260: }
+261: 
+262: 
+263: /* Keyword.Reserved */
+264: 
+265: :root[style*=dark] .highlight .kt {
+266:   color: #66d9ef
+267: }
+268: 
+269: 
+270: /* Keyword.Type */
+271: 
+272: :root[style*=dark] .highlight .ld {
+273:   color: #e6db74
+274: }
+275: 
+276: 
+277: /* Literal.Date */
+278: 
+279: :root[style*=dark] .highlight .m {
+280:   color: #ae81ff
+281: }
+282: 
+283: 
+284: /* Literal.Number */
+285: 
+286: :root[style*=dark] .highlight .s {
+287:   color: #e6db74
+288: }
+289: 
+290: 
+291: /* Literal.String */
+292: 
+293: :root[style*=dark] .highlight .na {
+294:   color: #a6e22e
+295: }
+296: 
+297: 
+298: /* Name.Attribute */
+299: 
+300: :root[style*=dark] .highlight .nb {
+301:   color: #f8f8f2
+302: }
+303: 
+304: 
+305: /* Name.Builtin */
+306: 
+307: :root[style*=dark] .highlight .nc {
+308:   color: #a6e22e
+309: }
+310: 
+311: 
+312: /* Name.Class */
+313: 
+314: :root[style*=dark] .highlight .no {
+315:   color: #66d9ef
+316: }
+317: 
+318: 
+319: /* Name.Constant */
+320: 
+321: :root[style*=dark] .highlight .nd {
+322:   color: #a6e22e
+323: }
+324: 
+325: 
+326: /* Name.Decorator */
+327: 
+328: :root[style*=dark] .highlight .ni {
+329:   color: #f8f8f2
+330: }
+331: 
+332: 
+333: /* Name.Entity */
+334: 
+335: :root[style*=dark] .highlight .ne {
+336:   color: #a6e22
+```
+12.
+File Path: docs/_static/css/custom-dark.css
+Code Snippet:
+```
+seudo */
+257: 
+258: :root[style*=dark] .highlight .kr {
+259:   color: #66d9ef
+260: }
+261: 
+262: 
+263: /* Keyword.Reserved */
+264: 
+265: :root[style*=dark] .highlight .kt {
+266:   color: #66d9ef
+267: }
+268: 
+269: 
+270: /* Keyword.Type */
+271: 
+272: :root[style*=dark] .highlight .ld {
+273:   color: #e6db74
+274: }
+275: 
+276: 
+277: /* Literal.Date */
+278: 
+279: :root[style*=dark] .highlight .m {
+280:   color: #ae81ff
+281: }
+282: 
+283: 
+284: /* Literal.Number */
+285: 
+286: :root[style*=dark] .highlight .s {
+287:   color: #e6db74
+288: }
+289: 
+290: 
+291: /* Literal.String */
+292: 
+293: :root[style*=dark] .highlight .na {
+294:   color: #a6e22e
+295: }
+296: 
+297: 
+298: /* Name.Attribute */
+299: 
+300: :root[style*=dark] .highlight .nb {
+301:   color: #f8f8f2
+302: }
+303: 
+304: 
+305: /* Name.Builtin */
+306: 
+307: :root[style*=dark] .highlight .nc {
+308:   color: #a6e22e
+309: }
+310: 
+311: 
+312: /* Name.Class */
+313: 
+314: :root[style*=dark] .highlight .no {
+315:   color: #66d9ef
+316: }
+317: 
+318: 
+319: /* Name.Constant */
+320: 
+321: :root[style*=dark] .highlight .nd {
+322:   color: #a6e22e
+323: }
+324: 
+325: 
+326: /* Name.Decorator */
+327: 
+328: :root[style*=dark] .highlight .ni {
+329:   color: #f8f8f2
+330: }
+331: 
+332: 
+333: /* Name.Entity */
+334: 
+335: :root[style*=dark] .highlight .ne {
+336:   color: #a6e22e
+337: }
+338: 
+339: 
+340: /* Name.Exception */
+341: 
+342: :root[style*=dark] .highlight .nf {
+343:   color: #a6e22e
+344: }
+345: 
+346: 
+347: /* Name.Function */
+348: 
+349: :root[style*=dark] .highlight .nl {
+350:   color: #f8f8f2
+351: }
+352: 
+353: 
+354: /* Name.Label */
+355: 
+356: :root[style*=dark] .highlight .nn {
+357:   color: #f8f8f2
+358: }
+359: 
+360: 
+361: /* Name.Namespace */
+362: 
+363: :root[style*=dark] .highlight .nx {
+364:   color: #a6e22e
+365: }
+366: 
+367: 
+368: /* Name.Other */
+369: 
+370: :root[style*=dark] .highlight .py {
+371:   color: #f8f8f2
+372: }
+373: 
+374: 
+375: /* Name.Property */
+376: 
+377: :root[style*=dark] .highlight .nt
+```
+13.
+File Path: docs/_static/css/custom-dark.css
+Code Snippet:
+```
+: /* Name.Attribute */
+299: 
+300: :root[style*=dark] .highlight .nb {
+301:   color: #f8f8f2
+302: }
+303: 
+304: 
+305: /* Name.Builtin */
+306: 
+307: :root[style*=dark] .highlight .nc {
+308:   color: #a6e22e
+309: }
+310: 
+311: 
+312: /* Name.Class */
+313: 
+314: :root[style*=dark] .highlight .no {
+315:   color: #66d9ef
+316: }
+317: 
+318: 
+319: /* Name.Constant */
+320: 
+321: :root[style*=dark] .highlight .nd {
+322:   color: #a6e22e
+323: }
+324: 
+325: 
+326: /* Name.Decorator */
+327: 
+328: :root[style*=dark] .highlight .ni {
+329:   color: #f8f8f2
+330: }
+331: 
+332: 
+333: /* Name.Entity */
+334: 
+335: :root[style*=dark] .highlight .ne {
+336:   color: #a6e22e
+337: }
+338: 
+339: 
+340: /* Name.Exception */
+341: 
+342: :root[style*=dark] .highlight .nf {
+343:   color: #a6e22e
+344: }
+345: 
+346: 
+347: /* Name.Function */
+348: 
+349: :root[style*=dark] .highlight .nl {
+350:   color: #f8f8f2
+351: }
+352: 
+353: 
+354: /* Name.Label */
+355: 
+356: :root[style*=dark] .highlight .nn {
+357:   color: #f8f8f2
+358: }
+359: 
+360: 
+361: /* Name.Namespace */
+362: 
+363: :root[style*=dark] .highlight .nx {
+364:   color: #a6e22e
+365: }
+366: 
+367: 
+368: /* Name.Other */
+369: 
+370: :root[style*=dark] .highlight .py {
+371:   color: #f8f8f2
+372: }
+373: 
+374: 
+375: /* Name.Property */
+376: 
+377: :root[style*=dark] .highlight .nt {
+378:   color: #f92672
+379: }
+380: 
+381: 
+382: /* Name.Tag */
+383: 
+384: :root[style*=dark] .highlight .nv {
+385:   color: #f8f8f2
+386: }
+387: 
+388: 
+389: /* Name.Variable */
+390: 
+391: :root[style*=dark] .highlight .ow {
+392:   color: #f92672
+393: }
+394: 
+395: 
+396: /* Operator.Word */
+397: 
+398: :root[style*=dark] .highlight .w {
+399:   color: #f8f8f2
+400: }
+401: 
+402: 
+403: /* Text.Whitespace */
+404: 
+405: :root[style*=dark] .highlight .mb {
+406:   color: #ae81ff
+407: }
+408: 
+409: 
+410: /* Literal.Number.Bin */
+411: 
+412: :root[style*=dark] .highlight .mf {
+413:   color: #ae81ff
+414: }
+415: 
+416: 
+417: /* Literal.Number.Float */
+418: 
+419: :root[style*=
+```
+14.
+File Path: docs/_static/css/custom-dark.css
+Code Snippet:
+```
+e
+337: }
+338: 
+339: 
+340: /* Name.Exception */
+341: 
+342: :root[style*=dark] .highlight .nf {
+343:   color: #a6e22e
+344: }
+345: 
+346: 
+347: /* Name.Function */
+348: 
+349: :root[style*=dark] .highlight .nl {
+350:   color: #f8f8f2
+351: }
+352: 
+353: 
+354: /* Name.Label */
+355: 
+356: :root[style*=dark] .highlight .nn {
+357:   color: #f8f8f2
+358: }
+359: 
+360: 
+361: /* Name.Namespace */
+362: 
+363: :root[style*=dark] .highlight .nx {
+364:   color: #a6e22e
+365: }
+366: 
+367: 
+368: /* Name.Other */
+369: 
+370: :root[style*=dark] .highlight .py {
+371:   color: #f8f8f2
+372: }
+373: 
+374: 
+375: /* Name.Property */
+376: 
+377: :root[style*=dark] .highlight .nt {
+378:   color: #f92672
+379: }
+380: 
+381: 
+382: /* Name.Tag */
+383: 
+384: :root[style*=dark] .highlight .nv {
+385:   color: #f8f8f2
+386: }
+387: 
+388: 
+389: /* Name.Variable */
+390: 
+391: :root[style*=dark] .highlight .ow {
+392:   color: #f92672
+393: }
+394: 
+395: 
+396: /* Operator.Word */
+397: 
+398: :root[style*=dark] .highlight .w {
+399:   color: #f8f8f2
+400: }
+401: 
+402: 
+403: /* Text.Whitespace */
+404: 
+405: :root[style*=dark] .highlight .mb {
+406:   color: #ae81ff
+407: }
+408: 
+409: 
+410: /* Literal.Number.Bin */
+411: 
+412: :root[style*=dark] .highlight .mf {
+413:   color: #ae81ff
+414: }
+415: 
+416: 
+417: /* Literal.Number.Float */
+418: 
+419: :root[style*=dark] .highlight .mh {
+420:   color: #ae81ff
+421: }
+422: 
+423: 
+424: /* Literal.Number.Hex */
+425: 
+426: :root[style*=dark] .highlight .mi {
+427:   color: #ae81ff
+428: }
+429: 
+430: 
+431: /* Literal.Number.Integer */
+432: 
+433: :root[style*=dark] .highlight .mo {
+434:   color: #ae81ff
+435: }
+436: 
+437: 
+438: /* Literal.Number.Oct */
+439: 
+440: :root[style*=dark] .highlight .sa {
+441:   color: #e6db74
+442: }
+443: 
+444: 
+445: /* Literal.String.Affix */
+446: 
+447: :root[style*=dark] .highlight .sb {
+448:   color: #e6db74
+449: }
+450: 
+451: 
+452: /* Literal.String.Backtick */
+453: 
+454: :root[style*=dark] .highlight .sc {
+455:   color: #e6db74
+456: }
+457: 
+458: 
+459: /* Literal.String.Char */
+460
+```
+15.
+File Path: docs/_static/css/custom-dark.css
+Code Snippet:
+```
+ {
+378:   color: #f92672
+379: }
+380: 
+381: 
+382: /* Name.Tag */
+383: 
+384: :root[style*=dark] .highlight .nv {
+385:   color: #f8f8f2
+386: }
+387: 
+388: 
+389: /* Name.Variable */
+390: 
+391: :root[style*=dark] .highlight .ow {
+392:   color: #f92672
+393: }
+394: 
+395: 
+396: /* Operator.Word */
+397: 
+398: :root[style*=dark] .highlight .w {
+399:   color: #f8f8f2
+400: }
+401: 
+402: 
+403: /* Text.Whitespace */
+404: 
+405: :root[style*=dark] .highlight .mb {
+406:   color: #ae81ff
+407: }
+408: 
+409: 
+410: /* Literal.Number.Bin */
+411: 
+412: :root[style*=dark] .highlight .mf {
+413:   color: #ae81ff
+414: }
+415: 
+416: 
+417: /* Literal.Number.Float */
+418: 
+419: :root[style*=dark] .highlight .mh {
+420:   color: #ae81ff
+421: }
+422: 
+423: 
+424: /* Literal.Number.Hex */
+425: 
+426: :root[style*=dark] .highlight .mi {
+427:   color: #ae81ff
+428: }
+429: 
+430: 
+431: /* Literal.Number.Integer */
+432: 
+433: :root[style*=dark] .highlight .mo {
+434:   color: #ae81ff
+435: }
+436: 
+437: 
+438: /* Literal.Number.Oct */
+439: 
+440: :root[style*=dark] .highlight .sa {
+441:   color: #e6db74
+442: }
+443: 
+444: 
+445: /* Literal.String.Affix */
+446: 
+447: :root[style*=dark] .highlight .sb {
+448:   color: #e6db74
+449: }
+450: 
+451: 
+452: /* Literal.String.Backtick */
+453: 
+454: :root[style*=dark] .highlight .sc {
+455:   color: #e6db74
+456: }
+457: 
+458: 
+459: /* Literal.String.Char */
+460: 
+461: :root[style*=dark] .highlight .dl {
+462:   color: #e6db74
+463: }
+464: 
+465: 
+466: /* Literal.String.Delimiter */
+467: 
+468: :root[style*=dark] .highlight .sd {
+469:   color: #e6db74
+470: }
+471: 
+472: 
+473: /* Literal.String.Doc */
+474: 
+475: :root[style*=dark] .highlight .s2 {
+476:   color: #e6db74
+477: }
+478: 
+479: 
+480: /* Literal.String.Double */
+481: 
+482: :root[style*=dark] .highlight .se {
+483:   color: #ae81ff
+484: }
+485: 
+486: 
+487: /* Literal.String.Escape */
+488: 
+489: :root[style*=dark] .highlight .sh {
+490:   color: #e6db74
+491: }
+492: 
+493: 
+494: /* Literal.String.Heredoc */
+495: 
+496: :root[style*=dark] .highlight .si {
+497:   color: #e6db74
+498: }
+499:
+```
+16.
+File Path: docs/_static/css/custom-dark.css
+Code Snippet:
+```
+dark] .highlight .mh {
+420:   color: #ae81ff
+421: }
+422: 
+423: 
+424: /* Literal.Number.Hex */
+425: 
+426: :root[style*=dark] .highlight .mi {
+427:   color: #ae81ff
+428: }
+429: 
+430: 
+431: /* Literal.Number.Integer */
+432: 
+433: :root[style*=dark] .highlight .mo {
+434:   color: #ae81ff
+435: }
+436: 
+437: 
+438: /* Literal.Number.Oct */
+439: 
+440: :root[style*=dark] .highlight .sa {
+441:   color: #e6db74
+442: }
+443: 
+444: 
+445: /* Literal.String.Affix */
+446: 
+447: :root[style*=dark] .highlight .sb {
+448:   color: #e6db74
+449: }
+450: 
+451: 
+452: /* Literal.String.Backtick */
+453: 
+454: :root[style*=dark] .highlight .sc {
+455:   color: #e6db74
+456: }
+457: 
+458: 
+459: /* Literal.String.Char */
+460: 
+461: :root[style*=dark] .highlight .dl {
+462:   color: #e6db74
+463: }
+464: 
+465: 
+466: /* Literal.String.Delimiter */
+467: 
+468: :root[style*=dark] .highlight .sd {
+469:   color: #e6db74
+470: }
+471: 
+472: 
+473: /* Literal.String.Doc */
+474: 
+475: :root[style*=dark] .highlight .s2 {
+476:   color: #e6db74
+477: }
+478: 
+479: 
+480: /* Literal.String.Double */
+481: 
+482: :root[style*=dark] .highlight .se {
+483:   color: #ae81ff
+484: }
+485: 
+486: 
+487: /* Literal.String.Escape */
+488: 
+489: :root[style*=dark] .highlight .sh {
+490:   color: #e6db74
+491: }
+492: 
+493: 
+494: /* Literal.String.Heredoc */
+495: 
+496: :root[style*=dark] .highlight .si {
+497:   color: #e6db74
+498: }
+499: 
+500: 
+501: /* Literal.String.Interpol */
+502: 
+503: :root[style*=dark] .highlight .sx {
+504:   color: #e6db74
+505: }
+506: 
+507: 
+508: /* Literal.String.Other */
+509: 
+510: :root[style*=dark] .highlight .sr {
+511:   color: #e6db74
+512: }
+513: 
+514: 
+515: /* Literal.String.Regex */
+516: 
+517: :root[style*=dark] .highlight .s1 {
+518:   color: #e6db74
+519: }
+520: 
+521: 
+522: /* Literal.String.Single */
+523: 
+524: :root[style*=dark] .highlight .ss {
+525:   color: #e6db74
+526: }
+527: 
+528: 
+529: /* Literal.String.Symbol */
+530: 
+531: :root[style*=dark] .highlight .bp {
+532:   color: #f8f8f2
+533: }
+534: 
+535: 
+536: /* Name.Builtin.Pseudo */
+537: 
+538: :root[style*=dark] .highlight .fm {
+539
+```
+17.
+File Path: docs/_static/css/custom-dark.css
+Code Snippet:
+```
+: 
+461: :root[style*=dark] .highlight .dl {
+462:   color: #e6db74
+463: }
+464: 
+465: 
+466: /* Literal.String.Delimiter */
+467: 
+468: :root[style*=dark] .highlight .sd {
+469:   color: #e6db74
+470: }
+471: 
+472: 
+473: /* Literal.String.Doc */
+474: 
+475: :root[style*=dark] .highlight .s2 {
+476:   color: #e6db74
+477: }
+478: 
+479: 
+480: /* Literal.String.Double */
+481: 
+482: :root[style*=dark] .highlight .se {
+483:   color: #ae81ff
+484: }
+485: 
+486: 
+487: /* Literal.String.Escape */
+488: 
+489: :root[style*=dark] .highlight .sh {
+490:   color: #e6db74
+491: }
+492: 
+493: 
+494: /* Literal.String.Heredoc */
+495: 
+496: :root[style*=dark] .highlight .si {
+497:   color: #e6db74
+498: }
+499: 
+500: 
+501: /* Literal.String.Interpol */
+502: 
+503: :root[style*=dark] .highlight .sx {
+504:   color: #e6db74
+505: }
+506: 
+507: 
+508: /* Literal.String.Other */
+509: 
+510: :root[style*=dark] .highlight .sr {
+511:   color: #e6db74
+512: }
+513: 
+514: 
+515: /* Literal.String.Regex */
+516: 
+517: :root[style*=dark] .highlight .s1 {
+518:   color: #e6db74
+519: }
+520: 
+521: 
+522: /* Literal.String.Single */
+523: 
+524: :root[style*=dark] .highlight .ss {
+525:   color: #e6db74
+526: }
+527: 
+528: 
+529: /* Literal.String.Symbol */
+530: 
+531: :root[style*=dark] .highlight .bp {
+532:   color: #f8f8f2
+533: }
+534: 
+535: 
+536: /* Name.Builtin.Pseudo */
+537: 
+538: :root[style*=dark] .highlight .fm {
+539:   color: #a6e22e
+540: }
+541: 
+542: 
+543: /* Name.Function.Magic */
+544: 
+545: :root[style*=dark] .highlight .vc {
+546:   color: #f8f8f2
+547: }
+548: 
+549: 
+550: /* Name.Variable.Class */
+551: 
+552: :root[style*=dark] .highlight .vg {
+553:   color: #f8f8f2
+554: }
+555: 
+556: 
+557: /* Name.Variable.Global */
+558: 
+559: :root[style*=dark] .highlight .vi {
+560:   color: #f8f8f2
+561: }
+562: 
+563: 
+564: /* Name.Variable.Instance */
+565: 
+566: :root[style*=dark] .highlight .vm {
+567:   color: #f8f8f2
+568: }
+569: 
+570: 
+571: /* Name.Variable.Magic */
+572: 
+573: :root[style*=dark] .highlight .il {
+574:   color: #ae81ff
+575: }
+576: 
+577: 
+578: /* Grammar */
+579: 
+580
+```
+18.
+File Path: docs/_static/css/custom-dark.css
+Code Snippet:
+```
+ 
+500: 
+501: /* Literal.String.Interpol */
+502: 
+503: :root[style*=dark] .highlight .sx {
+504:   color: #e6db74
+505: }
+506: 
+507: 
+508: /* Literal.String.Other */
+509: 
+510: :root[style*=dark] .highlight .sr {
+511:   color: #e6db74
+512: }
+513: 
+514: 
+515: /* Literal.String.Regex */
+516: 
+517: :root[style*=dark] .highlight .s1 {
+518:   color: #e6db74
+519: }
+520: 
+521: 
+522: /* Literal.String.Single */
+523: 
+524: :root[style*=dark] .highlight .ss {
+525:   color: #e6db74
+526: }
+527: 
+528: 
+529: /* Literal.String.Symbol */
+530: 
+531: :root[style*=dark] .highlight .bp {
+532:   color: #f8f8f2
+533: }
+534: 
+535: 
+536: /* Name.Builtin.Pseudo */
+537: 
+538: :root[style*=dark] .highlight .fm {
+539:   color: #a6e22e
+540: }
+541: 
+542: 
+543: /* Name.Function.Magic */
+544: 
+545: :root[style*=dark] .highlight .vc {
+546:   color: #f8f8f2
+547: }
+548: 
+549: 
+550: /* Name.Variable.Class */
+551: 
+552: :root[style*=dark] .highlight .vg {
+553:   color: #f8f8f2
+554: }
+555: 
+556: 
+557: /* Name.Variable.Global */
+558: 
+559: :root[style*=dark] .highlight .vi {
+560:   color: #f8f8f2
+561: }
+562: 
+563: 
+564: /* Name.Variable.Instance */
+565: 
+566: :root[style*=dark] .highlight .vm {
+567:   color: #f8f8f2
+568: }
+569: 
+570: 
+571: /* Name.Variable.Magic */
+572: 
+573: :root[style*=dark] .highlight .il {
+574:   color: #ae81ff
+575: }
+576: 
+577: 
+578: /* Grammar */
+579: 
+580: :root[style*=dark] .railroad-diagram {
+581:   fill: white;
+582: }
+583: 
+584: :root[style*=dark] .railroad-diagram path {
+585:   stroke: white;
+586: }
+587: 
+588: :root[style*=dark] .railroad-diagram rect {
+589:   stroke: white;
+590: }
+591: 
+592: :root[style*=dark] .a4 .sig-name {
+593:   background-color: transparent !important;
+594: }
+```
+19.
+File Path: docs/_static/css/custom-dark.css
+Code Snippet:
+```
+:   color: #a6e22e
+540: }
+541: 
+542: 
+543: /* Name.Function.Magic */
+544: 
+545: :root[style*=dark] .highlight .vc {
+546:   color: #f8f8f2
+547: }
+548: 
+549: 
+550: /* Name.Variable.Class */
+551: 
+552: :root[style*=dark] .highlight .vg {
+553:   color: #f8f8f2
+554: }
+555: 
+556: 
+557: /* Name.Variable.Global */
+558: 
+559: :root[style*=dark] .highlight .vi {
+560:   color: #f8f8f2
+561: }
+562: 
+563: 
+564: /* Name.Variable.Instance */
+565: 
+566: :root[style*=dark] .highlight .vm {
+567:   color: #f8f8f2
+568: }
+569: 
+570: 
+571: /* Name.Variable.Magic */
+572: 
+573: :root[style*=dark] .highlight .il {
+574:   color: #ae81ff
+575: }
+576: 
+577: 
+578: /* Grammar */
+579: 
+580: :root[style*=dark] .railroad-diagram {
+581:   fill: white;
+582: }
+583: 
+584: :root[style*=dark] .railroad-diagram path {
+585:   stroke: white;
+586: }
+587: 
+588: :root[style*=dark] .railroad-diagram rect {
+589:   stroke: white;
+590: }
+591: 
+592: :root[style*=dark] .a4 .sig-name {
+593:   background-color: transparent !important;
+594: }
+```
+20.
+File Path: docs/_static/css/custom.css
+Code Snippet:
+```
+0: /* ROOT DECLARATIONS */
+1: :root {
+2:     /* Text */
+3:     --color-a: #2B247C;
+4:     --color-b: #672AC8;
+5:     --color-c: #5554D9;
+6:     --color-d: #9F94E8;
+7:     --color-e: #AEC0F1;
+8:     --color-f: #E6E3EC;
+9:     /* Background */
+10: 
+11:     --white: #FAF8FF;
+12:     --black: #110C4E;
+13:     --menu-bg: #2B247C06;
+14:     --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+15: 
+16:     --navHeight: 4.5rem;
+17:     --sideWidth: 300px;
+18:     --maxWidth: 80rem;
+19:     --desktopInlinePadding: 2rem;
+20:     --mobileInlinePadding: 1rem;
+21:     --currentVersionHeight: 45px;
+22: 
+23:     text-rendering: geometricPrecision;
+24:     -webkit-font-smoothing: antialiased;
+25: }
+26: 
+27: a,
+28: button {
+29:     border-radius: 0;
+30: }
+31: 
+32: :root[style*=dark] {
+33:     --color-a: #E6E3EC !important;
+34:     --color-b: #AEC0F1 !important;
+35:     --color-c: #9F94E8 !important;
+36:     --color-d: #5554D9 !important;
+37:     --color-e: #672AC8 !important;
+38:     --color-f: #2B247C !important;
+39: 
+40:     --white: #110C4E !important;
+41:     --black: #FAF8FF !important;
+42:     --menu-bg: #E6E3EC06 !important;
+43: }
+44: 
+45: html,
+46: body,
+47: .unified-header::before,
+48: .wy-nav-side
+```
+21.
+File Path: docs/_static/css/custom.css
+Code Snippet:
+```
+0: /* ROOT DECLARATIONS */
+1: :root {
+2:     /* Text */
+3:     --color-a: #2B247C;
+4:     --color-b: #672AC8;
+5:     --color-c: #5554D9;
+6:     --color-d: #9F94E8;
+7:     --color-e: #AEC0F1;
+8:     --color-f: #E6E3EC;
+9:     /* Background */
+10: 
+11:     --white: #FAF8FF;
+12:     --black: #110C4E;
+13:     --menu-bg: #2B247C06;
+14:     --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+15: 
+16:     --navHeight: 4.5rem;
+17:     --sideWidth: 300px;
+18:     --maxWidth: 80rem;
+19:     --desktopInlinePadding: 2rem;
+20:     --mobileInlinePadding: 1rem;
+21:     --currentVersionHeight: 45px;
+22: 
+23:     text-rendering: geometricPrecision;
+24:     -webkit-font-smoothing: antialiased;
+25: }
+26: 
+27: a,
+28: button {
+29:     border-radius: 0;
+30: }
+31: 
+32: :root[style*=dark] {
+33:     --color-a: #E6E3EC !important;
+34:     --color-b: #AEC0F1 !important;
+35:     --color-c: #9F94E8 !important;
+36:     --color-d: #5554D9 !important;
+37:     --color-e: #672AC8 !important;
+38:     --color-f: #2B247C !important;
+39: 
+40:     --white: #110C4E !important;
+41:     --black: #FAF8FF !important;
+42:     --menu-bg: #E6E3EC06 !important;
+43: }
+44: 
+45: html,
+46: body,
+47: .unified-header::before,
+48: .wy-nav-side,
+49: .rst-versions,
+50: code,
+51: div,
+52: input[type=text],
+53: a,
+54: .wy-grid-for-nav {
+55:     transition: background 150ms ease-in-out;
+56: }
+57: 
+58: html,
+59: body,
+60: .wy-grid-for-nav {
+61:     background-color: var(--color-f) !important;
+62: }
+63: 
+64: body {
+65:     font-family: "Overpass", sans-serif;
+66: }
+67: 
+68: a {
+69:     color: var(--color-c);
+70: }
+71: 
+72: a, section {
+73:     scroll-margin-top: calc(var(--navHeight) + 2rem);
+74: }
+75: 
+76: hr {
+77:     margin-block: 2rem;
+78:     border-color: var(--color-d) !important;
+79: }
+80: 
+81: 
+82: /* HEADER STYLES */
+83: h1 {
+84:     font-family: 'Overpass', sans-serif;
+85:     font-weight: 700;
+86:     font-size: 44px;
+87:     color: var(--color-a) !important;
+
+```
+22.
+File Path: docs/_static/css/custom.css
+Code Snippet:
+```
+     --mobileInlinePadding: 1rem;
+21:     --currentVersionHeight: 45px;
+22: 
+23:     text-rendering: geometricPrecision;
+24:     -webkit-font-smoothing: antialiased;
+25: }
+26: 
+27: a,
+28: button {
+29:     border-radius: 0;
+30: }
+31: 
+32: :root[style*=dark] {
+33:     --color-a: #E6E3EC !important;
+34:     --color-b: #AEC0F1 !important;
+35:     --color-c: #9F94E8 !important;
+36:     --color-d: #5554D9 !important;
+37:     --color-e: #672AC8 !important;
+38:     --color-f: #2B247C !important;
+39: 
+40:     --white: #110C4E !important;
+41:     --black: #FAF8FF !important;
+42:     --menu-bg: #E6E3EC06 !important;
+43: }
+44: 
+45: html,
+46: body,
+47: .unified-header::before,
+48: .wy-nav-side,
+49: .rst-versions,
+50: code,
+51: div,
+52: input[type=text],
+53: a,
+54: .wy-grid-for-nav {
+55:     transition: background 150ms ease-in-out;
+56: }
+57: 
+58: html,
+59: body,
+60: .wy-grid-for-nav {
+61:     background-color: var(--color-f) !important;
+62: }
+63: 
+64: body {
+65:     font-family: "Overpass", sans-serif;
+66: }
+67: 
+68: a {
+69:     color: var(--color-c);
+70: }
+71: 
+72: a, section {
+73:     scroll-margin-top: calc(var(--navHeight) + 2rem);
+74: }
+75: 
+76: hr {
+77:     margin-block: 2rem;
+78:     border-color: var(--color-d) !important;
+79: }
+80: 
+81: 
+82: /* HEADER STYLES */
+83: h1 {
+84:     font-family: 'Overpass', sans-serif;
+85:     font-weight: 700;
+86:     font-size: 44px;
+87:     color: var(--color-a) !important;
+88:     line-height: 1.1;
+89:     text-wrap: balance;
+90:     margin-top: 4rem;
+91:     margin-bottom: 1.5rem;
+92: }
+93: 
+94: section:first-of-type h1:first-of-type {
+95:     font-family: 'Overpass mono', monospace;
+96:     font-size: 48px;
+97:     margin-top: 3rem;
+98:     margin-bottom: 5rem;
+99: }
+100: 
+101: h2 {
+102:     font-family: 'Overpass', sans-serif;
+103:     font-weight: 700;
+104:     font-size: 38px;
+105:     color: var(--color-a) !important;
+106:     line-height: 46px;
+107:     text-wrap: balance;
+108:     margin-top: 4rem;
+109:     margin-bottom: 1.5rem;
+110: }
+111: 
+112: *:not([role=navigation])>p[role=heading]>span,
+113: h3 {
+114:     font-family: 'Overpass', sans-serif;
+115:     font-weight: 700;
+116:     font-size
+```
+23.
+File Path: docs/_static/css/custom.css
+Code Snippet:
+```
+,
+49: .rst-versions,
+50: code,
+51: div,
+52: input[type=text],
+53: a,
+54: .wy-grid-for-nav {
+55:     transition: background 150ms ease-in-out;
+56: }
+57: 
+58: html,
+59: body,
+60: .wy-grid-for-nav {
+61:     background-color: var(--color-f) !important;
+62: }
+63: 
+64: body {
+65:     font-family: "Overpass", sans-serif;
+66: }
+67: 
+68: a {
+69:     color: var(--color-c);
+70: }
+71: 
+72: a, section {
+73:     scroll-margin-top: calc(var(--navHeight) + 2rem);
+74: }
+75: 
+76: hr {
+77:     margin-block: 2rem;
+78:     border-color: var(--color-d) !important;
+79: }
+80: 
+81: 
+82: /* HEADER STYLES */
+83: h1 {
+84:     font-family: 'Overpass', sans-serif;
+85:     font-weight: 700;
+86:     font-size: 44px;
+87:     color: var(--color-a) !important;
+88:     line-height: 1.1;
+89:     text-wrap: balance;
+90:     margin-top: 4rem;
+91:     margin-bottom: 1.5rem;
+92: }
+93: 
+94: section:first-of-type h1:first-of-type {
+95:     font-family: 'Overpass mono', monospace;
+96:     font-size: 48px;
+97:     margin-top: 3rem;
+98:     margin-bottom: 5rem;
+99: }
+100: 
+101: h2 {
+102:     font-family: 'Overpass', sans-serif;
+103:     font-weight: 700;
+104:     font-size: 38px;
+105:     color: var(--color-a) !important;
+106:     line-height: 46px;
+107:     text-wrap: balance;
+108:     margin-top: 4rem;
+109:     margin-bottom: 1.5rem;
+110: }
+111: 
+112: *:not([role=navigation])>p[role=heading]>span,
+113: h3 {
+114:     font-family: 'Overpass', sans-serif;
+115:     font-weight: 700;
+116:     font-size: 32px;
+117:     color: var(--color-a) !important;
+118:     line-height: 46px;
+119:     text-wrap: balance;
+120:     margin-top: 4rem;
+121:     margin-bottom: 1.5rem;
+122: }
+123: 
+124: h4 {
+125:     font-family: 'Overpass', sans-serif;
+126:     font-weight: 700;
+127:     font-size: 32px;
+128:     color: var(--color-a) !important;
+129:     line-height: 46px;
+130:     text-wrap: balance;
+131:     margin-top: 3rem;
+132:     margin-bottom: 1.5rem;
+133: }
+134: 
+135: h5 {
+136:     font-family: 'Overpass', sans-serif;
+137:     font-weight: 700;
+138:     font-size: 18px;
+139:     color: var(--color-a) !important;
+140:     line-height: 1.4;
+141:     text-wrap: balance;
+142: }
+143: 
+144: h6 {
+145:     font-family: 'Overpass', sans-serif;
+146:    
+```
+24.
+File Path: docs/_static/css/custom.css
+Code Snippet:
+```
+88:     line-height: 1.1;
+89:     text-wrap: balance;
+90:     margin-top: 4rem;
+91:     margin-bottom: 1.5rem;
+92: }
+93: 
+94: section:first-of-type h1:first-of-type {
+95:     font-family: 'Overpass mono', monospace;
+96:     font-size: 48px;
+97:     margin-top: 3rem;
+98:     margin-bottom: 5rem;
+99: }
+100: 
+101: h2 {
+102:     font-family: 'Overpass', sans-serif;
+103:     font-weight: 700;
+104:     font-size: 38px;
+105:     color: var(--color-a) !important;
+106:     line-height: 46px;
+107:     text-wrap: balance;
+108:     margin-top: 4rem;
+109:     margin-bottom: 1.5rem;
+110: }
+111: 
+112: *:not([role=navigation])>p[role=heading]>span,
+113: h3 {
+114:     font-family: 'Overpass', sans-serif;
+115:     font-weight: 700;
+116:     font-size: 32px;
+117:     color: var(--color-a) !important;
+118:     line-height: 46px;
+119:     text-wrap: balance;
+120:     margin-top: 4rem;
+121:     margin-bottom: 1.5rem;
+122: }
+123: 
+124: h4 {
+125:     font-family: 'Overpass', sans-serif;
+126:     font-weight: 700;
+127:     font-size: 32px;
+128:     color: var(--color-a) !important;
+129:     line-height: 46px;
+130:     text-wrap: balance;
+131:     margin-top: 3rem;
+132:     margin-bottom: 1.5rem;
+133: }
+134: 
+135: h5 {
+136:     font-family: 'Overpass', sans-serif;
+137:     font-weight: 700;
+138:     font-size: 18px;
+139:     color: var(--color-a) !important;
+140:     line-height: 1.4;
+141:     text-wrap: balance;
+142: }
+143: 
+144: h6 {
+145:     font-family: 'Overpass', sans-serif;
+146:     font-weight: 700;
+147:     font-size: 16px;
+148:     color: var(--color-a) !important;
+149:     line-height: 1.4;
+150:     text-wrap: balance;
+151: }
+152: 
+153: span.pre,
+154: pre {
+155:     /* css-3 */
+156:     white-space: pre-wrap;
+157:     /* Mozilla, since 1999 */
+158:     white-space: -moz-pre-wrap;
+159:     /* Opera 4-6 */
+160:     white-space: -pre-wrap;
+161:     /* Opera 7 */
+162:     white-space: -o-pre-wrap;
+163:     word-wrap: break-word;
+164:     font-family: 'Overpass Mono', monospace;
+165: }
+166: 
+167: small,
+168: small * {
+169:     font-size: 12px;
+170: }
+171: 
+172: .wy-table-responsive table td,
+173: .wy-table-responsive table th {
+174:     white-space: normal;
+175: }
+176: 
+177: .rst-content table.docutils td {
+178:     vertical-align: top;
+179: }
+180: 
+181: /* links */
+
+```
+25.
+File Path: docs/_static/css/custom.css
+Code Snippet:
+```
+: 32px;
+117:     color: var(--color-a) !important;
+118:     line-height: 46px;
+119:     text-wrap: balance;
+120:     margin-top: 4rem;
+121:     margin-bottom: 1.5rem;
+122: }
+123: 
+124: h4 {
+125:     font-family: 'Overpass', sans-serif;
+126:     font-weight: 700;
+127:     font-size: 32px;
+128:     color: var(--color-a) !important;
+129:     line-height: 46px;
+130:     text-wrap: balance;
+131:     margin-top: 3rem;
+132:     margin-bottom: 1.5rem;
+133: }
+134: 
+135: h5 {
+136:     font-family: 'Overpass', sans-serif;
+137:     font-weight: 700;
+138:     font-size: 18px;
+139:     color: var(--color-a) !important;
+140:     line-height: 1.4;
+141:     text-wrap: balance;
+142: }
+143: 
+144: h6 {
+145:     font-family: 'Overpass', sans-serif;
+146:     font-weight: 700;
+147:     font-size: 16px;
+148:     color: var(--color-a) !important;
+149:     line-height: 1.4;
+150:     text-wrap: balance;
+151: }
+152: 
+153: span.pre,
+154: pre {
+155:     /* css-3 */
+156:     white-space: pre-wrap;
+157:     /* Mozilla, since 1999 */
+158:     white-space: -moz-pre-wrap;
+159:     /* Opera 4-6 */
+160:     white-space: -pre-wrap;
+161:     /* Opera 7 */
+162:     white-space: -o-pre-wrap;
+163:     word-wrap: break-word;
+164:     font-family: 'Overpass Mono', monospace;
+165: }
+166: 
+167: small,
+168: small * {
+169:     font-size: 12px;
+170: }
+171: 
+172: .wy-table-responsive table td,
+173: .wy-table-responsive table th {
+174:     white-space: normal;
+175: }
+176: 
+177: .rst-content table.docutils td {
+178:     vertical-align: top;
+179: }
+180: 
+181: /* links */
+182: .rst-content .highlighted {
+183:     background: #eac545;
+184: }
+185: 
+186: /* code block highlights */
+187: .rst-content pre {
+188:     background: #fafafa;
+189: }
+190: 
+191: /* project version (displayed under project logo) */
+192: .wy-side-nav-search>div.version {
+193:     color: var(--color-b);
+194:     margin-top: 0;
+195:     margin-bottom: 0.5rem;
+196:     text-align: start;
+197: }
+198: 
+199: /* Link to Remix IDE shown next to code snippets */
+200: .rst-content p.remix-link-container {
+201:     display: block;
+202:     text-align: right;
+203:     margin: 0;
+204:     line-height: 1em;
+205: }
+206: 
+207: .rst-content .remix-link-container a.remix-link {
+208:     font-size: 0.7em;
+209:     padding: 0.1em 0.5em;
+210:     background: transparent;
+211:     color: var(--color-a) !important;
+212:     border: 1
 ```
 <END_OF_CONTEXT>
 <START_OF_USER_PROMPT>
-List every function **definition** (not declaration) where the **body** contains a **CallExpr** to  `EVMDialect::builtin`
+Find the true definition of None that is being called in function builtin
+
+void CodeTransform::operator()(FunctionCall const& _call)
+{
+	yulAssert(m_scope, "");
+
+	m_assembly.setSourceLocation(originLocationOf(_call));
+	if (std::optional<BuiltinHandle> builtinHandle = m_dialect.findBuiltin(_call.functionName.name.str()))
+	{
+		BuiltinFunctionForEVM const& builtin = m_dialect.builtin(*builtinHandle);
+		for (auto&& [i, arg]: _call.arguments | ranges::views::enumerate | ranges::views 
+
+1. Analyze the calling function context to understand how None is being used
+2. Examine the retrieved documents between <START_OF_CONTEXT> and <END_OF_CONTEXT> to identify all candidate definitions of None
+3. Determine which specific definition is being called based on:
+   - Function parameter types and counts
+   - Template arguments (if applicable)
+   - Object type and inheritance hierarchy
+   - Function signature matching
+   - Context of the call site
+4. If multiple valid candidates exist, explain why one is more likely than others
+5. Provide the exact code snippet with line numbers if available
+6. Include the file path for each found declaration/definition
+7. If the target cannot be resolved with the given context, state this clearly
 ---------- Output Format ----------
+Resolved Definition:
+[File path]: [Line numbers]
+[Code snippet]
 
-<file_name>:
-<the lined code of the function definition including the function signature and body>
-...
-If no such caller exists, only reply "None".
-
----------- Examples ----------
-
-List every function **definition** (not declaration) where the **body** contains a **CallExpr** to  bar
-67: void foo() {
-68:     bar();
-69:     // other code
-70: }
-
-Expected Output:
-file1.cpp:
-67: void foo() {
-68:     bar();
-69:     // other code
-70: }
-        
 
 <END_OF_USER_PROMPT>
