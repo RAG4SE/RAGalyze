@@ -24,19 +24,11 @@ from ragalyze.configs import get_embedder, configs
 from ragalyze.core.types import DualVectorDocument
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from ragalyze.core.utils import minmax_norm, zscore_norm
-
+from ragalyze.rag.treesitter_parse_interface import tokenize_for_bm25, set_debug_mode
 
 logger = get_tqdm_compatible_logger(__name__)
 
-# Import the C extension for BM25 tokenization (preferred over C++ extension)
-try:
-    from .bm25_c_extension import build_bm25_index_c
-    USE_C_EXTENSION = True
-    logger.info("Using C extension for BM25 tokenization")
-except ImportError:
-    USE_C_EXTENSION = False
-    logger.error("C extension for BM25 not available.")
-    raise
+
 class BM25Retriever:
     """Standalone BM25 retriever that can be used by other retrievers."""
 
@@ -66,6 +58,10 @@ class BM25Retriever:
 
     def _initialize_bm25(self, documents: List[Union[Document, DualVectorDocument]]):
         """Initialize BM25 index with document texts."""
+        # for doc in documents:
+        #     print(doc.meta_data)
+        #     if not doc.meta_data["programming_language"]:
+        #         import sys; sys.exit(1)
         try:
             # Extract text content from documents for BM25 indexing
             corpus = []
@@ -87,8 +83,9 @@ class BM25Retriever:
                             text = doc.original_doc.text + "\n" + doc.understanding_text
                         else:
                             text = doc.text
-                        future_to_index[executor.submit(self.build_bm25_index, text)] = i
-                    
+                        assert doc.meta_data["programming_language"], "Programming language is required for BM25 tokenization"
+                        future_to_index[executor.submit(self.build_bm25_index, text, doc.meta_data["programming_language"])] = i
+
                     # Collect results in the correct order
                     results = [None] * len(documents)
                     for future in as_completed(future_to_index):
@@ -114,7 +111,8 @@ class BM25Retriever:
                         text = doc.text
 
                     # Tokenize text for BM25 (simple whitespace + punctuation splitting)
-                    tokens = self.build_bm25_index(text)
+                    assert doc.meta_data["programming_language"], "Programming language is required for BM25 tokenization"
+                    tokens = self.build_bm25_index(text, doc.meta_data["programming_language"])
                     print('tokens:' ,tokens)
                     corpus.append(tokens)
                 # end_time = time.time()
@@ -126,9 +124,10 @@ class BM25Retriever:
             logger.error(f"Failed to initialize BM25: {e}")
             raise
 
-    def build_bm25_index(self, code: str) -> List[str]:
-        return build_bm25_index_c(code)
-        
+    def build_bm25_index(self, code: str, language: str) -> List[str]:
+        set_debug_mode(0)
+        return tokenize_for_bm25(code, language)
+
     def _build_bm25_index_python(self, code: str) -> List[str]:
         """纯Python实现的BM25索引构建"""
         # 跨语言的函数定义模式

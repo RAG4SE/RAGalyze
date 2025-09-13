@@ -9,26 +9,106 @@ import subprocess
 import os
 import urllib.request
 import tarfile
-import tempfile
-import shutil
-# import sys  # Will be used if needed later
 
 # Configuration flags
 ENABLE_TREESITTER = True  # Enable tree-sitter integration
 ENABLE_LANGUAGE_PARSERS = True  # Download language parsers (set to False for now)
+ENABLE_PCRE2 = True  # Enable PCRE2 integration for regex parsing
 
-# def get_pcre2_config():
-#     """Get PCRE2 configuration"""
-#     try:
-#         pcre2_prefix = subprocess.check_output(['brew', '--prefix', 'pcre2'], text=True).strip()
-#     except Exception:
-#         pcre2_prefix = '/opt/homebrew/opt/pcre2'
+def get_pcre2_config():
+    """Download and configure PCRE2 with automatic build pipeline"""
+    if not ENABLE_PCRE2:
+        return {'include_dirs': [], 'library_dirs': [], 'libraries': []}
     
-#     return {
-#         'include_dirs': [os.path.join(pcre2_prefix, 'include')],
-#         'library_dirs': [os.path.join(pcre2_prefix, 'lib')],
-#         'libraries': ['pcre2-8']
-#     }
+    pcre2_version = '10.46'
+    pcre2_dir = 'pcre2-lib'
+    
+    if not os.path.exists(pcre2_dir):
+        os.makedirs(pcre2_dir)
+    
+    pcre2_url = f'https://github.com/PCRE2Project/pcre2/archive/refs/tags/pcre2-{pcre2_version}.tar.gz'
+    pcre2_archive = os.path.join(pcre2_dir, f'pcre2-{pcre2_version}.tar.gz')
+    pcre2_extract_dir = os.path.join(pcre2_dir, f'pcre2-pcre2-{pcre2_version}')
+    
+    # PCRE2 build pipeline
+    def build_pcre2():
+        """PCRE2 build pipeline"""
+        try:
+            # Step 1: Configure
+            configure_path = os.path.join(pcre2_extract_dir, 'configure')
+            if os.path.exists(configure_path):
+                print("Configuring PCRE2...")
+                result = subprocess.run(['./configure', '--disable-shared', '--enable-static'], 
+                                      cwd=pcre2_extract_dir, capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(f"PCRE2 configure failed: {result.stderr}")
+                    return False
+            else:
+                print("Configure script not found, skipping configuration")
+                return False
+            
+            # Step 2: Build
+            print("Building PCRE2...")
+            result = subprocess.run(['make'], cwd=pcre2_extract_dir, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"PCRE2 build failed: {result.stderr}")
+                return False
+            
+            print("PCRE2 built successfully")
+            return True
+            
+        except Exception as e:
+            print(f"PCRE2 build pipeline failed: {e}")
+            return False
+    
+    # Download PCRE2 if not already present
+    if not os.path.exists(pcre2_extract_dir) and not os.path.exists(pcre2_archive):
+        try:
+            print(f"Downloading PCRE2 {pcre2_version}...")
+            urllib.request.urlretrieve(pcre2_url, pcre2_archive)
+            
+            with tarfile.open(pcre2_archive, 'r:gz') as tar:
+                tar.extractall(pcre2_dir)
+            
+            os.remove(pcre2_archive)
+            print("PCRE2 downloaded successfully")
+            
+        except Exception as e:
+            print(f"Failed to download PCRE2: {e}")
+            return {'include_dirs': [], 'library_dirs': [], 'libraries': []}
+    
+    # Extract if archive exists but directory doesn't
+    if os.path.exists(pcre2_archive) and not os.path.exists(pcre2_extract_dir):
+        try:
+            print("Extracting PCRE2...")
+            with tarfile.open(pcre2_archive, 'r:gz') as tar:
+                tar.extractall(pcre2_dir)
+            os.remove(pcre2_archive)
+            print("PCRE2 extracted successfully")
+        except Exception as e:
+            print(f"Failed to extract PCRE2: {e}")
+            return {'include_dirs': [], 'library_dirs': [], 'libraries': []}
+    
+    # Run build pipeline
+    if os.path.exists(pcre2_extract_dir):
+        # Check if already built
+        lib_path = os.path.join(pcre2_extract_dir, '.libs', 'libpcre2-8.a')
+        if not os.path.exists(lib_path):
+            print("PCRE2 build pipeline starting...")
+            if not build_pcre2():
+                return {'include_dirs': [], 'library_dirs': [], 'libraries': []}
+        else:
+            print("PCRE2 already built, skipping build step")
+    else:
+        print("PCRE2 extract directory not found")
+        return {'include_dirs': [], 'library_dirs': [], 'libraries': []}
+    
+    return {
+        'include_dirs': [os.path.join(pcre2_extract_dir, 'src')],
+        'library_dirs': [os.path.join(pcre2_extract_dir, '.libs')],
+        'libraries': ['pcre2-8'],
+        'extra_compile_args': ['-I' + os.path.join(pcre2_extract_dir, 'src')]
+    }
 
 tree_sitter_version = '0.25.9'  # Updated to a more recent version
 
@@ -211,19 +291,8 @@ def get_version_for_lang(lang):
     return parser_versions[lang]
 
 # Get configurations
-# pcre2_config = get_pcre2_config()
+pcre2_config = get_pcre2_config()
 tree_sitter_config = get_tree_sitter_config() if ENABLE_TREESITTER else {'include_dirs': [], 'sources': []}
-
-# # BM25 C extension with PCRE2
-# bm25_c_extension = Extension(
-#     'ragalyze.rag.bm25_c_extension',
-#     sources=['ragalyze/rag/bm25_c_extension.c'],
-#     include_dirs=[np.get_include()] + pcre2_config['include_dirs'],
-#     library_dirs=pcre2_config['library_dirs'],
-#     libraries=pcre2_config['libraries'],
-#     language='c',
-#     extra_compile_args=['-std=c99', '-O3']
-# )
 
 # Tree-sitter extension with real tree-sitter integration
 treesitter_sources = ['ragalyze/rag/treesitter_parse.c']
@@ -231,6 +300,8 @@ treesitter_sources = ['ragalyze/rag/treesitter_parse.c']
 treesitter_include_dirs = [np.get_include()]
 if 'include_dirs' in tree_sitter_config:
     treesitter_include_dirs.extend(tree_sitter_config['include_dirs'])
+if 'include_dirs' in pcre2_config:
+    treesitter_include_dirs.extend(pcre2_config['include_dirs'])
 
 # Add language parser sources
 if 'sources' in tree_sitter_config:
@@ -239,12 +310,27 @@ if 'sources' in tree_sitter_config:
 print("treesitter_sources:", treesitter_sources)
 print("treesitter_include_dirs:", treesitter_include_dirs)
 
+treesitter_library_dirs = []
+treesitter_libraries = []
+treesitter_extra_compile_args = []
+if 'library_dirs' in pcre2_config:
+    treesitter_library_dirs.extend(pcre2_config['library_dirs'])
+if 'libraries' in pcre2_config:
+    treesitter_libraries.extend(pcre2_config['libraries'])
+if 'extra_compile_args' in pcre2_config:
+    treesitter_extra_compile_args.extend(pcre2_config['extra_compile_args'])
+
+# Add PCRE2 macro definitions for 8-bit characters
+if ENABLE_PCRE2:
+    treesitter_extra_compile_args.extend(['-DPCRE2_CODE_UNIT_WIDTH=8'])
+
 treesitter_extension = Extension(
     'ragalyze.rag.treesitter_parse',
     sources=treesitter_sources,
     include_dirs=treesitter_include_dirs,
-    library_dirs=[],
-    libraries=[],
+    library_dirs=treesitter_library_dirs,
+    libraries=treesitter_libraries,
+    extra_compile_args=treesitter_extra_compile_args,
     language='c',
     define_macros=[("TS_DEBUG", "1")],  # 👈 开启 LOG
 )

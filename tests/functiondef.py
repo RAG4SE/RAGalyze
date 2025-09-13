@@ -17,7 +17,7 @@ dict_config.rag.query_driven.top_k = 100
 # 排序策略
 dict_config.rag.retriever.fusion = "normal_add"
 
-# dict_config.rag.embedder.force_embedding = True
+dict_config.rag.embedder.force_embedding = True
 
 set_global_configs(dict_config)
 

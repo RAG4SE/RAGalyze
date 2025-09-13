@@ -166,14 +166,10 @@ analyze_repository(repo_path=repo_path)
 
 ### setup.py
 
-The `setup.py` script is responsible for building the C++ extension module that provides performance improvements for BM25 tokenization. This extension bypasses Python's GIL (Global Interpreter Lock) limitations, offering significant speedups in indexing operations.
-
-The extension is defined as:
-- Name: `ragalyze.rag.bm25_cpp_extension`
-- Source: `ragalyze/rag/bm25_cpp_extension.cpp`
-- Dependencies: `numpy`
-
-When you install RAGalyze with the development dependencies (`pip install -e .[dev]`) or use the provided Makefile, the C++ extension is automatically compiled and installed.
+```bash
+python setup.py build_ext --inplace
+pip install -e .
+```
 
 ### Performance
 

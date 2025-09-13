@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include "pcre2.h"
 // Use local tree-sitter headers
 #include "tree_sitter/api.h"
 
@@ -86,19 +87,19 @@ static const TSLanguage* get_language(const char* language_name) {
     
     // Return the appropriate language parser
     if (strcmp(language_name, "cpp") == 0) {
-        printf("Using C++ parser\n");
+        debug_printf("Using C++ parser\n");
         return tree_sitter_cpp();
     } else if (strcmp(language_name, "python") == 0) {
-        printf("Using Python parser\n");
+        debug_printf("Using Python parser\n");
         return tree_sitter_python();
     } else if (strcmp(language_name, "c") == 0) {
-        printf("Using C parser\n");
+        debug_printf("Using C parser\n");
         return tree_sitter_c();
     } else if (strcmp(language_name, "java") == 0) {
-        printf("Using Java parser\n");
+        debug_printf("Using Java parser\n");
         return tree_sitter_java();
     } else if (strcmp(language_name, "javascript") == 0) {
-        printf("Using JavaScript parser\n");
+        debug_printf("Using JavaScript parser\n");
         return tree_sitter_javascript();
     }
     
@@ -269,6 +270,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 debug_printf("DEBUG: Found function definition via declarator field: '%s'\n", decl_text);
                 add_node(results, "function_definition", decl_text);
                 free(decl_text);
+                if (ts_node_type(declarator_node) == "qualified_identifier") {
+                    return;
+                }
             }
         }
         else {
@@ -506,7 +510,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             free(func_name);
         }
         else {
-            printf("WARNING: Call node with no function or name field\n");
             debug_enabled = 1;
             debug_print_child(node, source_code);
             exit(1);
@@ -572,371 +575,82 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
     }
 }
 
-// Fallback parser when tree-sitter language parsers are not available
+// Fallback parser equivalent to tokens = re.findall(r"\b\w+\b", text) using PCRE2
 static ParseResults* fallback_parse(const char* code, const char* language_name) {
     ParseResults* results = init_parse_results();
     
-    // Simple approach: scan through code and extract tokens
-    const char* keywords[] = {"def", "class", "return", "if", "else", "for", "while", 
-                             "import", "from", "pass", "try", "except", "finally", 
-                             "break", "continue", "lambda", "with", "as", "yield",
-                             "True", "False", "None", "and", "or", "not", "in", "is", NULL};
+    // PCRE2 pattern equivalent to Python's \b\w+\b
+    // Using word boundary and word character with proper options
+    const char* pattern = "\\b[a-zA-Z0-9_]+\\b";
+    PCRE2_SPTR subject = (PCRE2_SPTR)code;
+    PCRE2_SPTR pattern_ptr = (PCRE2_SPTR)pattern;
     
-    // First, just extract all keywords
-    const char* pos = code;
-    while (*pos) {
-        // Skip whitespace
-        while (*pos && isspace(*pos)) pos++;
-        if (!*pos) break;
+    int errorcode;
+    PCRE2_SIZE erroroffset;
+    pcre2_code *re = pcre2_compile(
+        pattern_ptr,
+        PCRE2_ZERO_TERMINATED,
+        PCRE2_UCP | PCRE2_UTF | PCRE2_ALT_BSUX,
+        &errorcode,
+        &erroroffset,
+        NULL
+    );
+    
+    if (!re) {
+        // Get error message and raise error
+        PCRE2_UCHAR error_message[256];
+        pcre2_get_error_message(errorcode, error_message, sizeof(error_message));
+        fprintf(stderr, "PCRE2 compilation failed at offset %d: %s\n", (int)erroroffset, error_message);
+        exit(1);
+    }
+    
+    pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(re, NULL);
+    if (!match_data) {
+        pcre2_code_free(re);
+        fprintf(stderr, "Failed to create PCRE2 match data\n");
+        exit(1);
+    }
+    
+    int rc;
+    size_t subject_len = strlen(code);
+    size_t start_offset = 0;
+    
+    while (start_offset < subject_len &&
+           (rc = pcre2_match(
+               re,
+               subject,
+               subject_len,
+               start_offset,
+               0,
+               match_data,
+               NULL
+           )) >= 0) {
         
-        // Check for keywords at current position
-        int found_keyword = 0;
-        for (int i = 0; keywords[i]; i++) {
-            size_t kw_len = strlen(keywords[i]);
-            if (strncmp(pos, keywords[i], kw_len) == 0) {
-                // Verify word boundary
-                char next_char = pos[kw_len];
-                if (next_char == '\0' || isspace(next_char) || ispunct(next_char)) {
-                    add_node(results, "keyword", keywords[i]);
-                    pos += kw_len;
-                    found_keyword = 1;
-                    break;
-                }
-            }
-        }
-        if (!found_keyword) {
-            pos++; // Move to next character if no keyword found
-        }
-    }
-    
-    // Second pass: extract function and class definitions
-    // Note: we skip the "def " and "class " parts since keywords are already extracted
-    const char* func_pos = code;
-    while ((func_pos = strstr(func_pos, "def ")) != NULL) {
-        func_pos += 4; // Skip "def " (keyword already extracted)
-        const char* func_start = func_pos;
-        while (*func_pos && (isalnum(*func_pos) || *func_pos == '_')) func_pos++;
-        if (func_pos > func_start) {
-            size_t func_len = func_pos - func_start;
-            char* func_name = strndup(func_start, func_len);
-            add_node(results, "function_definition", func_name);
-            free(func_name);
-        }
-    }
-    
-    const char* class_pos = code;
-    while ((class_pos = strstr(class_pos, "class ")) != NULL) {
-        class_pos += 6; // Skip "class " (keyword already extracted)
-        const char* class_start = class_pos;
-        while (*class_pos && (isalnum(*class_pos) || *class_pos == '_')) class_pos++;
-        if (class_pos > class_start) {
-            size_t class_len = class_pos - class_start;
-            char* class_name = strndup(class_start, class_len);
-            add_node(results, "class_definition", class_name);
-            free(class_name);
-        }
-    }
-    
-    // Special handling for C-style function definitions
-    if (strcmp(language_name, "c") == 0 || strcmp(language_name, "cpp") == 0) {
-        // Look for patterns like "int function_name(" or "void method("
-        const char* common_types[] = {"int", "void", "char", "float", "double", "bool", 
-                                     "short", "long", "signed", "unsigned", "const", 
-                                     "static", "extern", "auto", "register", NULL};
+        PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(match_data);
         
-        for (int i = 0; common_types[i]; i++) {
-            const char* type_pos = code;
-            size_t type_len = strlen(common_types[i]);
-            
-            while ((type_pos = strstr(type_pos, common_types[i])) != NULL) {
-                // Check if this is a complete word (bounded by space or start of string)
-                int is_word_boundary_before = (type_pos == code) || isspace(*(type_pos - 1));
-                int is_word_boundary_after = isspace(*(type_pos + type_len)) || 
-                                           *(type_pos + type_len) == '*' || 
-                                           *(type_pos + type_len) == '&' || 
-                                           *(type_pos + type_len) == '\0';
+        if (rc > 0) {
+            for (int i = 0; i < rc; i++) {
+                PCRE2_SIZE start = ovector[2*i];
+                PCRE2_SIZE end = ovector[2*i+1];
                 
-                if (is_word_boundary_before && is_word_boundary_after) {
-                    // Skip the type and whitespace
-                    const char* after_type = type_pos + type_len;
-                    while (*after_type && isspace(*after_type)) after_type++;
-                    
-                    // Check if we have an identifier followed by '('
-                    if (isalpha(*after_type) || *after_type == '_') {
-                        const char* func_start = after_type;
-                        const char* func_end = func_start;
-                        while (*func_end && (isalnum(*func_end) || *func_end == '_')) func_end++;
-                        
-                        // Skip whitespace
-                        const char* after_name = func_end;
-                        while (*after_name && isspace(*after_name)) after_name++;
-                        
-                        // Check if this is followed by '('
-                        if (*after_name == '(') {
-                            size_t func_name_len = func_end - func_start;
-                            char* func_name = strndup(func_start, func_name_len);
-                            add_node(results, "function_definition", func_name);
-                            free(func_name);
-                        }
+                if (start != PCRE2_UNSET && end != PCRE2_UNSET) {
+                    size_t len = end - start;
+                    char* word = malloc(len + 1);
+                    if (word) {
+                        memcpy(word, code + start, len);
+                        word[len] = '\0';
+                        add_node(results, "regex_node", word);
+                        free(word);
                     }
                 }
-                type_pos++;
             }
         }
         
-        // Special handling for C++ operator overloading
-        // Look for patterns like "void CodeTransform::operator()("
-        const char* operator_pos = strstr(code, "operator");
-        if (operator_pos) {
-            // Check if this is followed by "()"
-            const char* after_operator = operator_pos + 8; // Skip "operator"
-            // Skip whitespace
-            while (*after_operator && isspace(*after_operator)) after_operator++;
-            
-            // Check if this is followed by "()" and then "("
-            if (*after_operator == '(' && *(after_operator+1) == ')' && *(after_operator+2) == '(') {
-                // This is a member function definition like "void CodeTransform::operator()()"
-                // Add "operator" as a function definition
-                add_node(results, "function_definition", "operator");
-            }
-            // Check if this is followed by "()" and that's the end or followed by ";"
-            else if (*after_operator == '(' && *(after_operator+1) == ')') {
-                // Check if this is followed by ";" or "{"
-                const char* after_parens = after_operator + 2;
-                while (*after_parens && isspace(*after_parens)) after_parens++;
-                if (*after_parens == ';' || *after_parens == '{' || *after_parens == '(') {
-                    // This is a member function definition like "CodeTransform::operator()"
-                    // Add "operator" as a function definition
-                    add_node(results, "function_definition", "operator");
-                }
-            }
-        }
+        start_offset = ovector[1];
     }
     
-    // Special handling for JavaScript function definitions
-    if (strcmp(language_name, "javascript") == 0) {
-        // Look for patterns like "function test("
-        const char* js_func_pos = code;
-        while ((js_func_pos = strstr(js_func_pos, "function ")) != NULL) {
-            js_func_pos += 9; // Skip "function "
-            // Skip whitespace
-            while (*js_func_pos && isspace(*js_func_pos)) js_func_pos++;
-            
-            // Check if we have an identifier followed by '('
-            if (isalpha(*js_func_pos) || *js_func_pos == '_') {
-                const char* func_start = js_func_pos;
-                const char* func_end = func_start;
-                while (*func_end && (isalnum(*func_end) || *func_end == '_')) func_end++;
-                
-                // Skip whitespace
-                const char* after_name = func_end;
-                while (*after_name && isspace(*after_name)) after_name++;
-                
-                // Check if this is followed by '('
-                if (*after_name == '(') {
-                    size_t func_name_len = func_end - func_start;
-                    char* func_name = strndup(func_start, func_name_len);
-                    add_node(results, "function_definition", func_name);
-                    free(func_name);
-                }
-            }
-            js_func_pos++;
-        }
-    }
-    
-    // Special handling for Java function definitions
-    if (strcmp(language_name, "java") == 0) {
-        // Look for patterns like "public static void main(" or "void method("
-        const char* java_func_pos = code;
-        while ((java_func_pos = strstr(java_func_pos, "void ")) != NULL) {
-            java_func_pos += 5; // Skip "void "
-            // Skip whitespace
-            while (*java_func_pos && isspace(*java_func_pos)) java_func_pos++;
-            
-            // Check if we have an identifier followed by '('
-            if (isalpha(*java_func_pos) || *java_func_pos == '_') {
-                const char* func_start = java_func_pos;
-                const char* func_end = func_start;
-                while (*func_end && (isalnum(*func_end) || *func_end == '_')) func_end++;
-                
-                // Skip whitespace
-                const char* after_name = func_end;
-                while (*after_name && isspace(*after_name)) after_name++;
-                
-                // Check if this is followed by '('
-                if (*after_name == '(') {
-                    size_t func_name_len = func_end - func_start;
-                    char* func_name = strndup(func_start, func_name_len);
-                    add_node(results, "function_definition", func_name);
-                    free(func_name);
-                }
-            }
-            java_func_pos++;
-        }
-        
-        // Also look for patterns like "public static int getValue("
-        const char* java_func_pos2 = code;
-        while ((java_func_pos2 = strstr(java_func_pos2, "int ")) != NULL) {
-            java_func_pos2 += 4; // Skip "int "
-            // Skip whitespace
-            while (*java_func_pos2 && isspace(*java_func_pos2)) java_func_pos2++;
-            
-            // Check if we have an identifier followed by '('
-            if (isalpha(*java_func_pos2) || *java_func_pos2 == '_') {
-                const char* func_start = java_func_pos2;
-                const char* func_end = func_start;
-                while (*func_end && (isalnum(*func_end) || *func_end == '_')) func_end++;
-                
-                // Skip whitespace
-                const char* after_name = func_end;
-                while (*after_name && isspace(*after_name)) after_name++;
-                
-                // Check if this is followed by '('
-                if (*after_name == '(') {
-                    size_t func_name_len = func_end - func_start;
-                    char* func_name = strndup(func_start, func_name_len);
-                    add_node(results, "function_definition", func_name);
-                    free(func_name);
-                }
-            }
-            java_func_pos2++;
-        }
-    }
-    
-    // Special handling for the specific C++ test case
-    if (strcmp(language_name, "cpp") == 0) {
-        // Handle the specific pattern: "int const& foo(S* s)"
-        const char* foo_pos = strstr(code, "foo(");
-        if (foo_pos) {
-            // Extract "foo" as a function definition
-            add_node(results, "function_definition", "foo");
-        }
-    }
-    
-    // Third pass: extract identifiers, operators, numbers, and function calls
-    const char* token_pos = code;
-    while (*token_pos) {
-        // Skip whitespace
-        while (*token_pos && isspace(*token_pos)) {
-            token_pos++;
-        }
-        
-        if (!*token_pos) break;
-        
-        // Check if we're at a keyword
-        int at_keyword = 0;
-        for (int i = 0; keywords[i]; i++) {
-            size_t kw_len = strlen(keywords[i]);
-            if (strncmp(token_pos, keywords[i], kw_len) == 0) {
-                char next_char = token_pos[kw_len];
-                if (next_char == '\0' || isspace(next_char) || ispunct(next_char)) {
-                    token_pos += kw_len;
-                    at_keyword = 1;
-                    break;
-                }
-            }
-        }
-        if (at_keyword) continue;
-        
-        // Check if we're at a function/class definition
-        if (strncmp(token_pos, "def ", 4) == 0 || strncmp(token_pos, "class ", 6) == 0) {
-            token_pos++; // Move past the current character
-            continue;
-        }
-        
-        // Check if we're at an identifier
-        if (isalpha(*token_pos) || *token_pos == '_') {
-            const char* id_start = token_pos;
-            while (*token_pos && (isalnum(*token_pos) || *token_pos == '_')) token_pos++;
-            size_t id_len = token_pos - id_start;
-            
-            // Check if this is followed by '(' (function call)
-            if (*token_pos == '(') {
-                char* func_name = strndup(id_start, id_len);
-                
-                // For C++, check if this is the "foo" function from our test case
-                int is_function_def = 0;
-                if (strcmp(language_name, "cpp") == 0 && strcmp(func_name, "foo") == 0) {
-                    // Check if this is the specific test case pattern
-                    if (strstr(code, "int const& foo(S* s)")) {
-                        is_function_def = 1;
-                    }
-                }
-                
-                if (is_function_def) {
-                    // Already identified as function definition, don't add as call
-                    free(func_name);
-                } else {
-                    add_node(results, "call", func_name);
-                    free(func_name);
-                }
-            } else {
-                char* identifier = strndup(id_start, id_len);
-                add_node(results, "identifier", identifier);
-                free(identifier);
-            }
-            continue;
-        }
-        
-        // Check for numbers
-        if (isdigit(*token_pos) || (*token_pos == '-' && isdigit(*(token_pos+1)))) {
-            const char* num_start = token_pos;
-            if (*token_pos == '-') token_pos++;
-            while (*token_pos && isdigit(*token_pos)) token_pos++;
-            size_t num_len = token_pos - num_start;
-            char* number = strndup(num_start, num_len);
-            add_node(results, "number", number);
-            free(number);
-            continue;
-        }
-        
-        // Check for operators, but exclude assignment operators for BM25
-        if (strchr("+-*/=<>!&|", *token_pos)) {
-            char operator[3] = {*token_pos, '\0'};
-            // Check for two-character operators
-            if ((token_pos[0] == '=' && token_pos[1] == '=') || 
-                (token_pos[0] == '!' && token_pos[1] == '=') ||
-                (token_pos[0] == '<' && token_pos[1] == '=') ||
-                (token_pos[0] == '>' && token_pos[1] == '=') ||
-                (token_pos[0] == '&' && token_pos[1] == '&') ||
-                (token_pos[0] == '|' && token_pos[1] == '|')) {
-                operator[1] = token_pos[1];
-                operator[2] = '\0';
-                token_pos++;
-            }
-            // Temporarily skip ALL operators to debug
-            // if (strcmp(operator, "=") == 0 || strcmp(operator, "+=") == 0 || 
-            //     strcmp(operator, "-=") == 0 || strcmp(operator, "*=") == 0 || 
-            //     strcmp(operator, "/=") == 0 || strcmp(operator, "%=") == 0) {
-            //     // Skip assignment operators
-            // } else {
-            //     add_node(results, "operator", operator);
-            // }
-            // Skip all operators for now
-            token_pos++;
-            continue;
-        }
-        
-        // Check for method calls (dot notation)
-        if (*token_pos == '.') {
-            token_pos++;
-            const char* method_start = token_pos;
-            while (*token_pos && (isalnum(*token_pos) || *token_pos == '_')) token_pos++;
-            if (token_pos > method_start && *token_pos == '(') {
-                size_t method_len = token_pos - method_start;
-                char* method_name = strndup(method_start, method_len);
-                add_node(results, "method_call", method_name);
-                free(method_name);
-                continue;
-            }
-            // Reset position if not a method call
-            token_pos = method_start;
-            continue;
-        }
-        
-        // Skip other characters
-        token_pos++;
-    }
+    pcre2_match_data_free(match_data);
+    pcre2_code_free(re);
     
     return results;
 }
@@ -999,7 +713,7 @@ static ParseResults* parse_with_treesitter(const char* code, const char* languag
 }
 
 // Helper to check if a name is in a function names list
-static int is_function_name(const char* name, char function_names[][256], size_t function_count) {
+static int is_function_name(const char* name, char** function_names, size_t function_count) {
     for (size_t i = 0; i < function_count; i++) {
         if (strcmp(function_names[i], name) == 0) {
             return 1;
@@ -1036,21 +750,73 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
     ParseResults* ast_nodes = parse_with_treesitter(code, language);
     
     // Track function and class names we've seen to avoid duplicates
-    char function_names[100][256];
-    char class_names[100][256];
+    size_t max_names = ast_nodes->count;  // Initial capacity based on AST node count
+    char** function_names = (char**)malloc(max_names * sizeof(char*));
+    char** class_names = (char**)malloc(max_names * sizeof(char*));
+    char** regex_node_names = (char**)malloc(max_names * sizeof(char*));
+    
+    if (!function_names || !class_names || !regex_node_names) {
+        free(function_names);
+        free(class_names);
+        free(regex_node_names);
+        free_parse_results(ast_nodes);
+        return tokens;
+    }
+    
     size_t function_count = 0;
     size_t class_count = 0;
-    
+    size_t regex_node_count = 0;
+
     // First pass: collect all function and class definitions
     debug_printf("DEBUG: Processing %zu AST nodes\n", ast_nodes->count);
     for (size_t i = 0; i < ast_nodes->count; i++) {
         debug_printf("DEBUG: AST node %zu: type='%s', text='%s'\n", i, ast_nodes->node_types[i], ast_nodes->node_texts[i]);
+        
         if (strcmp(ast_nodes->node_types[i], "function_definition") == 0) {
-            strcpy(function_names[function_count++], ast_nodes->node_texts[i]);
+            function_names[function_count] = strdup(ast_nodes->node_texts[i]);
+            if (!function_names[function_count]) {
+                // Allocation failed, clean up and return
+                for (size_t j = 0; j < function_count; j++) free(function_names[j]);
+                for (size_t j = 0; j < class_count; j++) free(class_names[j]);
+                for (size_t j = 0; j < regex_node_count; j++) free(regex_node_names[j]);
+                free(function_names);
+                free(class_names);
+                free(regex_node_names);
+                free_parse_results(ast_nodes);
+                return tokens;
+            }
+            function_count++;
             debug_printf("DEBUG: Found function definition: '%s'\n", ast_nodes->node_texts[i]);
         }
         else if (strcmp(ast_nodes->node_types[i], "class_definition") == 0) {
-            strcpy(class_names[class_count++], ast_nodes->node_texts[i]);
+            class_names[class_count] = strdup(ast_nodes->node_texts[i]);
+            if (!class_names[class_count]) {
+                // Allocation failed, clean up and return
+                for (size_t j = 0; j < function_count; j++) free(function_names[j]);
+                for (size_t j = 0; j < class_count; j++) free(class_names[j]);
+                for (size_t j = 0; j < regex_node_count; j++) free(regex_node_names[j]);
+                free(function_names);
+                free(class_names);
+                free(regex_node_names);
+                free_parse_results(ast_nodes);
+                return tokens;
+            }
+            class_count++;
+        }
+        else if (strcmp(ast_nodes->node_types[i], "regex_node") == 0) {
+            regex_node_names[regex_node_count] = strdup(ast_nodes->node_texts[i]);
+            if (!regex_node_names[regex_node_count]) {
+                // Allocation failed, clean up and return
+                for (size_t j = 0; j < function_count; j++) free(function_names[j]);
+                for (size_t j = 0; j < class_count; j++) free(class_names[j]);
+                for (size_t j = 0; j < regex_node_count; j++) free(regex_node_names[j]);
+                free(function_names);
+                free(class_names);
+                free(regex_node_names);
+                free_parse_results(ast_nodes);
+                return tokens;
+            }
+            regex_node_count++;
         }
     }
     
@@ -1085,32 +851,23 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
             }
             continue;
         }
+
         
-        // Method calls - handle carefully
-        if (strcmp(node_type, "method_call") == 0) {
-            char* method_name = extract_method_name(node_text);
-            
-            if (!is_function_name(method_name, function_names, function_count) && 
-                !is_function_name(method_name, class_names, class_count)) {
-                char prefixed_token[256];
-                snprintf(prefixed_token, sizeof(prefixed_token), "[CALL]%s", method_name);
-                add_token(tokens, prefixed_token);
-            }
-            free(method_name);
-            continue;
-        }
-        
-        // Identifiers - for special cases like CodeTransform::operator()
-        if (strcmp(node_type, "identifier") == 0) {
-            // For the special case of CodeTransform::operator(), include CodeTransform
-            if (strstr(code, "::") && strcmp(node_text, "CodeTransform") == 0) {
-                add_token(tokens, node_text);
-            }
+        if (strcmp(node_type, "regex_node") == 0) {
+            char prefixed_token[256];
+            snprintf(prefixed_token, sizeof(prefixed_token), "%s", node_text);
+            add_token(tokens, prefixed_token);
             continue;
         }
     }
     
     // Clean up and return
+    for (size_t i = 0; i < function_count; i++) free(function_names[i]);
+    for (size_t i = 0; i < class_count; i++) free(class_names[i]);
+    for (size_t i = 0; i < regex_node_count; i++) free(regex_node_names[i]);
+    free(function_names);
+    free(class_names);
+    free(regex_node_names);
     free_parse_results(ast_nodes);
     return tokens;
 }
@@ -1124,23 +881,9 @@ static PyObject* parse_code_with_treesitter(PyObject* self, PyObject* args) {
         return NULL;
     }
     
-    // Simple language detection if not specified
-    if (!language_name || strlen(language_name) == 0) {
-        if (strstr(code, "def ") || strstr(code, "import ")) {
-            language_name = "python";
-        } else if (strstr(code, "::") || strstr(code, "std::")) {
-            language_name = "cpp";
-        } else if (strstr(code, "public ") || strstr(code, "class ")) {
-            language_name = "java";
-        } else if (strstr(code, "function ") || strstr(code, "var ")) {
-            language_name = "javascript";
-        } else if (strstr(code, "func ") || strstr(code, "package ")) {
-            language_name = "go";
-        } else if (strstr(code, "fn ") || strstr(code, "let ")) {
-            language_name = "rust";
-        } else {
-            language_name = "c";
-        }
+    if (!language_name) {
+        printf("ERROR: Language name is required for parsing\n");
+        exit(1);
     }
     
     // Parse the code using tree-sitter
@@ -1169,29 +912,13 @@ static PyObject* tokenize_for_bm25(PyObject* self, PyObject* args) {
     if (!PyArg_ParseTuple(args, "s|z", &code, &language_name)) {
         return NULL;
     }
-    
-    // Simple language detection if not specified
-    if (!language_name || strlen(language_name) == 0) {
-        if (strstr(code, "def ") || strstr(code, "import ")) {
-            language_name = "python";
-        } else if (strstr(code, "::") || strstr(code, "std::")) {
-            language_name = "cpp";
-        } else if (strstr(code, "public ") || strstr(code, "class ")) {
-            language_name = "java";
-        } else if (strstr(code, "function ") || strstr(code, "var ")) {
-            language_name = "javascript";
-        } else if (strstr(code, "func ") || strstr(code, "package ")) {
-            language_name = "go";
-        } else if (strstr(code, "fn ") || strstr(code, "let ")) {
-            language_name = "rust";
-        } else {
-            language_name = "c";
-        }
+    if (!language_name) {
+        printf("ERROR: Language name is required for BM25 tokenization\n");
+        exit(1);
     }
     
     // Extract BM25 tokens using tree-sitter
     TokenResults* results = extract_bm25_tokens_treesitter(code, language_name);
-    
     // Convert results to Python list
     PyObject* py_results = PyList_New(results->count);
     for (size_t i = 0; i < results->count; i++) {
@@ -1212,7 +939,6 @@ static PyObject* set_debug_mode(PyObject* self, PyObject* args) {
         return NULL;
     }
     debug_enabled = enabled;
-    printf("Debug mode %s\n", enabled ? "enabled" : "disabled");
     Py_RETURN_NONE;
 }
 
@@ -1221,11 +947,78 @@ static PyObject* get_debug_mode(PyObject* self, PyObject* args) {
     return PyLong_FromLong(debug_enabled);
 }
 
+// Python wrapper for fallback_parse function
+static PyObject* fallback_parse_py(PyObject* self, PyObject* args) {
+    const char* code;
+    const char* language;
+    
+    if (!PyArg_ParseTuple(args, "ss", &code, &language)) {
+        return NULL;
+    }
+    
+    // Call the C fallback_parse function
+    ParseResults* results = fallback_parse(code, language);
+    if (!results) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to parse code");
+        return NULL;
+    }
+    
+    // Convert results to Python list of dictionaries
+    PyObject* py_results = PyList_New(0);
+    if (!py_results) {
+        free_parse_results(results);
+        return NULL;
+    }
+    
+    for (size_t i = 0; i < results->count; i++) {
+        PyObject* node_dict = PyDict_New();
+        if (!node_dict) {
+            Py_DECREF(py_results);
+            free_parse_results(results);
+            return NULL;
+        }
+        
+        // Add type and name to dictionary
+        PyObject* type_str = PyUnicode_FromString(results->node_types[i]);
+        PyObject* name_str = PyUnicode_FromString(results->node_texts[i]);
+        
+        if (!type_str || !name_str) {
+            Py_XDECREF(type_str);
+            Py_XDECREF(name_str);
+            Py_DECREF(node_dict);
+            Py_DECREF(py_results);
+            free_parse_results(results);
+            return NULL;
+        }
+        
+        PyDict_SetItemString(node_dict, "type", type_str);
+        PyDict_SetItemString(node_dict, "name", name_str);
+        
+        Py_DECREF(type_str);
+        Py_DECREF(name_str);
+        
+        // Add node to results list
+        if (PyList_Append(py_results, node_dict) != 0) {
+            Py_DECREF(node_dict);
+            Py_DECREF(py_results);
+            free_parse_results(results);
+            return NULL;
+        }
+        
+        Py_DECREF(node_dict);
+    }
+    
+    free_parse_results(results);
+    return py_results;
+}
+
 static PyMethodDef TreeSitterMethods[] = {
     {"parse_code_with_treesitter", parse_code_with_treesitter, METH_VARARGS, 
      "Parse code and return AST nodes as (type, text) tuples"},
     {"tokenize_for_bm25", tokenize_for_bm25, METH_VARARGS,
      "Tokenize code for BM25 search with [FUNC] and [CALL] prefixes"},
+    {"fallback_parse", fallback_parse_py, METH_VARARGS,
+     "Fallback parser equivalent to re.findall(r'\\b\\w+\\b', text)"},
     {"set_debug_mode", set_debug_mode, METH_VARARGS,
      "Enable or disable debug mode (1=enabled, 0=disabled)"},
     {"get_debug_mode", get_debug_mode, METH_NOARGS,

@@ -28,6 +28,193 @@ MAX_EMBEDDING_LENGTH = 1000000
 logger = get_tqdm_compatible_logger(__name__)
 
 
+def get_programming_language(file_extension: str) -> str:
+    """
+    Determine the programming language based on file extension.
+    
+    Args:
+        file_extension: The file extension (e.g., '.py', '.js', '.md')
+        
+    Returns:
+        str: The programming language name or 'documentation' for non-code files
+    """
+    extension_to_language = {
+        # Python
+        '.py': 'python',
+        '.pyi': 'python',
+        
+        # JavaScript/TypeScript
+        '.js': 'javascript',
+        '.jsx': 'javascript',
+        '.ts': 'typescript',
+        '.tsx': 'typescript',
+        
+        # Java
+        '.java': 'java',
+        
+        # C/C++
+        '.c': 'c',
+        '.h': 'c',
+        '.cpp': 'cpp',
+        '.hpp': 'cpp',
+        '.cc': 'cpp',
+        '.cxx': 'cpp',
+        
+        # Go
+        '.go': 'go',
+        
+        # Rust
+        '.rs': 'rust',
+        
+        # Web
+        '.html': 'html',
+        '.css': 'css',
+        '.php': 'php',
+        
+        # Swift
+        '.swift': 'swift',
+        
+        # C#
+        '.cs': 'csharp',
+        
+        # Solidity
+        '.sol': 'solidity',
+        
+        # OCaml
+        '.ml': 'ocaml',
+        '.mli': 'ocaml',
+        
+        # Haskell
+        '.hs': 'haskell',
+        '.lhs': 'haskell',
+        
+        # F#
+        '.fs': 'fsharp',
+        '.fsi': 'fsharp',
+        '.fsx': 'fsharp',
+        
+        # Erlang
+        '.erl': 'erlang',
+        '.hrl': 'erlang',
+        
+        # Elixir
+        '.ex': 'elixir',
+        '.exs': 'elixir',
+        
+        # Clojure
+        '.clj': 'clojure',
+        '.cljs': 'clojure',
+        '.cljc': 'clojure',
+        
+        # Scheme/Lisp
+        '.scm': 'scheme',
+        '.ss': 'scheme',
+        '.lisp': 'lisp',
+        '.lsp': 'lisp',
+        
+        # Elm
+        '.elm': 'elm',
+        
+        # Ruby
+        '.rb': 'ruby',
+        
+        # Perl
+        '.pl': 'perl',
+        '.pm': 'perl',
+        
+        # Scala
+        '.scala': 'scala',
+        '.sc': 'scala',
+        
+        # Kotlin
+        '.kt': 'kotlin',
+        '.kts': 'kotlin',
+        
+        # Dart
+        '.dart': 'dart',
+        
+        # Lua
+        '.lua': 'lua',
+        
+        # R
+        '.r': 'r',
+        '.R': 'r',
+        
+        # Objective-C
+        '.m': 'objectivec',
+        
+        # Julia
+        '.jl': 'julia',
+        
+        # Nim
+        '.nim': 'nim',
+        
+        # Crystal
+        '.cr': 'crystal',
+        
+        # Zig
+        '.zig': 'zig',
+        
+        # V
+        '.v': 'vlang',
+        
+        # SystemVerilog/Verilog
+        '.sv': 'systemverilog',
+        '.vhd': 'vhdl',
+        '.vhdl': 'vhdl',
+        
+        # Assembly
+        '.s': 'assembly',
+        '.S': 'assembly',
+        '.asm': 'assembly',
+        
+        # Shell scripts
+        '.sh': 'shell',
+        '.bash': 'shell',
+        '.zsh': 'shell',
+        '.fish': 'shell',
+        '.ps1': 'shell',
+        '.psm1': 'shell',
+        '.bat': 'shell',
+        '.cmd': 'shell',
+        
+        # Configuration files
+        '.toml': 'ini',
+        '.ini': 'ini',
+        '.cfg': 'ini',
+        '.conf': 'ini',
+        '.xaml': 'ini',
+        '.proto': 'ini',
+        '.graphql': 'ini',
+        '.gql': 'ini',
+        '.sql': 'ini',
+        
+        # Build systems
+        '.mk': 'makefile',
+        '.cmake': 'makefile',
+        '.gradle': 'makefile',
+        '.sbt': 'makefile',
+        '.bazel': 'makefile',
+        '.bzl': 'makefile',
+        
+        # Documentation and data formats
+        '.md': 'documentation',
+        '.markdown': 'documentation',
+        '.mdown': 'documentation',
+        '.mkd': 'documentation',
+        '.mkdn': 'documentation',
+        '.rst': 'documentation',
+        '.txt': 'documentation',
+        '.json': 'documentation',
+        '.jsonl': 'documentation',
+        '.yaml': 'documentation',
+        '.yml': 'documentation',
+        '.xml': 'documentation',
+    }
+    
+    return extension_to_language.get(file_extension.lower(), 'unknown')
+
+
 async def safe_read_file_async(file_path: str) -> Tuple[Optional[str], str]:
     """
     Safely read a file with multiple encoding attempts and binary file detection.
@@ -339,7 +526,13 @@ async def read_all_documents_async(path: str, max_concurrent: int = 50):
             return None
 
         try:
-            if is_code:
+            ext = os.path.splitext(relative_path)[1]
+            programming_language = get_programming_language(ext)
+            
+            # Determine if this is actually code based on the programming language
+            is_actually_code = programming_language not in ['documentation', 'ini', 'makefile', 'shell', 'unknown']
+            
+            if is_code and is_actually_code:
                 # Determine if this is an implementation file
                 is_implementation = (
                     not relative_path.startswith("test_")
@@ -347,7 +540,6 @@ async def read_all_documents_async(path: str, max_concurrent: int = 50):
                     and not relative_path.startswith("build")
                     and "test" not in relative_path.lower()
                 )
-                ext = os.path.splitext(relative_path)[1]
                 
                 return Document(
                     text=content,
@@ -356,19 +548,21 @@ async def read_all_documents_async(path: str, max_concurrent: int = 50):
                         "type": ext[1:] if ext else "",
                         "is_code": True,
                         "is_implementation": is_implementation,
+                        "programming_language": programming_language,
                         "title": relative_path,
                         "encoding_status": status,
                     },
                 )
             else:
-                ext = os.path.splitext(relative_path)[1]
+                # For documentation files or files that aren't actually code
                 return Document(
                     text=content,
                     meta_data={
                         "file_path": relative_path,
                         "type": ext[1:] if ext else "",
-                        "is_code": False,
+                        "is_code": is_actually_code,
                         "is_implementation": False,
+                        "programming_language": programming_language,
                         "title": relative_path,
                         "encoding_status": status,
                     },
@@ -488,24 +682,48 @@ def _read_all_documents_sync(path: str, max_workers: int = 8):
             if len(content) > MAX_EMBEDDING_LENGTH:
                 logger.warning(f"Skipping large file {relative_path}: exceeds limit")
                 continue
-            is_implementation = (
-                not relative_path.startswith("test_")
-                and not relative_path.startswith("app_")
-                and not relative_path.startswith("build")
-                and "test" not in relative_path.lower()
-            )
+            
             ext = os.path.splitext(relative_path)[1]
-            doc = Document(
-                text=content,
-                meta_data={
-                    "file_path": relative_path,
-                    "type": ext[1:] if ext else "",
-                    "is_code": True,
-                    "is_implementation": is_implementation,
-                    "title": relative_path,
-                    "encoding_status": status,
-                },
-            )
+            programming_language = get_programming_language(ext)
+            
+            # Determine if this is actually code based on the programming language
+            is_actually_code = programming_language not in ['documentation', 'text', 'json', 'yaml', 'xml', 'unknown']
+            
+            if is_actually_code:
+                # Determine if this is an implementation file
+                is_implementation = (
+                    not relative_path.startswith("test_")
+                    and not relative_path.startswith("app_")
+                    and not relative_path.startswith("build")
+                    and "test" not in relative_path.lower()
+                )
+                
+                doc = Document(
+                    text=content,
+                    meta_data={
+                        "file_path": relative_path,
+                        "type": ext[1:] if ext else "",
+                        "is_code": True,
+                        "is_implementation": is_implementation,
+                        "programming_language": programming_language,
+                        "title": relative_path,
+                        "encoding_status": status,
+                    },
+                )
+            else:
+                # File extension is in code_extensions but it's not actually code (e.g., .md files)
+                doc = Document(
+                    text=content,
+                    meta_data={
+                        "file_path": relative_path,
+                        "type": ext[1:] if ext else "",
+                        "is_code": False,
+                        "is_implementation": False,
+                        "programming_language": programming_language,
+                        "title": relative_path,
+                        "encoding_status": status,
+                    },
+                )
             documents.append(doc)
 
     # Process documentation files
@@ -531,6 +749,8 @@ def _read_all_documents_sync(path: str, max_workers: int = 8):
                 logger.warning(f"Skipping large file {relative_path}: exceeds limit")
                 continue
             ext = os.path.splitext(relative_path)[1]
+            programming_language = get_programming_language(ext)
+            
             doc = Document(
                 text=content,
                 meta_data={
@@ -538,6 +758,7 @@ def _read_all_documents_sync(path: str, max_workers: int = 8):
                     "type": ext[1:] if ext else "",
                     "is_code": False,
                     "is_implementation": False,
+                    "programming_language": programming_language,
                     "title": relative_path,
                     "encoding_status": status,
                 },
