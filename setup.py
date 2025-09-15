@@ -172,7 +172,8 @@ parser_versions = {
     'c': '0.24.1',
     'javascript': '0.25.0',
     'go': '0.25.0',
-    'rust': '0.24.0'
+    'rust': '0.24.0',
+    'xml': '0.7.0'
 }
 
 def download_tree_sitter_languages():
@@ -190,7 +191,8 @@ def download_tree_sitter_languages():
         'c': f'https://github.com/tree-sitter/tree-sitter-c/archive/v{parser_versions["c"]}.tar.gz',
         'javascript': f'https://github.com/tree-sitter/tree-sitter-javascript/archive/v{parser_versions["javascript"]}.tar.gz',
         'go': f'https://github.com/tree-sitter/tree-sitter-go/archive/v{parser_versions["go"]}.tar.gz',
-        'rust': f'https://github.com/tree-sitter/tree-sitter-rust/archive/v{parser_versions["rust"]}.tar.gz'
+        'rust': f'https://github.com/tree-sitter/tree-sitter-rust/archive/v{parser_versions["rust"]}.tar.gz',
+        'xml': f'https://github.com/tree-sitter-grammars/tree-sitter-xml/archive/refs/tags/v{parser_versions["xml"]}.tar.gz'
     }
     
     # Download and extract language parsers
@@ -235,11 +237,10 @@ def get_tree_sitter_config():
     # Download language parsers if enabled
     sources = []
     if ENABLE_LANGUAGE_PARSERS:
-        # lang_dir = download_tree_sitter_languages() # haoyang
-        lang_dir = "tree-sitter-languages"
+        lang_dir = download_tree_sitter_languages()
         
         # Find downloaded language parsers
-        for lang in ['python', 'cpp', 'java', 'c', 'javascript', 'go', 'rust']:
+        for lang in ['python', 'cpp', 'java', 'c', 'javascript', 'go', 'rust', 'xml']:
             # Try both versioned and unversioned directory names
             possible_dirs = [
                 os.path.join(lang_dir, f"tree-sitter-{lang}-{get_version_for_lang(lang)}"),
@@ -251,24 +252,53 @@ def get_tree_sitter_config():
                 if os.path.exists(dir_path):
                     lang_parser_dir = dir_path
                     break
-            
-            if lang_parser_dir:
-                parser_file = os.path.join(lang_parser_dir, "src", "parser.c")
-                if os.path.exists(parser_file):
-                    sources.append(parser_file)
-                    print(f"Added parser for {lang}: {parser_file}")
-                else:
-                    print(f"Parser file not found for {lang}: {parser_file}")
-                
-                # Check for scanner files
-                scanner_c = os.path.join(lang_parser_dir, "src", "scanner.c")
-                scanner_cc = os.path.join(lang_parser_dir, "src", "scanner.cc")
-                if os.path.exists(scanner_c):
-                    sources.append(scanner_c)
-                    print(f"Added scanner for {lang}: {scanner_c}")
-                elif os.path.exists(scanner_cc):
-                    sources.append(scanner_cc)
-                    print(f"Added scanner.cc for {lang}: {scanner_cc}")
+            assert lang_parser_dir, f"Language parser directory not found for {lang}"
+
+            # Add language-specific include directories
+            if lang == 'xml':
+                # XML has nested structure, add the xml/src and common directories
+                xml_src_dir = os.path.join(lang_parser_dir, "xml", "src")
+                common_dir = os.path.join(lang_parser_dir, "common")
+                if os.path.exists(xml_src_dir):
+                    include_dirs.append(xml_src_dir)
+                if os.path.exists(common_dir):
+                    include_dirs.append(common_dir)
+            else:
+                # Other languages use direct src structure
+                src_dir = os.path.join(lang_parser_dir, "src")
+                if os.path.exists(src_dir):
+                    include_dirs.append(src_dir)
+
+            # Check for nested src structure (like XML) or direct src
+            possible_parser_paths = [
+                os.path.join(lang_parser_dir, "src", "parser.c"),
+                os.path.join(lang_parser_dir, lang, "src", "parser.c")
+            ]
+
+            parser_file = None
+            for path in possible_parser_paths:
+                if os.path.exists(path):
+                    parser_file = path
+                    break
+
+            if parser_file:
+                sources.append(parser_file)
+                print(f"Added parser for {lang}: {parser_file}")
+            else:
+                print(f"Parser file not found for {lang}")
+
+            assert parser_file, f"Parser file not found for {lang}"
+
+            # Check for scanner files
+            base_dir = os.path.dirname(parser_file)
+            scanner_c = os.path.join(base_dir, "scanner.c")
+            scanner_cc = os.path.join(base_dir, "scanner.cc")
+            if os.path.exists(scanner_c):
+                sources.append(scanner_c)
+                print(f"Added scanner for {lang}: {scanner_c}")
+            elif os.path.exists(scanner_cc):
+                sources.append(scanner_cc)
+                print(f"Added scanner.cc for {lang}: {scanner_cc}")
         
         print(f"Found {len(sources)} language parser source files")
     

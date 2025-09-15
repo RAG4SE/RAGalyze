@@ -11,10 +11,12 @@ PROMPT_TEMPLATE = Prompt(
 {% endif %}
 {% if output_format %}
 ---------- Output Format ----------
+You MUST output EXACTLY in this format, no extra text, no introduction, no summary.
 {{output_format}}
 {% endif %}
 {% if example %}
 ---------- Examples ----------
+Here are some examples:
 {{example}}
 {% endif %}
 """
@@ -190,9 +192,12 @@ FIND_DECLARATION_DEFINITION_TEMPLATE = Prompt(
 5. Provide the exact code snippet with line numbers if available
 6. Include the file path for each found declaration/definition
 7. If the target cannot be resolved with the given context, state this clearly""",
-        output_format=r"""Resolved Definition:
-[File path]: [Line numbers]
-[Code snippet]
+        output_format=r"""
+{
+    "file_path": "[File path]",
+    "function_name": "[Function name]",
+    "code_snippet": "[Code snippet]"
+}
 """,
 #         example=r"""Target: process_data
 # Calling Function: handle_request
@@ -226,6 +231,41 @@ FIND_DECLARATION_DEFINITION_TEMPLATE = Prompt(
 
 # Call Site Context:
 # process_data is called on a DataProcessor object with a std::string parameter from req.get_payload()""",
+    )
+)
+
+# Prompt for querying complete function implementation
+GET_FUNCTION_IMPLEMENTATION_TEMPLATE = Prompt(
+    PROMPT_TEMPLATE.call(
+        task_description="Find and retrieve the complete implementation of function {{function_name}}",
+        context=r"{{context}}",
+#         instructions=r"""1. Search for the complete implementation of function {{function_name}} in the codebase
+# 2. Include the full function signature and body
+# 3. Provide line numbers and file path
+# 4. If multiple implementations exist (overloads, different classes), list all of them
+# 5. If the function is templated, include the template declaration
+# 6. If the function has inline implementation in a header, include that as well
+# 7. Include any relevant comments or documentation within the function
+# 8. If the function cannot be found, state this clearly""",
+        output_format=r"""
+{
+    "file_path": "[File path]",
+    "function_definition": "[Function definition]"
+}
+""",
+#         example=r"""Function: calculate_total
+
+# Expected Output:
+# Function Implementation:
+# calculator.cpp:45
+# double calculate_total(const std::vector<Item>& items) {
+#     double total = 0.0;
+#     for (const auto& item : items) {
+#         total += item.price * item.quantity;
+#     }
+#     return total;
+# }
+# """,
     )
 )
 

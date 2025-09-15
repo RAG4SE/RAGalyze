@@ -76,6 +76,7 @@ const TSLanguage* tree_sitter_python(void);
 const TSLanguage* tree_sitter_c(void);
 const TSLanguage* tree_sitter_java(void);
 const TSLanguage* tree_sitter_javascript(void);
+const TSLanguage* tree_sitter_xml(void);
 
 // Helper to get language parser
 static const TSLanguage* get_language(const char* language_name) {
@@ -101,8 +102,11 @@ static const TSLanguage* get_language(const char* language_name) {
     } else if (strcmp(language_name, "javascript") == 0) {
         debug_printf("Using JavaScript parser\n");
         return tree_sitter_javascript();
+    } else if (strcmp(language_name, "xml") == 0) {
+        debug_printf("Using XML parser\n");
+        return tree_sitter_xml();
     }
-    
+
     return NULL;
 }
 
@@ -202,7 +206,7 @@ static void free_token_results(TokenResults* results) {
 }
 
 // Recursive function to traverse the AST
-static void traverse_tree(TSNode node, const char* source_code, ParseResults* results) {
+static void traverse_tree_for_function_call(TSNode node, const char* source_code, ParseResults* results) {
     uint32_t child_count = ts_node_child_count(node);
     // Get node type and text
     const char* node_type = ts_node_type(node);
@@ -271,6 +275,20 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 add_node(results, "function_definition", decl_text);
                 free(decl_text);
                 if (ts_node_type(declarator_node) == "qualified_identifier") {
+                    if (!ts_node_is_null(ts_node_child_by_field_name(declarator_node, "name", 4))) {
+                        TSNode name_node = ts_node_child_by_field_name(declarator_node, "name", 4);
+                        uint32_t name_start = ts_node_start_byte(name_node);
+                        uint32_t name_end = ts_node_end_byte(name_node);
+                        size_t name_length = name_end - name_start;
+                        char* name_text = malloc(name_length + 1);
+                        if (name_text == NULL) {
+                            free(node_text);
+                            exit(1);
+                        }
+                        memcpy(name_text, source_code + name_start, name_length);
+                        add_node(results, "function_definition", name_text);
+                        free(name_text);
+                    }
                     return;
                 }
             }
@@ -408,7 +426,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     // TSNode argument_node = ts_node_child_by_field_name(function_node, "argument", 8);
                     // if (!ts_node_is_null(argument_node)) {
                     //     // Traverse arguments to find nested calls
-                    //     traverse_tree(argument_node, source_code, results);
+                    //     traverse_tree_for_function_call(argument_node, source_code, results);
                     // }
                 }
             }
@@ -456,7 +474,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                         else {
                             free(obj_name);
                             free(func_name);
-                            traverse_tree(objects_node, source_code, results);
+                            traverse_tree_for_function_call(objects_node, source_code, results);
                         }
                     }
                 }
@@ -482,7 +500,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     // TSNode object_node = ts_node_child_by_field_name(function_node, "object", 6);
                     // if (!ts_node_is_null(object_node)) {
                     //     // Traverse object to find nested calls
-                    //     traverse_tree(object_node, source_code, results);
+                    //     traverse_tree_for_function_call(object_node, source_code, results);
                     // }
                 }
             }
@@ -571,7 +589,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
     // Recursively traverse children
     for (uint32_t i = 0; i < child_count; i++) {
         TSNode child = ts_node_child(node, i);
-        traverse_tree(child, source_code, results);
+        traverse_tree_for_function_call(child, source_code, results);
     }
 }
 
@@ -703,7 +721,7 @@ static ParseResults* parse_with_treesitter(const char* code, const char* languag
     }
     
     // Traverse the tree and collect nodes
-    traverse_tree(root_node, code, results);
+    traverse_tree_for_function_call(root_node, code, results);
 
     // Clean up
     ts_tree_delete(tree);
@@ -843,12 +861,9 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
         
         // Function calls - include with prefix, but skip if it's a function/class we already defined
         if (strcmp(node_type, "call") == 0) {
-            if (!is_function_name(node_text, function_names, function_count) && 
-                !is_function_name(node_text, class_names, class_count)) {
-                char prefixed_token[256];
-                snprintf(prefixed_token, sizeof(prefixed_token), "[CALL]%s", node_text);
-                add_token(tokens, prefixed_token);
-            }
+            char prefixed_token[256];
+            snprintf(prefixed_token, sizeof(prefixed_token), "[CALL]%s", node_text);
+            add_token(tokens, prefixed_token);
             continue;
         }
 

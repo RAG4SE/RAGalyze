@@ -49,7 +49,7 @@ test_codes_bm25_funcs = [
     ('cpp', "void method();", sorted(["[FUNC]method"])),  # C++ prototype
     ('java', "public static int getValue();", sorted(["[FUNC]getValue"])),  # Java prototype
     ('cpp', "CodeTransform::operator()", sorted(["[CALL]CodeTransform::operator()", "[CALL]operator()"])),
-    ('cpp', "void CodeTransform::operator()();", sorted(["[FUNC]CodeTransform::operator()"])),
+    ('cpp', "void CodeTransform::operator()();", sorted(["[FUNC]CodeTransform::operator()", "[FUNC]operator()"])),
     # 测试类方法调用
     # ('cpp', "std::vector<int>::push_back(value)", sorted(["[CALL]push_back"])),  # Another C++ class method call
     ('cpp', 'BuiltinFunctionForEVM const& builtin(BuiltinHandle const& _handle) const override;', sorted(["[FUNC]builtin"])),  # C++ method with override - CORRECT SYNTAX
@@ -62,9 +62,17 @@ test_codes_bm25_funcs = [
 546: 	Context::JumpInfo const& jump = m_context->forLoopStack.top().done;
 547: 	m_assembly.appendJumpTo(jump.label, appendPopUntil(jump.targetStackHeight));
 548: }
-     """, sorted(['[CALL]appendJumpTo', '[CALL]appendPopUntil', '[CALL]empty', '[CALL]originLocationOf', '[CALL]setSourceLocation', '[CALL]top', '[CALL]yulAssert', '[FUNC]CodeTransform::operator()'])),
+     """, sorted(['[CALL]appendJumpTo', '[CALL]appendPopUntil', '[CALL]empty', '[CALL]originLocationOf', '[CALL]setSourceLocation', '[CALL]top', '[CALL]yulAssert', '[FUNC]CodeTransform::operator()', '[FUNC]operator()'])),
     # Tiny OCaml example
     ('ocaml', 'let add a b = a + b', sorted(['a', 'a', 'add', 'b', 'b', 'let'])),
+    ('cpp', """\
+int const& EVMDialect::builtin(BuiltinHandle const& _handle) const
+{
+}
+     """,
+     sorted(['[FUNC]EVMDialect::builtin', '[FUNC]builtin'])),
+    # XML test case - testing tag parsing
+    ('xml', '<function name="test"><call>execute</call></function>', sorted(['call', 'execute', 'function', 'name', 'test'])),
     ]
 
 def parse_code(code, language):

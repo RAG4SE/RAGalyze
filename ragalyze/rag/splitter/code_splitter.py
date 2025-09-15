@@ -112,7 +112,7 @@ def check_treesitter_dependencies():
             "typescript": "tree-sitter-javascript",  # TypeScript uses JS parser
             "java": "tree-sitter-java",
             "cpp": "tree-sitter-cpp",
-            "c": "tree-sitter-cpp",  # C uses CPP parser
+            "c": "tree-sitter-c",
             "go": "tree-sitter-go",
             "rust": "tree-sitter-rust",
             "markdown": "tree-sitter-markdown",

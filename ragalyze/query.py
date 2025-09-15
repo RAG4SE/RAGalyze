@@ -60,7 +60,7 @@ def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: st
             f.write("RESPONSE\n")
             f.write("=" * 50 + "\n")
             # Convert escaped newlines to actual line breaks
-            formatted_response = result["response"].replace("\\n", "\n")
+            formatted_response = result["response"].replace("\\n", "\n").replace("\\t", "    ")
             f.write(formatted_response + "\n")
 
     # Save retrieved documents if available
@@ -159,11 +159,19 @@ def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: st
         with open(bm25_score_file, "w", encoding="utf-8") as f:
             f.write("doc_id, original_score, minmax_score, zscore_score\n")
             # Sort by original score (score[0]) in descending order
-            sorted_scores = sorted(
-                result["bm25_scores"].items(), key=lambda x: x[1][0], reverse=True
-            )
+            if isinstance(list(result["bm25_scores"].values())[0], tuple):
+                sorted_scores = sorted(
+                    result["bm25_scores"].items(), key=lambda x: x[1][0], reverse=True
+                )
+            else:
+                sorted_scores = sorted(
+                    result["bm25_scores"].items(), key=lambda x: x[1], reverse=True
+                )
             for doc_id, score in sorted_scores:
-                f.write(f"{doc_id}, {score[0]}, {score[1]}, {score[2]}\n")
+                if isinstance(score, tuple):
+                    f.write(f"{doc_id}, {score[0]}, {score[1]}, {score[2]}\n")
+                else:
+                    f.write(f"{doc_id}, {score}\n")
 
     if result.get("faiss_scores"):
         faiss_score_file = output_dir / "faiss_scores.csv"
@@ -252,29 +260,29 @@ def build_contexts(
     else:
         contexts = retrieved_docs
 
-    if not configs()["rag"]["adjacent_documents"]["enabled"]:
-        return contexts
-
     count = configs()["rag"]["adjacent_documents"]["count"]
-
+    direction = configs()["rag"]["adjacent_documents"]["direction"]
+    assert direction in ["both", "previous", "next"], f"Invalid direction: {direction}"
     new_contexts = []
 
     for doc in contexts:
         new_doc = deepcopy(doc)
         cnt = 0
         this_doc = doc
-        while doc.meta_data["prev_doc_id"] is not None and cnt < count:
-            prev_doc = id2doc[doc.meta_data["prev_doc_id"]]
-            new_doc.text = prev_doc.text + new_doc.text
-            doc = prev_doc
-            cnt += 1
-        doc = this_doc
-        cnt = 0
-        while doc.meta_data["next_doc_id"] is not None and cnt < count:
-            next_doc = id2doc[doc.meta_data["next_doc_id"]]
-            new_doc.text = new_doc.text + next_doc.text
-            doc = next_doc
-            cnt += 1
+        if direction == "both" or direction == "previous":
+            while doc.meta_data["prev_doc_id"] is not None and cnt < count:
+                prev_doc = id2doc[doc.meta_data["prev_doc_id"]]
+                new_doc.text = prev_doc.text + new_doc.text
+                doc = prev_doc
+                cnt += 1
+            doc = this_doc
+            cnt = 0
+        if direction == "both" or direction == "next":
+            while doc.meta_data["next_doc_id"] is not None and cnt < count:
+                next_doc = id2doc[doc.meta_data["next_doc_id"]]
+                new_doc.text = new_doc.text + next_doc.text
+                doc = next_doc
+                cnt += 1
         new_contexts.append(new_doc)
     return new_contexts
 
@@ -523,14 +531,13 @@ def query_repository(
         )
     }
 
-
 def print_result(result: Dict[str, Any]) -> None:
     if result.get("response"):
         print("\n" + "=" * 50)
         print("RESPONSE:")
         print("=" * 50)
         # Convert escaped newlines to actual line breaks for better readability
-        formatted_response = result["response"].replace("\\n", "\n")
+        formatted_response = result["response"].replace("\\n", "\n").replace("\\t", "    ")
         print(formatted_response)
 
     # if result["retrieved_documents"]:

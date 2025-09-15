@@ -19,5 +19,5 @@ cache/
 tree-sitter-languages/
 tree-sitter-lib/
 *.backup
-prompt_str.txt
 pcre2-lib/
+prompt_str.txt
