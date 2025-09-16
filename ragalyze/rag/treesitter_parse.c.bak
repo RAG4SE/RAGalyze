@@ -99,31 +99,7 @@ static TSNode ts_node_child_by_type_name(TSNode node, const char* type_name) {
             return child;
         }
     }
-    TSNode empty_node = {0};
-    return empty_node;
-    // treesitter_assert(0, concatenate_string("No child node found with type name: ", type_name), NULL, __FILE__, __LINE__);
-}
-
-// Sometimes the declarator sub-field is null, so we need to fallback to the function_declarator type
-// For instance,
-// DEBUG: Processing declaration type: 'reference_declarator'
-// Child 0: type='&', text='&'
-// Child 1: type='identifier', text='_handle'
-static TSNode fallback_sub_declarator_node_for_cpp(TSNode node) {
-    
-    treesitter_assert(!ts_node_is_null(node), "No node found", NULL, __FILE__, __LINE__);
-
-    if (!ts_node_is_null(ts_node_child_by_field_name(node, "declarator", 10))) {
-        return ts_node_child_by_field_name(node, "declarator", 10);
-    }
-    else {
-        char* type_names[] = {"reference_declarator", "pointer_declarator", "identifier", "field_identifier", "operator_name", "function_declarator", "array_declarator", "qualified_identifier", "field_declaration"};
-        for (size_t i = 0; i < sizeof(type_names) / sizeof(type_names[0]); i++) {
-            if (!ts_node_is_null(ts_node_child_by_type_name(node, type_names[i]))) {
-                return ts_node_child_by_type_name(node, type_names[i]);
-            }
-        }
-    }
+    treesitter_assert(0, concatenate_string("No child node found with type name: ", type_name), NULL, __FILE__, __LINE__);
 }
 
 static char* normalize_function_name(const char* func_name) {
@@ -294,92 +270,6 @@ static char* get_node_text(TSNode node, const char* source_code) {
     return node_text;
 }
 
-static void traverse_tree(TSNode node, const char* source_code, ParseResults* results, const char* language_name);
-
-// Recursive function to process C++ declarations
-static void traverse_declaration_cpp(TSNode name_declarator, const char* source_code, ParseResults* results, const char* language_name, bool is_function_declarator) {
-    const char* decl_type = ts_node_type(name_declarator);
-    debug_printf("DEBUG: Processing declaration type: '%s'\n", decl_type);
-    debug_print_child(name_declarator, source_code);
-
-    // Handle init_declarator (e.g., int i = 1;)
-    if (strcmp(decl_type, "init_declarator") == 0) {
-        TSNode sub_declarator = fallback_sub_declarator_node_for_cpp(name_declarator);
-        treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
-        const char* declarator_name = get_node_text(sub_declarator, source_code);
-        debug_printf("DEBUG: Found function declaration: '%s'\n", declarator_name);
-        free(declarator_name);
-        traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
-
-        TSNode value_node = ts_node_child_by_field_name(name_declarator, "value", 5);
-        treesitter_assert(!ts_node_is_null(value_node), "No value field found", NULL, __FILE__, __LINE__);
-        traverse_tree(value_node, source_code, results, language_name);
-    }
-    else if (strcmp(decl_type, "identifier") == 0 || strcmp(decl_type, "field_identifier") == 0 || strcmp(decl_type, "operator_name") == 0) {
-        // Simple identifier (e.g., int i;)
-        const char* declarator_name = get_node_text(name_declarator, source_code);
-        debug_printf("DEBUG: Found var declaration: '%s'\n", declarator_name);
-        if (is_function_declarator) {
-            add_node(results, "func_declaration", declarator_name);
-        }
-        else {
-            add_node(results, "var_declaration", declarator_name);
-        }
-        free(declarator_name);
-    }
-    else if (strcmp(decl_type, "function_declarator") == 0) {
-        // Function declaration (e.g., void method();)
-        TSNode parameters_node = ts_node_child_by_field_name(name_declarator, "parameters", 10);
-        if (!ts_node_is_null(parameters_node)) {
-            traverse_tree(parameters_node, source_code, results, language_name);
-        }
-
-        TSNode sub_declarator = fallback_sub_declarator_node_for_cpp(name_declarator);
-        treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
-
-        const char* declarator_name = get_node_text(sub_declarator, source_code);
-        debug_printf("DEBUG: Found function declaration: '%s'\n", declarator_name);
-        free(declarator_name);
-        traverse_declaration_cpp(sub_declarator, source_code, results, language_name, true);
-    }
-    else if (strcmp(decl_type, "array_declarator") == 0) {
-        // Array declaration (e.g., int arr[100];)
-        TSNode sub_declarator = fallback_sub_declarator_node_for_cpp(name_declarator);
-        treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
-        traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
-    }
-    else if (strcmp(decl_type, "pointer_declarator") == 0 ||
-             strcmp(decl_type, "reference_declarator") == 0) {
-        // Pointer or reference declaration (e.g., int* i; int& i;)
-        TSNode sub_declarator = fallback_sub_declarator_node_for_cpp(name_declarator);
-        treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
-        traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
-    }
-    else if (strcmp(decl_type, "qualified_identifier") == 0) {
-        // Qualified identifier (e.g., Class::method)
-        const char* full_name = get_node_text(name_declarator, source_code);
-        debug_printf("DEBUG: Found qualified declaration: '%s'\n", full_name);
-        if (is_function_declarator) {
-            add_node(results, "func_declaration", full_name);
-        }
-        else {
-            add_node(results, "var_declaration", full_name);
-        }
-        free(full_name);
-        TSNode sub_declarator = ts_node_child_by_field_name(name_declarator, "name", 4);
-        traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
-    }
-    else if (strcmp(decl_type, "field_declaration") == 0) {
-        // Field declaration (e.g., int i;)
-        TSNode sub_declarator = fallback_sub_declarator_node_for_cpp(name_declarator);
-        treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
-        traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
-    }
-    else {
-        treesitter_assert(0, concatenate_string("Invalid declarator type: ", decl_type), NULL, __FILE__, __LINE__);
-    }
-}
-
 // Recursive function to traverse the AST
 static void traverse_tree(TSNode node, const char* source_code, ParseResults* results, const char* language_name) {
     uint32_t child_count = ts_node_child_count(node);
@@ -477,7 +367,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             return;
         }
 
-        else if (node_type == "identifier" || node_type == "field_identifier") {
+        else if (node_type == "identifier") {
             debug_printf("DEBUG: Identifier\n");
 
             const char* name = get_node_text(node, source_code);
@@ -497,56 +387,27 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             treesitter_assert(!ts_node_is_null(declarator_node), "No declarator field found", node_text, __FILE__, __LINE__);
             debug_printf("DEBUG: Function declarator node's child nodes:\n");
             debug_print_child(declarator_node, source_code);
-
-            // Recursively resolve the actual function declarator
-            TSNode function_declarator = declarator_node;
-            while (1) {
-                const char* decl_type = ts_node_type(function_declarator);
-                debug_printf("DEBUG: Processing declarator type: '%s'\n", decl_type);
-                debug_print_child(function_declarator, source_code);
-
-                if (strcmp(decl_type, "function_declarator") == 0) {
-                    break;  // Found the actual function declarator
-                }
-                else if (strcmp(decl_type, "reference_declarator") == 0 ||
-                         strcmp(decl_type, "pointer_declarator") == 0) {
-                    // Move to the child declarator
-                    function_declarator = fallback_sub_declarator_node_for_cpp(function_declarator);
-                    
-                    treesitter_assert(!ts_node_is_null(function_declarator), "No nested declarator found", node_text, __FILE__, __LINE__);
-                }
-                else {
-                    treesitter_assert(0, concatenate_string("Invalid function declarator type: ", decl_type), node_text, __FILE__, __LINE__);
-                }
+            if (strcmp(ts_node_type(declarator_node), "function_declarator") == 0) {
             }
-
-            TSNode parameters_node = ts_node_child_by_field_name(function_declarator, "parameters", 10);
+            else if (strcmp(ts_node_type(declarator_node), "reference_declarator") == 0) {
+                declarator_node = ts_node_child_by_type_name(declarator_node, "function_declarator");
+                treesitter_assert(!ts_node_is_null(declarator_node), "No declarator field found", node_text, __FILE__, __LINE__);
+            }
+            else if (strcmp(ts_node_type(declarator_node), "pointer_declarator") == 0) {
+                declarator_node = ts_node_child_by_type_name(declarator_node, "function_declarator");
+                treesitter_assert(!ts_node_is_null(declarator_node), "No declarator field found", node_text, __FILE__, __LINE__);
+            }
+            else {
+                treesitter_assert(0, concatenate_string("Invalid function declarator type: ", ts_node_type(declarator_node)), node_text, __FILE__, __LINE__);
+            }
+            TSNode parameters_node = ts_node_child_by_field_name(declarator_node, "parameters", 10);
             treesitter_assert(!ts_node_is_null(parameters_node), "No parameters field found", node_text, __FILE__, __LINE__);
             traverse_tree(parameters_node, source_code, results, language_name);
 
-            // Get the actual function name (recursively if needed)
-            TSNode name_node = ts_node_child_by_field_name(function_declarator, "declarator", 10);
-            treesitter_assert(!ts_node_is_null(name_node), "No declarator field found in function_declarator", node_text, __FILE__, __LINE__);
-
-            // Handle cases where the name is nested in pointer/reference declarators
-            while (strcmp(ts_node_type(name_node), "pointer_declarator") == 0 ||
-                   strcmp(ts_node_type(name_node), "reference_declarator") == 0) {
-                name_node = ts_node_child_by_field_name(name_node, "declarator", 10);
-                treesitter_assert(!ts_node_is_null(name_node), "No nested declarator found for name", node_text, __FILE__, __LINE__);
-            }
-
-            if (strcmp(ts_node_type(name_node), "qualified_identifier") == 0) {
-                TSNode short_name_node = ts_node_child_by_field_name(name_node, "name", 4);
-                treesitter_assert(!ts_node_is_null(short_name_node), "No name field found", node_text, __FILE__, __LINE__);
-                const char* short_func_name = get_node_text(short_name_node, source_code);
-                debug_printf("DEBUG: Found Python function definition via name field: '%s'\n", short_func_name);
-                add_node(results, "function_definition", short_func_name);
-                free(short_func_name);
-            }
-
-            const char* func_name = get_node_text(name_node, source_code);
+            declarator_node = ts_node_child_by_field_name(declarator_node, "declarator", 10);
+            treesitter_assert(!ts_node_is_null(declarator_node), "No declarator field found", node_text, __FILE__, __LINE__);
+            const char* func_name = get_node_text(declarator_node, source_code);
             debug_printf("DEBUG: Found function definition via declarator field: '%s'\n", func_name);
-
             add_node(results, "function_definition", func_name);
             free(func_name);
 
@@ -618,9 +479,75 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             TSNode declarator_node = ts_node_child_by_field_name(node, "declarator", 10);
             treesitter_assert(!ts_node_is_null(declarator_node), "No declarator field found", node_text, __FILE__, __LINE__);
-
-            // Use the recursive function to process the declarator
-            traverse_declaration_cpp(declarator_node, source_code, results, language_name, false);
+            debug_printf("DEBUG: Declarator node's child nodes:\n");
+            debug_print_child(declarator_node, source_code);
+            if (strcmp(ts_node_type(declarator_node), "init_declarator") == 0) {
+                // int i = 1;
+                declarator_node = ts_node_child_by_field_name(declarator_node, "declarator", 10);
+                const char* declarator_name = get_node_text(declarator_node, source_code);
+                debug_printf("DEBUG: Found var declaration: '%s'\n", declarator_name);
+                add_node(results, "var_declaration", declarator_name);
+                free(declarator_name);
+            }
+            else if (strcmp(ts_node_type(declarator_node), "identifier") == 0) {
+                // int i;
+                const char* declarator_name = get_node_text(declarator_node, source_code);
+                debug_printf("DEBUG: Found var declaration: '%s'\n", declarator_name);
+                add_node(results, "var_declaration", declarator_name);
+                free(declarator_name);
+            }
+            else if (strcmp(ts_node_type(declarator_node), "function_declarator") == 0) {
+                // void method();
+                TSNode parameters_node = ts_node_child_by_field_name(declarator_node, "parameters", 10);
+                treesitter_assert(!ts_node_is_null(parameters_node), "No parameters field found", node_text, __FILE__, __LINE__);
+                traverse_tree(parameters_node, source_code, results, language_name);
+                declarator_node = ts_node_child_by_field_name(declarator_node, "declarator", 10);
+                const char* declarator_name = get_node_text(declarator_node, source_code);
+                debug_printf("DEBUG: Found function declaration: '%s'\n", declarator_name);
+                add_node(results, "func_declaration", declarator_name);
+                free(declarator_name);
+                if (ts_node_type(declarator_node) == "qualified_identifier") {
+                    declarator_node = ts_node_child_by_field_name(declarator_node, "name", 4);
+                    const char* declarator_name = get_node_text(declarator_node, source_code);
+                    debug_printf("DEBUG: Found function declaration: '%s'\n", declarator_name);
+                    add_node(results, "func_declaration", declarator_name);
+                    free(declarator_name);
+                }
+            }
+            else if (strcmp(ts_node_type(declarator_node), "array_declarator") == 0) {
+                // int arr[100];
+                declarator_node = ts_node_child_by_field_name(declarator_node, "declarator", 10);
+                const char* declarator_name = get_node_text(declarator_node, source_code);
+                debug_printf("DEBUG: Found var declaration: '%s'\n", declarator_name);
+                add_node(results, "var_declaration", declarator_name);
+                free(declarator_name);
+            }
+            else if (strcmp(ts_node_type(declarator_node), "pointer_declarator") == 0) {
+                // int* i;
+                declarator_node = ts_node_child_by_field_name(declarator_node, "declarator", 10);
+                if (strcmp(ts_node_type(declarator_node), "identifier") == 0) {
+                    const char* declarator_name = get_node_text(declarator_node, source_code);
+                    debug_printf("DEBUG: Found var declaration: '%s'\n", declarator_name);
+                    add_node(results, "var_declaration", declarator_name);
+                    free(declarator_name);
+                }
+                else {
+                    debug_print_child(declarator_node, source_code);
+                    exit(1);
+                }
+            }
+            else if (strcmp(ts_node_type(declarator_node), "reference_declarator") == 0) {
+                // int& i;
+                declarator_node = ts_node_child_by_field_name(declarator_node, "declarator", 10);
+                const char* declarator_name = get_node_text(declarator_node, source_code);
+                debug_printf("DEBUG: Found var declaration: '%s'\n", declarator_name);
+                add_node(results, "var_declaration", declarator_name);
+                free(declarator_name);
+                
+            }
+            else {
+                treesitter_assert(0, concatenate_string("Invalid function declarator type: ", ts_node_type(declarator_node)), node_text, __FILE__, __LINE__);
+            }
 
             return;
         }
@@ -1214,6 +1141,77 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
     
     // Parse the code using tree-sitter to get comprehensive AST nodes
     ParseResults* ast_nodes = parse_with_treesitter(code, language);
+    
+    // // Track function and class names we've seen to avoid duplicates
+    // size_t max_names = ast_nodes->count;  // Initial capacity based on AST node count
+    // char** function_names = (char**)malloc(max_names * sizeof(char*));
+    // char** class_names = (char**)malloc(max_names * sizeof(char*));
+    // char** regex_node_names = (char**)malloc(max_names * sizeof(char*));
+    
+    // if (!function_names || !class_names || !regex_node_names) {
+    //     free(function_names);
+    //     free(class_names);
+    //     free(regex_node_names);
+    //     free_parse_results(ast_nodes);
+    //     return tokens;
+    // }
+    
+    // size_t function_count = 0;
+    // size_t class_count = 0;
+    // size_t regex_node_count = 0;
+
+    // // First pass: collect all function and class definitions
+    // debug_printf("DEBUG: Processing %zu AST nodes\n", ast_nodes->count);
+    // for (size_t i = 0; i < ast_nodes->count; i++) {
+    //     debug_printf("DEBUG: AST node %zu: type='%s', text='%s'\n", i, ast_nodes->node_types[i], ast_nodes->node_texts[i]);
+        
+    //     if (strcmp(ast_nodes->node_types[i], "function_definition") == 0) {
+    //         function_names[function_count] = strdup(ast_nodes->node_texts[i]);
+    //         if (!function_names[function_count]) {
+    //             // Allocation failed, clean up and return
+    //             for (size_t j = 0; j < function_count; j++) free(function_names[j]);
+    //             for (size_t j = 0; j < class_count; j++) free(class_names[j]);
+    //             for (size_t j = 0; j < regex_node_count; j++) free(regex_node_names[j]);
+    //             free(function_names);
+    //             free(class_names);
+    //             free(regex_node_names);
+    //             free_parse_results(ast_nodes);
+    //             return tokens;
+    //         }
+    //         function_count++;
+    //         debug_printf("DEBUG: Found function definition: '%s'\n", ast_nodes->node_texts[i]);
+    //     }
+    //     else if (strcmp(ast_nodes->node_types[i], "class_definition") == 0) {
+    //         class_names[class_count] = strdup(ast_nodes->node_texts[i]);
+    //         if (!class_names[class_count]) {
+    //             // Allocation failed, clean up and return
+    //             for (size_t j = 0; j < function_count; j++) free(function_names[j]);
+    //             for (size_t j = 0; j < class_count; j++) free(class_names[j]);
+    //             for (size_t j = 0; j < regex_node_count; j++) free(regex_node_names[j]);
+    //             free(function_names);
+    //             free(class_names);
+    //             free(regex_node_names);
+    //             free_parse_results(ast_nodes);
+    //             return tokens;
+    //         }
+    //         class_count++;
+    //     }
+    //     else if (strcmp(ast_nodes->node_types[i], "regex_node") == 0) {
+    //         regex_node_names[regex_node_count] = strdup(ast_nodes->node_texts[i]);
+    //         if (!regex_node_names[regex_node_count]) {
+    //             // Allocation failed, clean up and return
+    //             for (size_t j = 0; j < function_count; j++) free(function_names[j]);
+    //             for (size_t j = 0; j < class_count; j++) free(class_names[j]);
+    //             for (size_t j = 0; j < regex_node_count; j++) free(regex_node_names[j]);
+    //             free(function_names);
+    //             free(class_names);
+    //             free(regex_node_names);
+    //             free_parse_results(ast_nodes);
+    //             return tokens;
+    //         }
+    //         regex_node_count++;
+    //     }
+    // }
     
     for (size_t i = 0; i < ast_nodes->count; i++) {
         const char* node_type = ast_nodes->node_types[i];

@@ -24,24 +24,6 @@ dict_config.rag.embedder.force_embedding = True
 
 set_global_configs(dict_config)
 
-'''
-The definition is as below (libyul/backends/evm/EVMDialect.cpp:497)
-BuiltinFunctionForEVM const& EVMDialect::builtin(BuiltinHandle const& _handle) const
-{
-	if (isVerbatimHandle(_handle))
-	{
-		yulAssert(_handle.id < verbatimIDOffset);
-		auto const& verbatimFunctionPtr = m_verbatimFunctions[_handle.id];
-		yulAssert(verbatimFunctionPtr);
-		return *verbatimFunctionPtr;
-	}
-
-	yulAssert(_handle.id - verbatimIDOffset < m_functions.size());
-	auto const& maybeBuiltin = m_functions[_handle.id - verbatimIDOffset];
-	yulAssert(maybeBuiltin.has_value());
-	return *maybeBuiltin;
-}
-'''
 bm25_keywords = "[FUNC]builtin [FUNC]EVMDialect::builtin"
 faiss_query = ""
 # question = FIND_FUNCTION_CALL_TEMPLATE.call(function_name="EVMDialect::builtin")

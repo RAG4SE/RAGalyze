@@ -67,5 +67,6 @@ rag:
   # After retrieving a document, the number of adjacent documents to consider
   # For instance, if the count is 1, then consider the retrieved doc, the doc before the retrieved doc, and the doc after the retrieved doc
   adjacent_documents:
+    enabled: true
     count: 1
     direction: "both" # both, previous, next

@@ -54,8 +54,8 @@ Repository = "https://github.com/RAG4SE/RAGalyze"
 [project.scripts]
 ragalyze = "ragalyze.query:hydra_wrapped_query_repository"
 
-[tool.setuptools]
-packages = ["ragalyze", "ragalyze.configs", "ragalyze.rag", "ragalyze.rag.splitter", "ragalyze.clients", "ragalyze.logger", "ragalyze.core"]
+[tool.setuptools.packages.find]
+where = ["."]
 
 [tool.setuptools.package-data]
 "ragalyze" = ["configs/*.yaml", "configs/*.yml"]

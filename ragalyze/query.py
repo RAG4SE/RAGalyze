@@ -15,7 +15,7 @@ import hydra
 
 from adalflow.core.types import Document
 
-from ragalyze.rag.rag import RAG
+from ragalyze.rag.rag import RAG, GeneratorWrapper
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from ragalyze.configs import *
 from ragalyze.core.types import DualVectorDocument
@@ -260,6 +260,9 @@ def build_contexts(
     else:
         contexts = retrieved_docs
 
+    if not configs()["rag"]["adjacent_documents"]["enabled"]:
+        return contexts
+
     count = configs()["rag"]["adjacent_documents"]["count"]
     direction = configs()["rag"]["adjacent_documents"]["direction"]
     assert direction in ["both", "previous", "next"], f"Invalid direction: {direction}"
@@ -286,183 +289,10 @@ def build_contexts(
         new_contexts.append(new_doc)
     return new_contexts
 
-def query_repository_with_format_find_then_do(
-    repo_path: str, question: Dict[str, str]
-) -> Dict[str, Any]:
-    """
-    Query a repository about a structered question and return structured results.
-    The question is a dictionary with the following keys:
-    - what_to_find: str
-    - what_to_do: str
-    what_to_do is about what_to_find
-
-    For instance,
-    question = {
-        "what_to_find": "EVMDialect::builtin",
-        "what_to_do": "Find all the function bodies that contain function call(s) to `EVMDialect::builtin`"
-    }
-    is a good example of retriving related function calls in Solidity compiler.
-    """
-    assert (
-        "what_to_find" in question.keys() and "what_to_do" in question.keys()
-    ), f"Question must contain what_to_find and what_to_do, but got {list(question.keys())}"
-
-    what_to_find = question["what_to_find"]
-    what_to_do = question["what_to_do"]
-
-    logger.info(f"🔍 Find {what_to_find}")
-    set_global_config_value("rag.retriever.bm25.weight", 1.0)
-    repo_rag = analyze_repository(repo_path=repo_path)
-    result = repo_rag.call(what_to_find)[0]
-    documents = deepcopy(result.documents)
-
-    logger.info(f"🔍 Query '{what_to_do}'")
-    # Prepare retriever
-    set_global_config_value("rag.retriever.bm25.weight", 0.0)
-    set_global_config_value("rag.query_driven.enabled", False)
-    doc_rag = RAG()
-    doc_rag.prepare_retriever_with_documents(documents)
-    result = doc_rag.call(what_to_do)
-
-    # result[0] is RetrieverOutput
-    retriever_output = result[0] if isinstance(result, list) else result
-    retrieved_docs = (
-        retriever_output.documents if hasattr(retriever_output, "documents") else []
-    )
-
-    # Generate answer
-    logger.info("🤖 Generating answer...")
-    try:
-        id2doc = pickle.load(
-            open(repo_rag.db_manager.cache_file_path + ".id2doc.pkl", "rb")
-        )
-        contexts = build_contexts(retrieved_docs, id2doc)
-
-        generator_result = doc_rag.generator(
-            prompt_kwargs={"input_str": what_to_do, "contexts": contexts}
-        )
-
-    except Exception as e:
-        logger.error(f"Error calling generator: {e}")
-        raise
-
-    # Only use the content of the first choice
-    try:
-        rag_answer = generator_result.data.strip()
-    except Exception as e:
-        logger.error(f"Error catching generator result: {e}")
-        raise
-
-    assert rag_answer, "Generator result is empty"
-
-    logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
-
-    return {
-        # "response": rag_answer,
-        "retrieved_documents": retrieved_docs,
-        # "context": contexts,
-        "bm25_docs": (
-            repo_rag.retriever.bm25_documents
-            if hasattr(repo_rag.retriever, "bm25_documents")
-            and repo_rag.retriever.bm25_documents
-            else []
-        ),
-        "bm25_scores": (
-            repo_rag.retriever.doc_id_to_bm25_scores
-            if hasattr(repo_rag.retriever, "doc_id_to_bm25_scores")
-            else []
-        ),
-        "faiss_scores": (
-            doc_rag.retriever.doc_id_to_faiss_scores
-            if hasattr(doc_rag.retriever, "doc_id_to_faiss_scores")
-            else []
-        ),
-        "bm25faiss_scores": (
-            doc_rag.retriever.doc_id_to_bm25faiss_scores
-            if hasattr(doc_rag.retriever, "doc_id_to_bm25faiss_scores")
-            else []
-        ),
-        "rrf_scores": (
-            doc_rag.retriever.doc_id_to_rrf_scores
-            if hasattr(doc_rag.retriever, "doc_id_to_rrf_scores")
-            else []
-        ),
-    }
-
-
-def query_repository_deprecated(repo_path: str, question: str) -> Dict[str, Any]:
-    """
-    Query a repository about a question and return structured results.
-
-    Args:
-        repo_path: Path to the repository to analyze
-        question: Question to ask about the repository
-
-    Returns:
-        Dict containing several dimensions
-    """
-    # Analyze repository
-    rag = analyze_repository(repo_path=repo_path)
-
-    if question == "":
-        return None
-
-    # Call RAG system to retrieve documents
-    result = rag.call(bm25_keywords=None, faiss_query=question)
-
-    # result[0] is RetrieverOutput
-    retriever_output = result[0] if isinstance(result, list) else result
-    retrieved_docs = (
-        retriever_output.documents if hasattr(retriever_output, "documents") else []
-    )
-
-    # Generate answer
-    logger.info("🤖 Generating answer...")
-
-    try:
-        id2doc = pickle.load(open(rag.db_manager.cache_file_path + ".id2doc.pkl", "rb"))
-        contexts = build_contexts(retrieved_docs, id2doc)
-
-        generator_result = rag.generator(
-            prompt_kwargs={"input_str": question, "contexts": contexts}
-        )
-    except Exception as e:
-        logger.error(f"Error calling generator: {e}")
-        raise
-
-    # Only use the content of the first choice
-    rag_answer = generator_result.data.strip()
-
-    assert rag_answer, "Generator result is empty"
-
-    logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
-
-    return {
-        "response": rag_answer,
-        "retrieved_documents": retrieved_docs,
-        "context": contexts,
-        "bm25_docs": (
-            rag.retriever.bm25_documents
-            if hasattr(rag.retriever, "bm25_documents") and rag.retriever.bm25_documents
-            else []
-        ),
-        "bm25_scores": (
-            rag.retriever.doc_id_to_bm25_scores
-            if hasattr(rag.retriever, "doc_id_to_bm25_scores")
-            else []
-        ),
-        "faiss_scores": (
-            rag.retriever.doc_id_to_faiss_scores
-            if hasattr(rag.retriever, "doc_id_to_faiss_scores")
-            else []
-        ),
-        "rrf_scores": (
-            rag.retriever.doc_id_to_rrf_scores
-            if hasattr(rag.retriever, "doc_id_to_rrf_scores")
-            else []
-        ),
-    }
-
+def query(question: str) -> str:
+    generator = GeneratorWrapper()
+    result = generator(input_str=question)
+    return result.data.strip()
 
 def query_repository(
     repo_path: str, bm25_keywords: str, faiss_query: str, question: str
@@ -492,7 +322,8 @@ def query_repository(
         contexts = build_contexts(retrieved_docs, id2doc)
 
         generator_result = rag.generator(
-            prompt_kwargs={"input_str": question, "contexts": contexts}
+            input_str=question,
+            contexts=contexts
         )
     except Exception as e:
         logger.error(f"Error calling generator: {e}")

@@ -79,33 +79,12 @@ Code Snippet:
 <END_OF_USER_PROMPT>
 """
 
-from dataclasses import dataclass, field
 
-
-@dataclass
-class RAGAnswer(adal.DataClass):
-    rationale: str = field(
-        default="", metadata={"desc": "Chain of thoughts for the answer."}
-    )
-    answer: str = field(
-        default="",
-        metadata={
-            "desc": "Answer to the user query, formatted in markdown for beautiful rendering with react-markdown. DO NOT include ``` triple backticks fences at the beginning or end of your answer."
-        },
-    )
-
-    __output_fields__ = ["rationale", "answer"]
-
-
-class RAG(adal.Component):
-    """RAG with one repo.
-    If you want to load a new repos, call prepare_retriever(repo_path) first."""
+class GeneratorWrapper:
+    """Wrapper class for adal.Generator to decouple it from RAG class"""
 
     def __init__(self):
-        """
-        Initialize the RAG component.
-        """
-        super().__init__()
+        """Initialize the generator wrapper with configuration from configs"""
         assert "generator" in configs(), "configs must contain generator section"
         generator_config = configs()["generator"]
         assert (
@@ -150,6 +129,39 @@ IMPORTANT FORMATTING RULES:
             model_client=model_client,
             model_kwargs=model_kwargs,
         )
+
+    def __call__(self, input_str: str, contexts: List = None):
+        """
+        Generate a response using the wrapped generator.
+
+        Args:
+            input_str: The user's input/query string
+            contexts: List of context documents (optional)
+            conversation_history: Dictionary of conversation history (optional)
+
+        Returns:
+            Generated response from the generator
+        """
+        prompt_kwargs = {
+            "input_str": input_str,
+            "contexts": contexts,
+        }
+
+        return self.generator(prompt_kwargs=prompt_kwargs)
+
+
+class RAG(adal.Component):
+    """RAG with one repo.
+    If you want to load a new repos, call prepare_retriever(repo_path) first."""
+
+    def __init__(self):
+        """
+        Initialize the RAG component.
+        """
+        super().__init__()
+
+        # Use provided generator wrapper or create a new one
+        self.generator = GeneratorWrapper()
 
         self.retriever = None
         self.db_manager = None

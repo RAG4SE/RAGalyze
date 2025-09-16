@@ -36,7 +36,7 @@ from .query import (
     save_query_results,
     print_result,
     query_repository,
-    query_repository_with_format_find_then_do,
+    query,
     analyze_repository,
 )
 from .configs import (
@@ -48,7 +48,7 @@ from .configs import (
 
 __all__ = [
     "query_repository",
-    "query_repository_with_format_find_then_do",
+    "query",
     "analyze_repository",
     "save_query_results",
     "set_global_configs",

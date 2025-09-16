@@ -1,5 +1,5 @@
 from ragalyze import *
-from ragalyze.prompts import FIND_FUNCTION_CALL_TEMPLATE
+from ragalyze.prompts import GET_FUNCTION_ARGUMENTS_TEMPLATE
 
 repo_path = "/Users/mac/repo/solidity"
 # repo_path = "/home/lyr/solidity"
@@ -24,14 +24,23 @@ set_global_configs(dict_config)
 bm25_keywords = "[CALL]CodeTransform::operator() builtin"
 faiss_query = "CodeTransform::operator() calls builtin"
 # question = FIND_FUNCTION_CALL_TEMPLATE.call(function_name="EVMDialect::builtin")
-question = "How does CodeTransform::operator() call EVMDialect::builtin? Retrieve relevant code snippets to answer this question."
+question = GET_FUNCTION_ARGUMENTS_TEMPLATE.call(function_name="CodeTransform::operator()", context="""
+void Scoper::endVisit(ContractDefinition const& _contract)
+{
+	solAssert(m_contract == &_contract, "");
+	m_contract = nullptr;
+	ASTConstVisitor::endVisit(_contract);
+}                                               
+""")
+# print(question)
+print(query(question))
 
-result = query_repository(
-    repo_path=repo_path,
-    bm25_keywords=bm25_keywords,
-    faiss_query=faiss_query,
-    question=question,
-)
+# result = query_repository(
+#     repo_path=repo_path,
+#     bm25_keywords=bm25_keywords,
+#     faiss_query=faiss_query,
+#     question=question,
+# )
 
-print_result(result)
-save_query_results(result, repo_path, bm25_keywords, faiss_query, question)
+# print_result(result)
+# save_query_results(result, repo_path, bm25_keywords, faiss_query, question)
