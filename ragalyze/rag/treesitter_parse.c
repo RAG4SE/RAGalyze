@@ -39,6 +39,18 @@ static void debug_printf(const char* format, ...) {
     }
 }
 
+// Function to check if a string contains only whitespace
+static int is_whitespace(const char* str) {
+    if (!str) return 1;
+    while (*str) {
+        if (!isspace((unsigned char)*str)) {
+            return 0;
+        }
+        str++;
+    }
+    return 1;
+}
+
 static void debug_print_child(TSNode node, const char* source_code) {
     if (debug_enabled) {
         int child_count = ts_node_child_count(node);
@@ -307,7 +319,6 @@ static void traverse_declaration_cpp(TSNode name_declarator, const char* source_
         TSNode sub_declarator = fallback_sub_declarator_node_for_cpp(name_declarator);
         treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
         const char* declarator_name = get_node_text(sub_declarator, source_code);
-        debug_printf("DEBUG: Found function declaration: '%s'\n", declarator_name);
         free(declarator_name);
         traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
 
@@ -405,7 +416,12 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
 
     if (strcmp(language_name, "python") == 0) {
-        if (strcmp(node_type, "function_definition") == 0) {
+        if (strcmp(node_type, "decorator") == 0) {
+            debug_printf("DEBUG: Found decorator node\n");
+            debug_print_child(node, source_code);
+            // Don't return - let children be processed normally
+        }
+        else if (strcmp(node_type, "function_definition") == 0) {
 
             debug_printf("DEBUG: Function definition child nodes:\n");
             debug_print_child(node, source_code);
@@ -428,11 +444,13 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             return;
         }
 
-        else if (node_type == "class_definition") {
+        else if (strcmp(node_type, "class_definition") == 0) {
             debug_printf("DEBUG: Class definition child nodes:\n");
             debug_print_child(node, source_code);
             
             TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            TSNode superclasses_field_node = ts_node_child_by_field_name(node, "superclasses", 11);
+            debug_printf("DEBUG: Superclasses field node is_null: %d\n", ts_node_is_null(superclasses_field_node));
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
 
             treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
@@ -442,6 +460,31 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             debug_printf("DEBUG: Found Python class definition via name field: '%s'\n", class_name);
             add_node(results, "class_definition", class_name);
             free(class_name);
+
+            // Process superclasses - try field access first, then fall back to child index
+            TSNode superclasses_node = superclasses_field_node;
+            if (ts_node_is_null(superclasses_node)) {
+                superclasses_node = ts_node_child(node, 2);
+            }
+            if (!ts_node_is_null(superclasses_node) && strcmp(ts_node_type(superclasses_node), "argument_list") == 0) {
+                debug_printf("DEBUG: Processing superclasses argument_list\n");
+                debug_print_child(superclasses_node, source_code);
+
+                // Manually extract identifiers from argument_list
+                uint32_t child_count = ts_node_child_count(superclasses_node);
+                for (uint32_t i = 0; i < child_count; i++) {
+                    TSNode child = ts_node_child(superclasses_node, i);
+                    const char* child_type = ts_node_type(child);
+                    debug_printf("DEBUG: Superclass child %d type: '%s'\n", i, child_type);
+
+                    if (strcmp(child_type, "identifier") == 0) {
+                        const char* class_name = get_node_text(child, source_code);
+                        debug_printf("DEBUG: Found parent class: '%s'\n", class_name);
+                        add_node(results, "identifier", class_name);
+                        free(class_name);
+                    }
+                }
+            }
 
             traverse_tree(body_node, source_code, results, language_name);
             return;
@@ -463,12 +506,54 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             if (strcmp(ts_node_type(function_node), "attribute") == 0) {
                 TSNode object_node = ts_node_child_by_field_name(function_node, "object", 6);
                 treesitter_assert(!ts_node_is_null(object_node), "No object field found", node_text, __FILE__, __LINE__);
-                function_node = ts_node_child_by_field_name(function_node, "attribute", 9);
-                treesitter_assert(!ts_node_is_null(function_node), "No field field found", node_text, __FILE__, __LINE__);
-                traverse_tree(object_node, source_code, results, language_name);
+
+                // Handle super() method calls
+                const char* object_type = ts_node_type(object_node);
+                const char* object_text = get_node_text(object_node, source_code);
+                if (strcmp(object_type, "call") == 0 && strcmp(object_text, "super()") == 0) {
+                    debug_printf("DEBUG: Found super() method call\n");
+                    // Traverse the super() call to capture it as a function call
+                    traverse_tree(object_node, source_code, results, language_name);
+                    // Extract the method name from the attribute
+                    function_node = ts_node_child_by_field_name(function_node, "attribute", 9);
+                    treesitter_assert(!ts_node_is_null(function_node), "No field field found", node_text, __FILE__, __LINE__);
+                } else {
+                    traverse_tree(object_node, source_code, results, language_name);
+                    function_node = ts_node_child_by_field_name(function_node, "attribute", 9);
+                    treesitter_assert(!ts_node_is_null(function_node), "No field field found", node_text, __FILE__, __LINE__);
+                }
+                free(object_text);
             }
 
             const char* func_name = get_node_text(function_node, source_code);
+
+            // ======================= AGENT START =======================
+            // Check if this call expression is part of a raise statement (like "raise ValueError(...)")
+            // If so, skip it as exception constructors shouldn't be treated as function calls
+            TSNode parent = ts_node_parent(node);
+            if (!ts_node_is_null(parent)) {
+                const char* parent_type = ts_node_type(parent);
+                debug_printf("DEBUG: *** RAISE CHECK *** Call expression parent type: '%s'\n", parent_type);
+
+                // Check if parent is raise statement or if we need to go up further
+                if (strcmp(parent_type, "raise_statement") == 0) {
+                    debug_printf("DEBUG: *** RAISE CHECK *** Skipping exception constructor call in raise statement: '%s'\n", func_name);
+                    free(func_name);
+                    traverse_tree(arguments_node, source_code, results, language_name);
+                    return;
+                }
+
+                // Also check grandparent in case the call is wrapped in another node
+                TSNode grandparent = ts_node_parent(parent);
+                if (!ts_node_is_null(grandparent) && strcmp(ts_node_type(grandparent), "raise_statement") == 0) {
+                    debug_printf("DEBUG: *** RAISE CHECK *** Skipping exception constructor call in raise statement (grandparent): '%s'\n", func_name);
+                    free(func_name);
+                    traverse_tree(arguments_node, source_code, results, language_name);
+                    return;
+                }
+            }
+            // ======================= AGENT END =======================
+
             debug_printf("DEBUG: Found Python call expression via function field: '%s'\n", func_name);
             add_node(results, "call", func_name);
             free(func_name);
@@ -480,12 +565,187 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
         else if (node_type == "identifier" || node_type == "field_identifier") {
             debug_printf("DEBUG: Identifier\n");
 
+            // Check if this identifier is part of an as_pattern (exception type)
+            TSNode parent = ts_node_parent(node);
+            debug_printf("DEBUG: Checking parent node - is_null: %s\n", ts_node_is_null(parent) ? "true" : "false");
+
+            if (!ts_node_is_null(parent)) {
+                const char* parent_type = ts_node_type(parent);
+                debug_printf("DEBUG: Identifier parent type: '%s'\n", parent_type);
+
+                if (strcmp(parent_type, "as_pattern") == 0) {
+                    // Check if this identifier is the exception type (before "as") or variable name (after "as")
+                    // Look for the "as" keyword to determine position
+                    uint32_t child_count = ts_node_child_count(parent);
+                    bool found_as = false;
+                    bool is_exception_type = true;
+
+                    for (uint32_t i = 0; i < child_count; i++) {
+                        TSNode child = ts_node_child(parent, i);
+                        const char* child_type = ts_node_type(child);
+                        debug_printf("DEBUG: as_pattern child %d type: '%s'\n", i, child_type);
+                        if (strcmp(child_type, "as") == 0) {
+                            found_as = true;
+                        }
+                        if (ts_node_eq(child, node)) {
+                            if (found_as) {
+                                is_exception_type = false; // This is after "as", so it's the variable name
+                            }
+                            break;
+                        }
+                    }
+
+                    debug_printf("DEBUG: Identifier in as_pattern - found_as: %s, is_exception_type: %s\n", found_as ? "true" : "false", is_exception_type ? "true" : "false");
+
+                    if (is_exception_type) {
+                        debug_printf("DEBUG: Skipping exception type identifier: '%s'\n", get_node_text(node, source_code));
+                        const char* name = get_node_text(node, source_code);
+                        free(name);
+                        return;
+                    }
+                }
+                // Check if this identifier is inside an as_pattern_target (nested case)
+                else if (strcmp(parent_type, "as_pattern_target") == 0) {
+                    TSNode grandparent = ts_node_parent(parent);
+                    if (!ts_node_is_null(grandparent)) {
+                        const char* grandparent_type = ts_node_type(grandparent);
+                        if (strcmp(grandparent_type, "as_pattern") == 0) {
+                            // This is the variable name identifier inside as_pattern_target
+                            debug_printf("DEBUG: Found variable name identifier in as_pattern_target: '%s'\n", get_node_text(node, source_code));
+                        }
+                    }
+                }
+                // Check if this identifier is a type hint (skip these)
+                else if (strcmp(parent_type, "type") == 0) {
+                    debug_printf("DEBUG: Skipping type hint identifier: '%s'\n", get_node_text(node, source_code));
+                    const char* name = get_node_text(node, source_code);
+                    free(name);
+                    return;
+                }
+            }
+
             const char* name = get_node_text(node, source_code);
-            debug_printf("DEBUG: Found Python identifier: '%s'\n", name);
-            add_node(results, "identifier", name);
+
+            // Check if this identifier is inside a decorator (like @property)
+            // Note: parent variable is already declared above
+            debug_printf("DEBUG: *** PYTHON IDENTIFIER HANDLER - Parent node type: '%s' ***\n", ts_node_is_null(parent) ? "null" : ts_node_type(parent));
+            if (!ts_node_is_null(parent) && strcmp(ts_node_type(parent), "decorator") == 0) {
+                debug_printf("DEBUG: *** FOUND DECORATOR IDENTIFIER: '%s' ***\n", name);
+                add_node(results, "call", name);
+            } else {
+                debug_printf("DEBUG: *** Found Python identifier: '%s' ***\n", name);
+                add_node(results, "identifier", name);
+            }
             free(name);
             return;
         }
+        // ======================= AGENT START =======================
+        else if (strcmp(node_type, "formal_parameter") == 0) {
+            debug_printf("DEBUG: Processing Python formal_parameter node!\n");
+            debug_printf("DEBUG: Formal parameter child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            if (!ts_node_is_null(name_node)) {
+                const char* param_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found Python formal parameter: '%s'\n", param_name);
+                debug_printf("DEBUG: About to add var_declaration for '%s'\n", param_name);
+                add_node(results, "var_declaration", param_name);
+                debug_printf("DEBUG: Added var_declaration for '%s'\n", param_name);
+                free(param_name);
+                return;
+            } else {
+                debug_printf("DEBUG: No name field found in formal_parameter\n");
+            }
+        }
+        else if (strcmp(node_type, "as_pattern") == 0) {
+            debug_printf("DEBUG: Processing Python as_pattern - extracting variable name and processing expressions\n");
+            debug_print_child(node, source_code);
+
+            // Process the as_pattern children properly
+            uint32_t child_count = ts_node_child_count(node);
+            for (uint32_t i = 0; i < child_count; i++) {
+                TSNode child = ts_node_child(node, i);
+                const char* child_type = ts_node_type(child);
+                debug_printf("DEBUG: as_pattern child %d type: '%s'\n", i, child_type);
+
+                if (strcmp(child_type, "as_pattern_target") == 0) {
+                    debug_printf("DEBUG: Found as_pattern_target, extracting variable name\n");
+                    traverse_tree(child, source_code, results, language_name);
+                }
+                // Process the first child (could be a function call like open('file.txt'))
+                else if (i == 0 && (strcmp(child_type, "call") == 0 || strcmp(child_type, "identifier") == 0)) {
+                    debug_printf("DEBUG: Processing expression in as_pattern\n");
+                    traverse_tree(child, source_code, results, language_name);
+                }
+                // Skip the 'as' keyword
+                else if (strcmp(child_type, "as") == 0) {
+                    debug_printf("DEBUG: Skipping 'as' keyword\n");
+                    continue;
+                }
+            }
+            return;
+        }
+        // Handle import statements to extract module names as identifiers
+        else if (strcmp(node_type, "import_statement") == 0) {
+            debug_printf("DEBUG: Processing import statement\n");
+            debug_print_child(node, source_code);
+
+            // Extract module names from import statement
+            uint32_t child_count = ts_node_child_count(node);
+            for (uint32_t i = 0; i < child_count; i++) {
+                TSNode child = ts_node_child(node, i);
+                const char* child_type = ts_node_type(child);
+                debug_printf("DEBUG: import_statement child %d type: '%s'\n", i, child_type);
+
+                if (strcmp(child_type, "dotted_name") == 0) {
+                    // Extract the module name from dotted_name
+                    const char* module_name = get_node_text(child, source_code);
+                    debug_printf("DEBUG: Found module name in import: '%s'\n", module_name);
+                    add_node(results, "package", module_name);
+                    free(module_name);
+                }
+                else if (strcmp(child_type, "identifier") == 0) {
+                    // Handle simple module names
+                    const char* module_name = get_node_text(child, source_code);
+                    debug_printf("DEBUG: Found simple module name in import: '%s'\n", module_name);
+                    add_node(results, "package", module_name);
+                    free(module_name);
+                }
+            }
+            return;
+        }
+        else if (strcmp(node_type, "import_from_statement") == 0) {
+            debug_printf("DEBUG: Skipping import_from_statement\n");
+            return;
+        }
+        // Handle list comprehension target correctly
+        else if (strcmp(node_type, "assignment") == 0) {
+            debug_printf("DEBUG: Processing Python assignment\n");
+            debug_print_child(node, source_code);
+
+            // For list comprehensions like "list comprehension = [...]",
+            // we want to extract "list_comprehension" not "list" and "comprehension"
+            TSNode left_node = ts_node_child_by_field_name(node, "left", 4);
+            if (!ts_node_is_null(left_node)) {
+                const char* left_type = ts_node_type(left_node);
+                if (strcmp(left_type, "identifier") == 0) {
+                    const char* var_name = get_node_text(left_node, source_code);
+                    debug_printf("DEBUG: Found assignment target: '%s'\n", var_name);
+                    add_node(results, "identifier", var_name);
+                    free(var_name);
+                } else {
+                    traverse_tree(left_node, source_code, results, language_name);
+                }
+            }
+
+            TSNode right_node = ts_node_child_by_field_name(node, "right", 5);
+            if (!ts_node_is_null(right_node)) {
+                traverse_tree(right_node, source_code, results, language_name);
+            }
+            return;
+        }
+        // ======================= AGENT END =======================
     }
 
     else if (strcmp(language_name, "cpp") == 0 || strcmp(language_name, "c") == 0) {
@@ -542,36 +802,129 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 debug_printf("DEBUG: Found Python function definition via name field: '%s'\n", short_func_name);
                 add_node(results, "function_definition", short_func_name);
                 free(short_func_name);
+
+                // Also add the qualified name
+                const char* qualified_func_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Adding qualified function name: '%s'\n", qualified_func_name);
+                add_node(results, "function_definition", qualified_func_name);
+                free(qualified_func_name);
+            }
+            else if (strcmp(ts_node_type(name_node), "template_function") == 0) {
+                // For template functions, extract just the base function name without template parameters
+                TSNode base_name_node = ts_node_child_by_field_name(name_node, "name", 4);
+                treesitter_assert(!ts_node_is_null(base_name_node), "No name field found in template_function", node_text, __FILE__, __LINE__);
+                const char* base_func_name = get_node_text(base_name_node, source_code);
+                debug_printf("DEBUG: Found template function definition via base name field: '%s'\n", base_func_name);
+                add_node(results, "function_definition", base_func_name);
+                free(base_func_name);
+            }
+            else {
+                const char* func_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found function definition via declarator field: '%s'\n", func_name);
+                add_node(results, "function_definition", func_name);
+                free(func_name);
             }
 
-            const char* func_name = get_node_text(name_node, source_code);
-            debug_printf("DEBUG: Found function definition via declarator field: '%s'\n", func_name);
+            // ======================= AGENT START =======================
+            // Check for field initializer list (common in constructors) and skip it
+            uint32_t child_count = ts_node_child_count(node);
+            debug_printf("DEBUG: Function definition has %d children\n", child_count);
+            for (uint32_t i = 0; i < child_count; i++) {
+                TSNode child = ts_node_child(node, i);
+                const char* child_type = ts_node_type(child);
+                debug_printf("DEBUG: Child %d type: '%s'\n", i, child_type);
+                if (strcmp(child_type, "field_initializer_list") == 0) {
+                    debug_printf("DEBUG: Found field initializer list, skipping it to avoid duplicate field identifiers\n");
+                    debug_print_child(child, source_code);
+                    // Skip this child - don't traverse field initializer lists
+                    continue;
+                }
+            }
+            // ======================= AGENT END =======================
 
-            add_node(results, "function_definition", func_name);
-            free(func_name);
-
+            // Process function body normally (if it exists)
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
-            treesitter_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
-
-            traverse_tree(body_node, source_code, results, language_name);
+            if (!ts_node_is_null(body_node)) {
+                traverse_tree(body_node, source_code, results, language_name);
+            }
             return;
         }
         else if (strcmp(node_type, "class_specifier") == 0 || strcmp(node_type, "struct_specifier") == 0) {
-            debug_printf("DEBUG: Class definition child nodes:\n");
+            debug_printf("DEBUG: Class/Struct definition child nodes:\n");
             debug_print_child(node, source_code);
 
             TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
             treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
 
             const char* class_name = get_node_text(name_node, source_code);
-            debug_printf("DEBUG: Found class definition via name field: '%s'\n", class_name);
+            debug_printf("DEBUG: Found class/struct definition via name field: '%s'\n", class_name);
             add_node(results, "class_definition", class_name);
             free(class_name);
 
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
             treesitter_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
 
+            // For classes and structs, traverse normally to process field declarations and methods
             traverse_tree(body_node, source_code, results, language_name);
+            return;
+        }
+        else if (strcmp(node_type, "union_specifier") == 0) {
+            debug_printf("DEBUG: Union definition child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+
+            const char* class_name = get_node_text(name_node, source_code);
+            debug_printf("DEBUG: Found union definition via name field: '%s'\n", class_name);
+            add_node(results, "class_definition", class_name);
+            free(class_name);
+
+            TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
+            treesitter_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
+
+            // For unions, don't process field declarations as variables
+            uint32_t child_count = ts_node_child_count(body_node);
+            for (uint32_t i = 0; i < child_count; i++) {
+                TSNode child = ts_node_child(body_node, i);
+                const char* child_type = ts_node_type(child);
+                // Skip field declarations in unions
+                if (strcmp(child_type, "field_declaration") != 0) {
+                    traverse_tree(child, source_code, results, language_name);
+                }
+            }
+            return;
+        }
+        else if (strcmp(node_type, "enum_specifier") == 0) {
+            debug_printf("DEBUG: Enum specifier child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            if (!ts_node_is_null(name_node)) {
+                const char* enum_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found enum name: '%s'\n", enum_name);
+                add_node(results, "identifier", enum_name);
+                free(enum_name);
+            }
+
+            TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
+            if (!ts_node_is_null(body_node)) {
+                // Process enum values
+                uint32_t child_count = ts_node_child_count(body_node);
+                for (uint32_t i = 0; i < child_count; i++) {
+                    TSNode child = ts_node_child(body_node, i);
+                    const char* child_type = ts_node_type(child);
+                    if (strcmp(child_type, "enumerator") == 0) {
+                        TSNode enum_name_node = ts_node_child_by_field_name(child, "name", 4);
+                        if (!ts_node_is_null(enum_name_node)) {
+                            const char* enum_value = get_node_text(enum_name_node, source_code);
+                            debug_printf("DEBUG: Found enum value: '%s'\n", enum_value);
+                            add_node(results, "identifier", enum_value);
+                            free(enum_value);
+                        }
+                    }
+                }
+            }
             return;
         }
         else if (strcmp(node_type, "call_expression") == 0) {
@@ -612,7 +965,83 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             traverse_tree(arguments_node, source_code, results, language_name);
             return;
         }
-        else if (strcmp(node_type, "declaration") == 0 || strcmp(node_type, "parameter_declaration") == 0 || strcmp(node_type, "pointer_declaration") == 0 || strcmp(node_type, "field_declaration") == 0 || strcmp(node_type, "field_declaration") == 0) {
+        else if (strcmp(node_type, "field_declaration") == 0) {
+            debug_printf("DEBUG: Field declaration's child nodes:\n");
+            debug_print_child(node, source_code);
+
+            // Handle multiple declarators in field declarations (e.g., int x, y;)
+            uint32_t child_count = ts_node_child_count(node);
+            for (uint32_t i = 0; i < child_count; i++) {
+                TSNode child = ts_node_child(node, i);
+                const char* child_type = ts_node_type(child);
+
+                debug_printf("DEBUG: Processing field declaration child %d type: '%s'\n", i, child_type);
+
+                // Check if this child is a declarator field
+                const char* field_name = ts_node_field_name_for_child(node, i);
+                if (field_name != NULL && strcmp(field_name, "declarator") == 0) {
+                    debug_printf("DEBUG: Found declarator field, processing...\n");
+                    traverse_declaration_cpp(child, source_code, results, language_name, false);
+                }
+                // Also handle the first declarator field for backward compatibility
+                else if (i == 1 && strcmp(child_type, "field_identifier") == 0) {
+                    debug_printf("DEBUG: Found field_identifier at position 1, processing...\n");
+                    traverse_declaration_cpp(child, source_code, results, language_name, false);
+                }
+            }
+
+            return;
+        }
+        else if (strcmp(node_type, "parameter_declaration") == 0) {
+            debug_printf("DEBUG: Parameter declaration's child nodes:\n");
+            debug_print_child(node, source_code);
+
+            // Check if this parameter declaration is inside a lambda expression
+            TSNode parent = ts_node_parent(node);
+            bool is_lambda_param = false;
+            bool is_function_declaration_param = false;
+
+            while (!ts_node_is_null(parent)) {
+                const char* parent_type = ts_node_type(parent);
+                if (strcmp(parent_type, "lambda_expression") == 0) {
+                    is_lambda_param = true;
+                    break;
+                }
+                // Check if this parameter is part of a function declaration (not definition)
+                else if (strcmp(parent_type, "declaration") == 0) {
+                    // For C++ function declarations, check if it's a declaration without a body
+                    TSNode grandparent = ts_node_parent(parent);
+                    if (!ts_node_is_null(grandparent)) {
+                        const char* grandparent_type = ts_node_type(grandparent);
+                        if (strcmp(grandparent_type, "field_declaration_list") == 0) {
+                            // This is likely a function declaration inside a class
+                            is_function_declaration_param = true;
+                            break;
+                        }
+                    }
+                }
+                parent = ts_node_parent(parent);
+            }
+
+            TSNode declarator_node = ts_node_child_by_field_name(node, "declarator", 10);
+            treesitter_assert(!ts_node_is_null(declarator_node), "No declarator field found", node_text, __FILE__, __LINE__);
+
+            if (is_lambda_param) {
+                const char* param_name = get_node_text(declarator_node, source_code);
+                debug_printf("DEBUG: Found lambda parameter identifier: '%s'\n", param_name);
+                add_node(results, "var_declaration", param_name);
+                free(param_name);
+            } else if (is_function_declaration_param) {
+                // For function declaration parameters, don't process as variable declarations
+                debug_printf("DEBUG: Found function declaration parameter, skipping variable declaration\n");
+            } else {
+                // For regular function parameters, use the normal declaration processing
+                traverse_declaration_cpp(declarator_node, source_code, results, language_name, false);
+            }
+
+            return;
+        }
+        else if (strcmp(node_type, "declaration") == 0 || strcmp(node_type, "pointer_declaration") == 0) {
             debug_printf("DEBUG: Declarations's child nodes:\n");
             debug_print_child(node, source_code);
 
@@ -633,6 +1062,462 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             free(name);
             return;
         }
+        else if (strcmp(node_type, "for_range_loop") == 0) {
+            debug_printf("DEBUG: For range loop child nodes:\n");
+            debug_print_child(node, source_code);
+
+            // Process the loop variable declaration manually
+            uint32_t child_count = ts_node_child_count(node);
+            for (uint32_t i = 0; i < child_count; i++) {
+                TSNode child = ts_node_child(node, i);
+                const char* child_type = ts_node_type(child);
+
+                debug_printf("DEBUG: For range loop child %d type: '%s'\n", i, child_type);
+
+                // Look for the loop variable (usually after '(' and before ':')
+                if (strcmp(child_type, "identifier") == 0) {
+                    // Check if this identifier is the loop variable
+                    TSNode prev_child = ts_node_child(node, i - 1);
+                    TSNode next_child = ts_node_child(node, i + 1);
+                    const char* prev_type = ts_node_type(prev_child);
+                    const char* next_type = ts_node_type(next_child);
+
+                    // If it's between a type specifier and ':', it's likely the loop variable
+                    if (strcmp(prev_type, "placeholder_type_specifier") == 0 && strcmp(next_type, ":") == 0) {
+                        const char* var_name = get_node_text(child, source_code);
+                        debug_printf("DEBUG: Found for range loop variable: '%s'\n", var_name);
+                        add_node(results, "var_declaration", var_name);
+                        free(var_name);
+                    } else {
+                        // Otherwise, process as normal identifier
+                        traverse_tree(child, source_code, results, language_name);
+                    }
+                } else {
+                    // Process all other children normally
+                    traverse_tree(child, source_code, results, language_name);
+                }
+            }
+            return;
+        }
+        // ======================= AGENT START =======================
+        else if (strcmp(node_type, "lambda_expression") == 0) {
+            debug_printf("DEBUG: Lambda expression child nodes:\n");
+            debug_print_child(node, source_code);
+
+            // Process all lambda children normally, including the compound statement body
+            uint32_t child_count = ts_node_child_count(node);
+            for (uint32_t i = 0; i < child_count; i++) {
+                TSNode child = ts_node_child(node, i);
+                const char* child_type = ts_node_type(child);
+
+                debug_printf("DEBUG: Lambda expression child %d type: '%s'\n", i, child_type);
+                traverse_tree(child, source_code, results, language_name);
+            }
+            return;
+        }
+        // ======================= AGENT END =======================
+        else if (strcmp(node_type, "new_expression") == 0) {
+            debug_printf("DEBUG: New expression's child nodes:\n");
+            debug_print_child(node, source_code);
+            TSNode type_node = ts_node_child_by_field_name(node, "type", 4);
+            TSNode arguments_node = ts_node_child_by_field_name(node, "arguments", 9);
+            treesitter_assert(!ts_node_is_null(type_node), "No type field found", node_text, __FILE__, __LINE__);
+            const char* type_name = get_node_text(type_node, source_code);
+            debug_printf("DEBUG: Found C++ new expression's type: '%s'\n", type_name);
+            add_node(results, "object_creation", type_name);
+            if (!ts_node_is_null(arguments_node)) {
+                traverse_tree(arguments_node, source_code, results, language_name);
+            }
+            free(type_name);
+            return;
+        }
+    }
+
+    else if (strcmp(language_name, "java") == 0) {
+        if (strcmp(node_type, "method_declaration") == 0 || strcmp(node_type, "constructor_declaration") == 0) {
+            debug_printf("DEBUG: Method declaration child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            TSNode parameters_node = ts_node_child_by_field_name(node, "parameters", 10);
+            // java's method_declaration can be both definition and declaration
+            // so we need to check if the body is null later
+            TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
+
+            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+            treesitter_assert(!ts_node_is_null(parameters_node), "No parameters field found", node_text, __FILE__, __LINE__);
+
+            const char* method_name = get_node_text(name_node, source_code);
+            debug_printf("DEBUG: Found Java method declaration via name field: '%s'\n", method_name);
+
+            // ======================= AGENT START =======================
+            // Check if this is a declaration (no body) or definition (has body)
+            if (ts_node_is_null(body_node)) {
+                add_node(results, "func_declaration", method_name);
+            } else {
+                add_node(results, "function_definition", method_name);
+            }
+            // ======================= AGENT END =======================
+            free(method_name);
+
+            traverse_tree(parameters_node, source_code, results, language_name);
+            if (!ts_node_is_null(body_node)) {
+                traverse_tree(body_node, source_code, results, language_name);
+            }
+            return;
+        }
+        // ======================= AGENT START =======================
+        else if (strcmp(node_type, "formal_parameter") == 0) {
+            debug_printf("DEBUG: Processing formal_parameter node!\n");
+            debug_printf("DEBUG: Formal parameter child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            if (!ts_node_is_null(name_node)) {
+                const char* param_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found Java formal parameter: '%s'\n", param_name);
+                debug_printf("DEBUG: About to add var_declaration for '%s'\n", param_name);
+                add_node(results, "var_declaration", param_name);
+                debug_printf("DEBUG: Added var_declaration for '%s'\n", param_name);
+                free(param_name);
+                return;
+            } else {
+                debug_printf("DEBUG: No name field found in formal_parameter\n");
+            }
+        }
+        // ======================= AGENT END =======================
+        else if (strcmp(node_type, "class_declaration") == 0) {
+            debug_printf("DEBUG: Class declaration child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
+
+            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+            treesitter_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
+
+            const char* class_name = get_node_text(name_node, source_code);
+            debug_printf("DEBUG: Found Java class declaration via name field: '%s'\n", class_name);
+            add_node(results, "class_definition", class_name);
+            free(class_name);
+
+            traverse_tree(body_node, source_code, results, language_name);
+            return;
+        }
+        else if (strcmp(node_type, "interface_declaration") == 0) {
+            debug_printf("DEBUG: Interface declaration child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
+
+            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+            treesitter_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
+
+            const char* interface_name = get_node_text(name_node, source_code);
+            debug_printf("DEBUG: Found Java interface declaration via name field: '%s'\n", interface_name);
+            add_node(results, "class_definition", interface_name);
+            free(interface_name);
+
+            traverse_tree(body_node, source_code, results, language_name);
+            return;
+        }
+        // ======================= AGENT START =======================
+      else if (strcmp(node_type, "method_reference") == 0) {
+          debug_printf("DEBUG: Method reference child nodes:\n");
+          debug_print_child(node, source_code);
+
+          // Get the method name from the identifier child (index 2)
+          uint32_t child_count = ts_node_child_count(node);
+          if (child_count >= 3) {
+              TSNode method_name_node = ts_node_child(node, 2);
+              if (strcmp(ts_node_type(method_name_node), "identifier") == 0) {
+                  const char* method_name = get_node_text(method_name_node, source_code);
+                  debug_printf("DEBUG: Found Java method reference: '%s'\n", method_name);
+                  add_node(results, "call", method_name);
+                  free(method_name);
+              }
+          }
+
+          // Process only the object part of the method reference (field_access)
+          // Skip the :: operator and method name identifier to avoid duplicate processing
+          TSNode object_node = ts_node_child_by_type_name(node, "field_access");
+          if (!ts_node_is_null(object_node)) {
+              // Let the field_access node processing handle the individual identifiers
+              traverse_tree(object_node, source_code, results, language_name);
+          }
+          return;
+      }
+      // ======================= AGENT END =======================
+      else if (strcmp(node_type, "method_invocation") == 0) {
+            debug_printf("DEBUG: Method invocation child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            TSNode arguments_node = ts_node_child_by_field_name(node, "arguments", 9);
+            TSNode object_node = ts_node_child_by_field_name(node, "object", 6);
+
+            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+            treesitter_assert(!ts_node_is_null(arguments_node), "No arguments field found", node_text, __FILE__, __LINE__);
+
+            const char* method_name = get_node_text(name_node, source_code);
+            debug_printf("DEBUG: Found Java method invocation via name field: '%s'\n", method_name);
+            add_node(results, "call", method_name);
+            free(method_name);
+
+            traverse_tree(arguments_node, source_code, results, language_name);
+            if (!ts_node_is_null(object_node)) {
+                traverse_tree(object_node, source_code, results, language_name);
+            }
+            return;
+        }
+        // ======================= AGENT START =======================
+        else if (strcmp(node_type, "field_access") == 0) {
+            debug_printf("DEBUG: Field access child nodes:\n");
+            debug_print_child(node, source_code);
+
+            // Extract individual identifiers from field access (e.g., System.out -> System and out)
+            // Process object and field separately to get individual identifiers
+            TSNode object_node = ts_node_child_by_field_name(node, "object", 6);
+            TSNode field_node = ts_node_child_by_field_name(node, "field", 5);
+
+            if (!ts_node_is_null(object_node)) {
+                const char* object_text = get_node_text(object_node, source_code);
+                debug_printf("DEBUG: Found field access object: '%s'\n", object_text);
+                add_node(results, "identifier", object_text);
+                free(object_text);
+            }
+
+            if (!ts_node_is_null(field_node)) {
+                const char* field_text = get_node_text(field_node, source_code);
+                debug_printf("DEBUG: Found field access field: '%s'\n", field_text);
+                add_node(results, "identifier", field_text);
+                free(field_text);
+            }
+
+            return;
+        }
+        // ======================= AGENT END =======================
+        else if (strcmp(node_type, "field_declaration") == 0) {
+            debug_printf("DEBUG: Field declaration child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode declarator_node = node;
+            while(!ts_node_is_null(ts_node_child_by_field_name(declarator_node, "declarator", 10))) {
+                declarator_node = ts_node_child_by_field_name(node, "declarator", 10);
+            }
+            TSNode name_node = ts_node_child_by_field_name(declarator_node, "name", 4);
+            const char* var_name = get_node_text(name_node, source_code);
+            debug_printf("DEBUG: Found Java local variable declaration: '%s'\n", var_name);
+            add_node(results, "var_declaration", var_name);
+            free(var_name);
+            if (!ts_node_is_null(ts_node_child_by_field_name(declarator_node, "value", 5))) {
+                debug_print_child(ts_node_child_by_field_name(declarator_node, "value", 5), source_code);
+                traverse_tree(ts_node_child_by_field_name(declarator_node, "value", 5), source_code, results, language_name);
+            }
+            return;
+        }
+        else if (strcmp(node_type, "local_variable_declaration") == 0) {
+            debug_printf("DEBUG: Local variable declaration child nodes:\n");
+            debug_print_child(node, source_code);
+            TSNode declarator_node = node;
+            while(!ts_node_is_null(ts_node_child_by_field_name(declarator_node, "declarator", 10))) {
+                declarator_node = ts_node_child_by_field_name(node, "declarator", 10);
+            }
+            TSNode name_node = ts_node_child_by_field_name(declarator_node, "name", 4);
+            const char* var_name = get_node_text(name_node, source_code);
+            debug_printf("DEBUG: Found Java local variable declaration: '%s'\n", var_name);
+            add_node(results, "var_declaration", var_name);
+            free(var_name);
+            if (!ts_node_is_null(ts_node_child_by_field_name(declarator_node, "value", 5))) {
+                traverse_tree(ts_node_child_by_field_name(declarator_node, "value", 5), source_code, results, language_name);
+            }
+            return;
+        }
+        else if (strcmp(node_type, "object_creation_expression") == 0) {
+            // new type_name(argument1, argument2, ...);
+            debug_printf("DEBUG: Object creation expression\n");
+            debug_print_child(node, source_code);
+            TSNode type_node = ts_node_child_by_field_name(node, "type", 4);
+            TSNode arguments_node = ts_node_child_by_field_name(node, "arguments", 9);
+            treesitter_assert(!ts_node_is_null(type_node), "No type field found", node_text, __FILE__, __LINE__);
+            const char* type_name = get_node_text(type_node, source_code);
+            debug_printf("DEBUG: Found Java object creation expression: '%s'\n", type_name);
+            add_node(results, "object_creation", type_name);
+            if (!ts_node_is_null(arguments_node)) {
+                traverse_tree(arguments_node, source_code, results, language_name);
+            }
+            free(type_name);
+            return;
+        }
+        // ======================= AGENT START =======================
+        else if (strcmp(node_type, "catch_formal_parameter") == 0) {
+            debug_printf("DEBUG: Processing catch_formal_parameter node!\n");
+            debug_printf("DEBUG: Catch formal parameter child nodes:\n");
+            debug_print_child(node, source_code);
+
+            // Extract the variable name from catch parameter (e.g., IOException e -> e)
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            if (!ts_node_is_null(name_node)) {
+                const char* param_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found Java catch parameter: '%s'\n", param_name);
+                debug_printf("DEBUG: About to add var_declaration for '%s'\n", param_name);
+                add_node(results, "var_declaration", param_name);
+                debug_printf("DEBUG: Added var_declaration for '%s'\n", param_name);
+                free(param_name);
+                return;
+            } else {
+                debug_printf("DEBUG: No name field found in catch_formal_parameter\n");
+            }
+        }
+        // ======================= AGENT END =======================
+        else if (strcmp(node_type, "identifier") == 0) {
+            debug_printf("DEBUG: Identifier\n");
+
+            const char* name = get_node_text(node, source_code);
+            debug_printf("DEBUG: Found Java identifier: '%s'\n", name);
+            add_node(results, "identifier", name);
+            free(name);
+            return;
+        }
+    }
+    else if (strcmp(language_name, "xml") == 0) {
+        if (strcmp(node_type, "element") == 0) {
+            debug_printf("DEBUG: XML element child nodes:\n");
+            debug_print_child(node, source_code);
+
+            // Extract element name from STag (start tag)
+            uint32_t child_count = ts_node_child_count(node);
+            for (uint32_t i = 0; i < child_count; i++) {
+                TSNode child = ts_node_child(node, i);
+                const char* child_type = ts_node_type(child);
+
+                if (strcmp(child_type, "STag") == 0) {
+                    // Find the Name node within STag
+                    uint32_t stag_child_count = ts_node_child_count(child);
+                    for (uint32_t j = 0; j < stag_child_count; j++) {
+                        TSNode stag_child = ts_node_child(child, j);
+                        if (strcmp(ts_node_type(stag_child), "Name") == 0) {
+                            const char* element_name = get_node_text(stag_child, source_code);
+                            debug_printf("DEBUG: Found XML element: '%s'\n", element_name);
+                            add_node(results, "xml_element", element_name);
+                            free(element_name);
+                            break;
+                        }
+                    }
+                }
+                else if (strcmp(child_type, "EmptyElemTag") == 0) {
+                    // Find the Name node within EmptyElemTag (self-closing tags)
+                    uint32_t empty_child_count = ts_node_child_count(child);
+                    for (uint32_t j = 0; j < empty_child_count; j++) {
+                        TSNode empty_child = ts_node_child(child, j);
+                        if (strcmp(ts_node_type(empty_child), "Name") == 0) {
+                            const char* element_name = get_node_text(empty_child, source_code);
+                            debug_printf("DEBUG: Found XML self-closing element: '%s'\n", element_name);
+                            add_node(results, "xml_element", element_name);
+                            free(element_name);
+                            break;
+                        }
+                    }
+                }
+
+                // Process all children normally to capture nested elements and content
+                traverse_tree(child, source_code, results, language_name);
+            }
+            return;
+        }
+        else if (strcmp(node_type, "Name") == 0) {
+            // Process Name nodes (could be element names or attribute names)
+            const char* name = get_node_text(node, source_code);
+            debug_printf("DEBUG: Found XML Name: '%s'\n", name);
+
+            // Check if this Name is part of an attribute by looking at parent
+            TSNode parent = ts_node_parent(node);
+            if (!ts_node_is_null(parent)) {
+                const char* parent_type = ts_node_type(parent);
+                if (strcmp(parent_type, "Attribute") == 0) {
+                    debug_printf("DEBUG: Found XML attribute: '%s'\n", name);
+                    add_node(results, "xml_attribute", name);
+                }
+            }
+
+            free(name);
+            return;
+        }
+        else if (strcmp(node_type, "CharData") == 0) {
+            debug_printf("DEBUG: XML CharData node\n");
+            const char* text_content = get_node_text(node, source_code);
+            // Only process non-whitespace text content
+            if (strlen(text_content) > 0 && !is_whitespace(text_content)) {
+                debug_printf("DEBUG: Found XML text content: '%s'\n", text_content);
+                // Add as identifier since text content can be meaningful for search
+                add_node(results, "identifier", text_content);
+            }
+            free(text_content);
+            return;
+        }
+        else if (strcmp(node_type, "Comment") == 0) {
+            debug_printf("DEBUG: XML comment - skipping\n");
+            return;
+        }
+        else if (strcmp(node_type, "DTD") == 0) {
+            debug_printf("DEBUG: XML DTD - skipping\n");
+            return;
+        }
+        else if (strcmp(node_type, "PI") == 0) {
+            debug_printf("DEBUG: XML processing instruction - skipping\n");
+            return;
+        }
+        else if (strcmp(node_type, "content") == 0) {
+            debug_printf("DEBUG: XML content node - processing nested elements\n");
+
+            // Check if this is a CDATA section by looking at the parent
+            TSNode parent = ts_node_parent(node);
+            if (!ts_node_is_null(parent)) {
+                const char* parent_type = ts_node_type(parent);
+                // Look for ERROR nodes with CDATA pattern
+                if (strcmp(parent_type, "ERROR") == 0) {
+                    const char* parent_text = get_node_text(parent, source_code);
+                    if (parent_text && strstr(parent_text, "<![CDATA[") == parent_text) {
+                        // This is a CDATA section - extract the content between <![CDATA[ and ]]>
+                        const char* start_tag = "<![CDATA[";
+                        const char* end_tag = "]]>";
+                        const char* content_start = parent_text + strlen(start_tag);
+                        const char* content_end = strstr(parent_text, end_tag);
+
+                        if (content_end && content_end > content_start) {
+                            size_t content_len = content_end - content_start;
+                            char* cdata_content = malloc(content_len + 1);
+                            if (cdata_content) {
+                                memcpy(cdata_content, content_start, content_len);
+                                cdata_content[content_len] = '\0';
+                                debug_printf("DEBUG: Found CDATA content: '%s'\n", cdata_content);
+                                // Add as identifier since CDATA content can be meaningful for search
+                                add_node(results, "identifier", cdata_content);
+                                free(cdata_content);
+                            }
+                        }
+                        free(parent_text);
+                        return;
+                    }
+                    free(parent_text);
+                }
+            }
+
+            // Process all children normally to capture nested elements
+            uint32_t child_count = ts_node_child_count(node);
+            for (uint32_t i = 0; i < child_count; i++) {
+                TSNode child = ts_node_child(node, i);
+                traverse_tree(child, source_code, results, language_name);
+            }
+            return;
+        }
+    }
+
+    else {
+        treesitter_assert(0, concatenate_string("Unsupported language: ", language_name), node_text, __FILE__, __LINE__);
+        free(node_text);
+        return;
     }
 
     free(node_text);
@@ -641,377 +1526,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
         TSNode child = ts_node_child(node, i);
         traverse_tree(child, source_code, results, language_name);
     }
-
-
-
-
-
-
-    // if (
-    //     strcmp(node_type, "function_definition") == 0 || 
-    //     strcmp(node_type, "method_definition") == 0 ||
-    //     strcmp(node_type, "function_declarator") == 0 ||
-    //     strcmp(node_type, "method_declaration") == 0 ||
-    //     strcmp(node_type, "function_declaration") == 0) {
-    //     // Extract function name
-    //     debug_printf("DEBUG: Function declaration/definition child nodes:\n");
-    //     debug_print_child(node, source_code);
-    //     if (!ts_node_is_null(ts_node_child_by_field_name(node, "name", 4))) {
-    //         TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
-    //         uint32_t name_start = ts_node_start_byte(name_node);
-    //         uint32_t name_end = ts_node_end_byte(name_node);
-    //         size_t name_length = name_end - name_start;
-    //         char* func_name = malloc(name_length + 1);
-    //         if (func_name == NULL) {
-    //             // Handle allocation failure
-    //             free(node_text);
-    //             exit(1);
-    //         }
-    //         memcpy(func_name, source_code + name_start, name_length);
-    //         func_name[name_length] = '\0';
-    //         debug_printf("DEBUG: Found function definition via name field: '%s'\n", func_name);
-    //         add_node(results, "function_definition", func_name);
-    //         free(func_name);
-    //     }
-    //     else if (!ts_node_is_null(ts_node_child_by_field_name(node, "declarator", 10))) {
-    //         TSNode declarator_node = ts_node_child_by_field_name(node, "declarator", 10);
-    //         if (ts_node_type(declarator_node) == "reference_declarator" ||
-    //             ts_node_type(declarator_node) == "function_declarator") {
-    //         }
-    //         else{
-    //             uint32_t decl_start = ts_node_start_byte(declarator_node);
-    //             uint32_t decl_end = ts_node_end_byte(declarator_node);
-    //             size_t decl_length = decl_end - decl_start;
-    //             char* decl_text = malloc(decl_length + 1);
-    //             if (decl_text == NULL) {
-    //                 // Handle allocation failure
-    //                 free(node_text);
-    //                 exit(1);
-    //             }
-    //             memcpy(decl_text, source_code + decl_start, decl_length);
-    //             decl_text[decl_length] = '\0';
-    //             debug_printf("DEBUG: Found function definition via declarator field: '%s'\n", decl_text);
-    //             add_node(results, "function_definition", decl_text);
-    //             free(decl_text);
-    //             if (ts_node_type(declarator_node) == "qualified_identifier") {
-    //                 if (!ts_node_is_null(ts_node_child_by_field_name(declarator_node, "name", 4))) {
-    //                     TSNode name_node = ts_node_child_by_field_name(declarator_node, "name", 4);
-    //                     uint32_t name_start = ts_node_start_byte(name_node);
-    //                     uint32_t name_end = ts_node_end_byte(name_node);
-    //                     size_t name_length = name_end - name_start;
-    //                     char* name_text = malloc(name_length + 1);
-    //                     if (name_text == NULL) {
-    //                         free(node_text);
-    //                         exit(1);
-    //                     }
-    //                     memcpy(name_text, source_code + name_start, name_length);
-    //                     add_node(results, "function_definition", name_text);
-    //                     free(name_text);
-    //                 }
-    //                 return;
-    //             }
-    //         }
-    //     }
-    //     else {
-    //         // Fallback: look for identifier child nodes for C++
-    //         debug_printf("DEBUG: No name field found, looking for identifier children\n");
-    //         int found = 0;
-            
-    //         // First, look for function_declarator which contains the function name
-    //         for (uint32_t i = 0; i < child_count; i++) {
-    //             TSNode child = ts_node_child(node, i);
-    //             const char* child_type = ts_node_type(child);
-    //             debug_printf("DEBUG: Child %u type: '%s'\n", i, child_type);
-                
-    //             if (strcmp(child_type, "function_declarator") == 0) {
-    //                 // Look inside function_declarator for identifier
-    //                 uint32_t sub_child_count = ts_node_child_count(child);
-    //                 for (uint32_t j = 0; j < sub_child_count; j++) {
-    //                     TSNode sub_child = ts_node_child(child, j);
-    //                     const char* sub_child_type = ts_node_type(sub_child);
-    //                     debug_printf("DEBUG: Sub-child %u type: '%s'\n", j, sub_child_type);
-                        
-    //                     if (strcmp(sub_child_type, "identifier") == 0) {
-    //                         uint32_t name_start = ts_node_start_byte(sub_child);
-    //                         uint32_t name_end = ts_node_end_byte(sub_child);
-    //                         size_t name_length = name_end - name_start;
-    //                         char* func_name = malloc(name_length + 1);
-    //                         if (func_name == NULL) {
-    //                             free(node_text);
-    //                             exit(1);
-    //                         }
-    //                         memcpy(func_name, source_code + name_start, name_length);
-    //                         func_name[name_length] = '\0';
-    //                         debug_printf("DEBUG: Found function definition via function_declarator: '%s'\n", func_name);
-    //                         add_node(results, "function_definition", func_name);
-    //                         free(func_name);
-    //                         found = 1;
-    //                         break;
-    //                     }
-    //                 }
-    //             }
-                
-    //             if (found) break;
-    //         }
-            
-    //         // If not found in function_declarator, try direct identifier (for other languages)
-    //         if (!found) {
-    //             for (uint32_t i = 0; i < child_count; i++) {
-    //                 TSNode child = ts_node_child(node, i);
-    //                 const char* child_type = ts_node_type(child);
-    //                 if (strcmp(child_type, "identifier") == 0) {
-    //                     uint32_t name_start = ts_node_start_byte(child);
-    //                     uint32_t name_end = ts_node_end_byte(child);
-    //                     size_t name_length = name_end - name_start;
-    //                     char* func_name = malloc(name_length + 1);
-    //                     if (func_name == NULL) {
-    //                         free(node_text);
-    //                         exit(1);
-    //                     }
-    //                     memcpy(func_name, source_code + name_start, name_length);
-    //                     func_name[name_length] = '\0';
-    //                     debug_printf("DEBUG: Found function definition via direct identifier: '%s'\n", func_name);
-    //                     add_node(results, "function_definition", func_name);
-    //                     free(func_name);
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-    // else if (strcmp(node_type, "class_definition") == 0) {
-    //     // Extract class name
-    //     debug_printf("DEBUG: Class definition child nodes:\n");
-    //     debug_print_child(node, source_code);
-    //     TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
-    //     if (!ts_node_is_null(name_node)) {
-    //         uint32_t name_start = ts_node_start_byte(name_node);
-    //         uint32_t name_end = ts_node_end_byte(name_node);
-    //         size_t name_length = name_end - name_start;
-    //         char* class_name = malloc(name_length + 1);
-    //         if (class_name == NULL) {
-    //             // Handle allocation failure
-    //             free(node_text);
-    //             exit(1);
-    //         }
-    //         memcpy(class_name, source_code + name_start, name_length);
-    //         class_name[name_length] = '\0';
-    //         add_node(results, "class_definition", class_name);
-    //         free(class_name);
-    //     }
-    // }
-    // else if (strcmp(node_type, "call") == 0 || strcmp(node_type, "function_call") == 0 || strcmp(node_type, "call_expression") == 0 || strcmp(node_type, "method_invocation") == 0) {
-    //     // Extract function call name
-        
-    //     // Debug: print all child nodes' names
-    //     debug_printf("DEBUG: Call expression child nodes:\n");
-    //     debug_print_child(node, source_code);
-        
-
-    //     if (!ts_node_is_null(ts_node_child_by_field_name(node, "function", 8))) {
-    //         TSNode function_node = ts_node_child_by_field_name(node, "function", 8);
-    //         debug_printf("DEBUG: Call expression's function node's child nodes:\n");
-    //         debug_print_child(function_node, source_code);
-    //         uint32_t func_start = ts_node_start_byte(function_node);
-    //         uint32_t func_end = ts_node_end_byte(function_node);
-    //         size_t func_length = func_end - func_start;
-    //         char* func_name = malloc(func_length + 1);
-    //         if (func_name == NULL) {
-    //             // Handle allocation failure
-    //             free(node_text);
-    //             exit(1);
-    //         }
-    //         memcpy(func_name, source_code + func_start, func_length);
-    //         func_name[func_length] = '\0';
-    //         debug_printf("DEBUG: Extracted function name: '%s'\n", func_name);
-            
-    //         // For field expressions like s->add, we need to extract just the field name
-    //         if (strcmp(ts_node_type(function_node), "field_expression") == 0) {
-    //             TSNode field_node = ts_node_child_by_field_name(function_node, "field", 5);
-    //             if (!ts_node_is_null(field_node)) {
-    //                 uint32_t field_start = ts_node_start_byte(field_node);
-    //                 uint32_t field_end = ts_node_end_byte(field_node);
-    //                 size_t field_length = field_end - field_start;
-    //                 char* field_name = malloc(field_length + 1);
-    //                 if (field_name == NULL) {
-    //                     free(func_name);
-    //                     free(node_text);
-    //                     exit(1);
-    //                 }
-    //                 memcpy(field_name, source_code + field_start, field_length);
-    //                 field_name[field_length] = '\0';
-    //                 debug_printf("DEBUG: Extracted field name: '%s'\n", field_name);
-    //                 add_node(results, "call", field_name);
-    //                 free(field_name);
-    //                 free(func_name);
-    //                 // TSNode argument_node = ts_node_child_by_field_name(function_node, "argument", 8);
-    //                 // if (!ts_node_is_null(argument_node)) {
-    //                 //     // Traverse arguments to find nested calls
-    //                 //     traverse_tree(argument_node, source_code, results);
-    //                 // }
-    //             }
-    //         }
-    //         else if (strcmp(ts_node_type(function_node), "identifier") == 0) {
-    //             add_node(results, "call", func_name);
-    //         }
-    //         else if (strcmp(ts_node_type(function_node), "attribute") == 0) {
-    //             // For attribute nodes, extract the attribute name
-    //             TSNode attr_node = ts_node_child_by_field_name(function_node, "attribute", 9);
-    //             if (!ts_node_is_null(attr_node)) {
-    //                 uint32_t attr_start = ts_node_start_byte(attr_node);
-    //                 uint32_t attr_end = ts_node_end_byte(attr_node);
-    //                 size_t attr_length = attr_end - attr_start;
-    //                 char* attr_name = malloc(attr_length + 1);
-    //                 if (attr_name == NULL) {
-    //                     free(func_name);
-    //                     free(node_text);
-    //                     exit(1);
-    //                 }
-    //                 memcpy(attr_name, source_code + attr_start, attr_length);
-    //                 attr_name[attr_length] = '\0';
-    //                 debug_printf("DEBUG: Extracted attribute name: '%s'\n", attr_name);
-    //                 add_node(results, "call", attr_name);
-    //                 free(attr_name);
-    //                 TSNode objects_node = ts_node_child_by_field_name(function_node, "object", 6);
-    //                 if (!ts_node_is_null(objects_node)) {
-    //                     // Traverse object to find nested calls
-    //                     uint32_t obj_start = ts_node_start_byte(objects_node);
-    //                     uint32_t obj_end = ts_node_end_byte(objects_node);
-    //                     size_t obj_length = obj_end - obj_start;
-    //                     char* obj_name = malloc(obj_length + 1);
-    //                     if (obj_name == NULL) {
-    //                         free(func_name);
-    //                         free(node_text);
-    //                         exit(1);
-    //                     }
-    //                     memcpy(obj_name, source_code + obj_start, obj_length);
-    //                     obj_name[obj_length] = '\0';
-    //                     if (strchr(obj_name, '(')) {
-    //                         obj_name = normalize_function_name(obj_name);
-    //                         debug_printf("DEBUG: Extracted object name: '%s'\n", obj_name);
-    //                         add_node(results, "identifier", obj_name);
-    //                         free(func_name);
-    //                     }
-    //                     else {
-    //                         free(obj_name);
-    //                         free(func_name);
-    //                         traverse_tree(objects_node, source_code, results, language_name);
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         else if (strcmp(ts_node_type(function_node), "member_expression") == 0) {
-    //             // For member expressions, extract the member name
-    //             TSNode property_node = ts_node_child_by_field_name(function_node, "property", 8);
-    //             if (!ts_node_is_null(property_node)) {
-    //                 uint32_t prop_start = ts_node_start_byte(property_node);
-    //                 uint32_t prop_end = ts_node_end_byte(property_node);
-    //                 size_t prop_length = prop_end - prop_start;
-    //                 char* prop_name = malloc(prop_length + 1);
-    //                 if (prop_name == NULL) {
-    //                     free(func_name);
-    //                     free(node_text);
-    //                     exit(1);
-    //                 }
-    //                 memcpy(prop_name, source_code + prop_start, prop_length);
-    //                 prop_name[prop_length] = '\0';
-    //                 debug_printf("DEBUG: Extracted member name: '%s'\n", prop_name);
-    //                 add_node(results, "call", prop_name);
-    //                 free(prop_name);
-    //                 // TSNode object_node = ts_node_child_by_field_name(function_node, "object", 6);
-    //                 // if (!ts_node_is_null(object_node)) {
-    //                 //     // Traverse object to find nested calls
-    //                 //     traverse_tree(object_node, source_code, results);
-    //                 // }
-    //             }
-    //         }
-    //         else {
-    //             // Fallback: just add the whole function text
-    //             add_node(results, "call", func_name);
-    //         }
-
-    //     } 
-    //     else if (!ts_node_is_null(ts_node_child_by_field_name(node, "name", 4))) {
-    //         TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
-    //         uint32_t name_start = ts_node_start_byte(name_node);
-    //         uint32_t name_end = ts_node_end_byte(name_node);
-    //         size_t name_length = name_end - name_start;
-    //         char* func_name = malloc(name_length + 1);
-    //         if (func_name == NULL) {
-    //             // Handle allocation failure
-    //             free(node_text);
-    //             exit(1);
-    //         }
-    //         memcpy(func_name, source_code + name_start, name_length);
-    //         func_name[name_length] = '\0';
-    //         debug_printf("DEBUG: Found call via name field: '%s'\n", func_name);
-    //         add_node(results, "call", func_name);
-    //         free(func_name);
-    //     }
-    //     else {
-    //         debug_enabled = 1;
-    //         debug_print_child(node, source_code);
-    //         exit(1);
-    //     }
-    // }
-    // else if (strcmp(node_type, "qualified_identifier") == 0 && text_length > 0) {
-    //     // Handle qualified identifiers like CLS::operator()
-    //     if (!ts_node_is_null(ts_node_child_by_field_name(node, "name", 4))) {
-    //         TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
-    //         uint32_t name_start = ts_node_start_byte(name_node);
-    //         uint32_t name_end = ts_node_end_byte(name_node);
-    //         size_t name_length = name_end - name_start;
-    //         char* qual_name = malloc(name_length + 1);
-    //         if (qual_name == NULL) {
-    //             // Handle allocation failure
-    //             free(node_text);
-    //             exit(1);
-    //         }
-    //         memcpy(qual_name, source_code + name_start, name_length);
-    //         qual_name[name_length] = '\0';
-    //         debug_printf("DEBUG: Found qualified identifier via name field: '%s'\n", qual_name);
-    //         if (strcmp(qual_name, "operator()") == 0) {
-    //             // Skip generic operator names
-    //             add_node(results, "call", qual_name);
-    //             TSNode scope_node = ts_node_child_by_field_name(node, "scope", 5);
-    //             if (!ts_node_is_null(scope_node)) {
-    //                 uint32_t scope_start = ts_node_start_byte(scope_node);
-    //                 uint32_t scope_end = ts_node_end_byte(scope_node);
-    //                 size_t scope_length = scope_end - scope_start;
-    //                 char* scope_name = malloc(scope_length + 1);
-    //                 if (scope_name == NULL) {
-    //                     free(qual_name);
-    //                 }
-    //                 memcpy(scope_name, source_code + scope_start, scope_length);
-    //                 scope_name[scope_length] = '\0';
-    //                 debug_printf("DEBUG: Found scope name: '%s'\n", scope_name);
-
-    //                 add_node(results, "call", node_text);
-    //             }
-    //         }
-    //         free(qual_name);
-    //     }
-    // }
-    // else if (strcmp(node_type, "identifier") == 0 && text_length > 0) {
-    //     // Add meaningful identifiers
-    //     add_node(results, "identifier", node_text);
-    // }
-    // else if (strcmp(node_type, "string") == 0 && text_length > 0) {
-    //     add_node(results, "string_literal", node_text);
-    // }
-    // else if (strcmp(node_type, "number") == 0 && text_length > 0) {
-    //     add_node(results, "number", node_text);
-    // }
-    // else if (strcmp(node_type, "return_statement") == 0) {
-    //     add_node(results, "keyword", "return");
-    // }
-
-    // free(node_text);
-    // // Recursively traverse children
-    // for (uint32_t i = 0; i < child_count; i++) {
-    //     TSNode child = ts_node_child(node, i);
-    //     traverse_tree(child, source_code, results, language_name);
-    // }
 }
 
 // Fallback parser equivalent to tokens = re.findall(r"\b\w+\b", text) using PCRE2
@@ -1258,6 +1772,13 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
             continue;
         }
 
+        if (strcmp(node_type, "package") == 0) {
+            char prefixed_token[256];
+            snprintf(prefixed_token, sizeof(prefixed_token), "[PKG]%s", node_text);
+            add_token(tokens, prefixed_token);
+            continue;
+        }
+
         if (strcmp(node_type, "var_declaration") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[VARDECL]%s", node_text);
@@ -1268,6 +1789,29 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
         if (strcmp(node_type, "func_declaration") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[FUNCDECL]%s", node_text);
+            add_token(tokens, prefixed_token);
+            continue;
+        }
+
+        if (strcmp(node_type, "object_creation") == 0) {
+            char prefixed_token[256];
+            snprintf(prefixed_token, sizeof(prefixed_token), "[OBJECTCREATION]%s", node_text);
+            add_token(tokens, prefixed_token);
+            continue;
+        }
+
+        // XML elements - include with prefix
+        if (strcmp(node_type, "xml_element") == 0) {
+            char prefixed_token[256];
+            snprintf(prefixed_token, sizeof(prefixed_token), "[XMLELEMENT]%s", node_text);
+            add_token(tokens, prefixed_token);
+            continue;
+        }
+
+        // XML attributes - include with prefix
+        if (strcmp(node_type, "xml_attribute") == 0) {
+            char prefixed_token[256];
+            snprintf(prefixed_token, sizeof(prefixed_token), "[XMLATTRIBUTE]%s", node_text);
             add_token(tokens, prefixed_token);
             continue;
         }
