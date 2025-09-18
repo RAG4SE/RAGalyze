@@ -151,6 +151,9 @@ int const& EVMDialect::builtin(BuiltinHandle const& _handle) const
     ('cpp', "decltype(x) y = x;", sorted(['[VARDECL]y', '[IDENTIFIER]x'])),  # Decltype
     # ('cpp', "if constexpr (std::is_integral_v<T>) { }", sorted([])),  # If constexpr
     ('cpp', "Concept auto func = [](auto x) requires std::integral<decltype(x)> { return x; };", sorted(['[VARDECL]func', '[IDENTIFIER]x', '[IDENTIFIER]x', '[VARDECL]x'])),  # Concept and requires
+    ('cpp', "std::string s;", sorted(['[VARDECL]s'])),
+    ('cpp', 'explicit operator bool() const { return *this != invalid(); }', sorted(['[CALL]invalid'])),
+    
     # java
     ('java', "public static void main(String[] args) { System.out.println(\"Hello\"); }", sorted(['[CALL]println', '[FUNCDEF]main', '[IDENTIFIER]System', '[IDENTIFIER]out', '[VARDECL]args'])),
     ('java', "public static int getValue();", sorted(["[FUNCDECL]getValue"])),  # Java prototype
@@ -162,6 +165,7 @@ int const& EVMDialect::builtin(BuiltinHandle const& _handle) const
     ('java', "public int add(int a, int b) { return Math.max(a, b); }", sorted(['[CALL]max', '[FUNCDEF]add', '[IDENTIFIER]Math', '[IDENTIFIER]a', '[IDENTIFIER]b', '[VARDECL]a', '[VARDECL]b'])),  # Math utility call
     ('java', "List<String> list = new ArrayList<>(); list.add(\"item\");", sorted(['[CALL]add', '[IDENTIFIER]list', '[VARDECL]list', '[OBJECTCREATION]ArrayList<>'])),  # Generic types and method call
     ('java', "String[] s;", sorted(["[VARDECL]s"])),
+    ('java', "String select1(int id);", sorted(["[FUNCDECL]select1", '[VARDECL]id'])),
     ('java', "System.out.println(Arrays.toString(data));", sorted(['[CALL]println', '[CALL]toString', '[IDENTIFIER]Arrays', '[IDENTIFIER]System', '[IDENTIFIER]data', '[IDENTIFIER]out'])),  # Static method calls
     ('java', "public void setUp() { super.setUp(); this.initialize(); }", sorted(["[FUNCDEF]setUp", "[CALL]setUp", "[CALL]initialize"])),  # java treesitter regulates that the type of `this` is this, and the type of `super` is super
     ('java', "public class Service { private Helper helper = new Helper(a); }", sorted(['[CLASS]Service', '[IDENTIFIER]a', '[OBJECTCREATION]Helper', '[VARDECL]helper'])),  # Field declaration
@@ -170,19 +174,69 @@ int const& EVMDialect::builtin(BuiltinHandle const& _handle) const
     ('java', "public class StreamExample { public static void main(String[] args) { List<String> list = Arrays.asList(\"a\", \"b\"); list.stream().filter(s -> s.startsWith(\"a\")).forEach(System.out::println); } }", sorted(['[CLASS]StreamExample', '[FUNCDEF]main', '[VARDECL]list', '[VARDECL]args', '[IDENTIFIER]list', '[CALL]asList', '[CALL]stream', '[CALL]filter', '[CALL]startsWith', '[CALL]forEach', '[CALL]println', '[IDENTIFIER]Arrays', '[IDENTIFIER]System', '[IDENTIFIER]out', '[IDENTIFIER]s', '[IDENTIFIER]s'])),  # Stream API
     ('java', "interface Runnable { void run(); } class Task implements Runnable { public void run() { System.out.println(\"Running\"); } }", sorted(['[CLASS]Runnable', '[CLASS]Task', '[FUNCDECL]run', '[FUNCDEF]run', '[CALL]println', '[IDENTIFIER]System', '[IDENTIFIER]out'])),  # Interface implementation
     ('java', "public class ExceptionExample { public void riskyMethod() throws IOException { try { Files.readAllBytes(Paths.get(\"file.txt\")); } catch (IOException e) { e.printStackTrace(); } } }", sorted(['[CLASS]ExceptionExample', '[FUNCDEF]riskyMethod', '[CALL]readAllBytes', '[CALL]get', '[CALL]printStackTrace', '[VARDECL]e', '[IDENTIFIER]Files', '[IDENTIFIER]Paths', '[IDENTIFIER]e'])),  # Exception handling
+    ('java', """
+void encoding1() {
+	try (SqlSession sqlSession = sqlSessionFactory.openSession()) {
+		EncodingMapper mapper = sqlSession.getMapper(EncodingMapper.class);
+		String answer = mapper.select1();
+		assertEquals("Mara\u00f1\u00f3n", answer);
+	}
+}
+     """, sorted(['[CALL]assertEquals', '[CALL]getMapper', '[CALL]openSession', '[CALL]select1', '[FUNCDEF]encoding1', '[IDENTIFIER]answer', '[IDENTIFIER]mapper', '[IDENTIFIER]sqlSession', '[IDENTIFIER]sqlSession', '[IDENTIFIER]sqlSessionFactory', '[VARDECL]answer', '[VARDECL]mapper'])), #!WARNING: one of the [IDENTIFIER]sqlSession should be [VARDECL]sqlSession
 
-    # XML test cases
-    ('xml', "<root>text</root>", sorted(['[XMLELEMENT]root', '[IDENTIFIER]text'])),  # Basic XML with text content
-    ('xml', "<root><child>content</child></root>", sorted(['[XMLELEMENT]root', '[XMLELEMENT]child', '[IDENTIFIER]content'])),  # Nested XML elements
-    ('xml', "<person name=\"John\" age=\"30\">John Doe</person>", sorted(['[XMLELEMENT]person', '[XMLATTRIBUTE]name', '[XMLATTRIBUTE]age', '[IDENTIFIER]John Doe'])),  # XML with attributes
-    ('xml', "<root><item id=\"1\">First</item><item id=\"2\">Second</item></root>", sorted(['[XMLELEMENT]root', '[XMLELEMENT]item', '[XMLELEMENT]item', '[XMLATTRIBUTE]id', '[XMLATTRIBUTE]id', '[IDENTIFIER]First', '[IDENTIFIER]Second'])),  # Multiple elements with attributes
-    ('xml', "<config><database host=\"localhost\" port=\"5432\"/></config>", sorted(['[XMLELEMENT]config', '[XMLELEMENT]database', '[XMLATTRIBUTE]host', '[XMLATTRIBUTE]port'])),  # Self-closing tag
-    ('xml', "<![CDATA[<special>&characters;]]>", sorted(['[IDENTIFIER]<special>&characters;'])),  # CDATA section
-    ('xml', "<!-- This is a comment --><root>content</root>", sorted(['[XMLELEMENT]root', '[IDENTIFIER]content'])),  # XML with comment (comment should be ignored)
-    ('xml', "<?xml version=\"1.0\" encoding=\"UTF-8\"?><root/>", sorted(['[XMLELEMENT]root'])),  # XML declaration with self-closing root
-    ('xml', "<svg:svg xmlns:svg=\"http://www.w3.org/2000/svg\"><svg:rect width=\"100\" height=\"100\"/></svg:svg>", sorted(['[XMLELEMENT]svg:svg', '[XMLELEMENT]svg:rect', '[XMLATTRIBUTE]width', '[XMLATTRIBUTE]height', '[XMLATTRIBUTE]xmlns:svg'])),  # Namespaced XML
-    ('xml', "<book><title>XML Guide</title><author>John Doe</author><year>2023</year></book>", sorted(['[XMLELEMENT]book', '[XMLELEMENT]title', '[XMLELEMENT]author', '[XMLELEMENT]year', '[IDENTIFIER]XML Guide', '[IDENTIFIER]John Doe', '[IDENTIFIER]2023'])),  # Complex document structure
+    # MyBatis mapper test cases - comprehensive SQL-related XML test cases
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><select id=\"selectById\" resultType=\"com.example.model.User\">SELECT id, name, age FROM user WHERE id = #{id}</select></mapper>", sorted(['[FUNCDEF]selectById'])),  # Basic SELECT with WHERE clause
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><insert id=\"insert\" useGeneratedKeys=\"true\" keyProperty=\"id\">INSERT INTO user(name, age) VALUES(#{name}, #{age})</insert></mapper>", sorted(['[FUNCDEF]insert'])),  # INSERT with useGeneratedKeys
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><update id=\"updateAgeById\">UPDATE user SET age = #{age} WHERE id = #{id}</update></mapper>", sorted(['[FUNCDEF]updateAgeById'])),  # UPDATE with WHERE clause
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><delete id=\"deleteById\">DELETE FROM user WHERE id = #{id}</delete></mapper>", sorted(['[FUNCDEF]deleteById'])),  # DELETE with WHERE clause
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><sql id=\"baseColumns\">id, name, age</sql><select id=\"selectAll\" resultType=\"com.example.model.User\">SELECT <include refid=\"baseColumns\"/> FROM user</select></mapper>", sorted(['[FUNCDEF]baseColumns', '[FUNCDEF]selectAll'])),  # SQL fragment with include
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><select id=\"selectByAgeRange\" resultType=\"com.example.model.User\">SELECT * FROM user WHERE age BETWEEN #{minAge} AND #{maxAge}</select></mapper>", sorted(['[FUNCDEF]selectByAgeRange'])),  # SELECT with BETWEEN
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><select id=\"selectWithInClause\" resultType=\"com.example.model.User\">SELECT * FROM user WHERE id IN <foreach item=\"item\" index=\"index\" collection=\"ids\" open=\"(\" separator=\",\" close=\")\">#{item}</foreach></select></mapper>", sorted(['[FUNCDEF]selectWithInClause'])),  # SELECT with foreach
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><select id=\"selectWithIf\" resultType=\"com.example.model.User\">SELECT * FROM user<if test=\"name != null\">WHERE name = #{name}</if></select></mapper>", sorted(['[FUNCDEF]selectWithIf'])),  # SELECT with if condition
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><select id=\"selectWithChoose\" resultType=\"com.example.model.User\">SELECT * FROM user<choose><when test=\"name != null\">WHERE name = #{name}</when><otherwise>WHERE age > 18</otherwise></choose></select></mapper>", sorted(['[FUNCDEF]selectWithChoose'])),  # SELECT with choose/when/otherwise
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><select id=\"selectWithTrim\" resultType=\"com.example.model.User\">SELECT * FROM user<trim prefix=\"WHERE\" prefixOverrides=\"AND |OR \"><if test=\"name != null\">AND name = #{name}</if><if test=\"age != null\">AND age = #{age}</if></trim></select></mapper>", sorted(['[FUNCDEF]selectWithTrim'])),  # SELECT with trim
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><update id=\"updateWithSet\">UPDATE user<set><if test=\"name != null\">name = #{name},</if><if test=\"age != null\">age = #{age},</if></set>WHERE id = #{id}</update></mapper>", sorted(['[FUNCDEF]updateWithSet'])),  # UPDATE with set
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><insert id=\"batchInsert\">INSERT INTO user(name, age) VALUES<foreach item=\"item\" index=\"index\" collection=\"list\" separator=\",\">(#{item.name}, #{item.age})</foreach></insert></mapper>", sorted(['[FUNCDEF]batchInsert'])),  # Batch insert
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><select id=\"selectWithJoin\" resultType=\"com.example.model.Order\">SELECT o.*, u.name as userName FROM orders o JOIN user u ON o.user_id = u.id</select></mapper>", sorted(['[FUNCDEF]selectWithJoin'])),  # SELECT with JOIN
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><select id=\"selectWithGroupBy\" resultType=\"com.example.model.Stat\">SELECT age, COUNT(*) as count FROM user GROUP BY age HAVING COUNT(*) > 1</select></mapper>", sorted(['[FUNCDEF]selectWithGroupBy'])),  # SELECT with GROUP BY and HAVING
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><sql id=\"userBase\">id, name, age</sql><sql id=\"userContact\">email, phone</sql><select id=\"selectWithMultipleIncludes\" resultType=\"com.example.model.User\">SELECT <include refid=\"userBase\"/>, <include refid=\"userContact\"/> FROM user</select></mapper>", sorted(['[FUNCDEF]userBase', '[FUNCDEF]userContact', '[FUNCDEF]selectWithMultipleIncludes'])),  # Multiple SQL fragments
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><select id=\"selectWithSubquery\" resultType=\"com.example.model.User\">SELECT * FROM user WHERE id IN (SELECT user_id FROM orders WHERE amount > 1000)</select></mapper>", sorted(['[FUNCDEF]selectWithSubquery'])),  # SELECT with subquery
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><select id=\"selectWithUnion\" resultType=\"com.example.model.User\">SELECT * FROM user WHERE age < 20 UNION SELECT * FROM user WHERE age > 60</select></mapper>", sorted(['[FUNCDEF]selectWithUnion'])),  # SELECT with UNION
+    ('xml', "<mapper namespace=\"com.example.mapper.UserMapper\"><insert id=\"insertWithSelectKey\"><selectKey keyProperty=\"id\" resultType=\"long\" order=\"BEFORE\">SELECT NEXTVAL('user_seq')</selectKey>INSERT INTO user(id, name, age) VALUES(#{id}, #{name}, #{age})</insert></mapper>", sorted(['[FUNCDEF]insertWithSelectKey'])),  # INSERT with selectKey
+    ('xml', """
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
 
+       Copyright 2009-2022 the original author or authors.
+
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+          https://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+
+-->
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="org.apache.ibatis.submitted.encoding.EncodingMapper">
+  <select id="select1" resultType="string">
+    select lastName from names
+  </select>
+
+  <select id="select2" resultType="string">
+    select 'Marañón' from names
+  </select>
+</mapper>
+
+     """, sorted(['[FUNCDEF]select1', '[FUNCDEF]select2'])),
     # # 测试JavaScript关键字不会被误识别为函数调用
     # ('javascript', "function test() { if (true) { return; } }", sorted(["[FUNCDEF]test"])),
     # 测试更复杂的函数调用

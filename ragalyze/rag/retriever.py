@@ -13,6 +13,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
 import numpy as np
+from tqdm import tqdm
 
 from adalflow.core.types import RetrieverOutput, Document, RetrieverOutputType
 from adalflow.components.retriever.faiss_retriever import (
@@ -28,6 +29,21 @@ from ragalyze.rag.treesitter_parse_interface import tokenize_for_bm25, set_debug
 
 logger = get_tqdm_compatible_logger(__name__)
 
+class DaemonThreadPoolExecutor(ThreadPoolExecutor):
+    """
+    ThreadPoolExecutor  whose worker threads are all daemonic.
+    Python 3.8+
+    """
+    def _start_queue_management_thread(self):
+        super()._start_queue_management_thread()
+        for t in self._threads:
+            if t.is_alive():
+                t.daemon = True 
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Override to immediately cancel all pending futures and skip waiting
+        self.shutdown(wait=False, cancel_futures=True)
+        return False
 
 class BM25Retriever:
     """Standalone BM25 retriever that can be used by other retrievers."""
@@ -58,10 +74,7 @@ class BM25Retriever:
 
     def _initialize_bm25(self, documents: List[Union[Document, DualVectorDocument]]):
         """Initialize BM25 index with document texts."""
-        # for doc in documents:
-        #     print(doc.meta_data)
-        #     if not doc.meta_data["programming_language"]:
-        #         import sys; sys.exit(1)
+
         try:
             # Extract text content from documents for BM25 indexing
             corpus = []
@@ -72,51 +85,72 @@ class BM25Retriever:
                     num_workers = self.max_workers
                 else:
                     num_workers = min(multiprocessing.cpu_count(), len(documents))
-                # start_time = time.time()
+                logger.info(f"Using {num_workers} threads for bm25 indexing")
+                start_time = time.time()
                 # Use ThreadPoolExecutor to parallelize tokenization
-                with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                with DaemonThreadPoolExecutor(max_workers=num_workers) as executor:
                     # Submit all tokenization tasks
-                    future_to_index = {}
-                    for i, doc in enumerate(documents):
-                        if isinstance(doc, DualVectorDocument):
-                            # For dual vector documents, combine code and understanding text
-                            text = doc.original_doc.text + "\n" + doc.understanding_text
-                        else:
-                            text = doc.text
-                        assert doc.meta_data["programming_language"], "Programming language is required for BM25 tokenization"
-                        future_to_index[executor.submit(self.build_bm25_index, text, doc.meta_data["programming_language"])] = i
+                    try:
+                        future_to_index = {}
+                        for i, doc in enumerate(documents):
+                            if isinstance(doc, DualVectorDocument):
+                                # For dual vector documents, combine code and understanding text
+                                if "original_text" in doc.original_doc.meta_data and doc.original_doc.meta_data["original_text"]:
+                                    text = doc.original_doc.meta_data["original_text"]
+                                else:
+                                    text = doc.original_doc.text
+                                # text = doc.original_doc.text + "\n" + doc.understanding_text
+                            else:
+                                if "original_text" in doc.meta_data and doc.meta_data["original_text"]:
+                                    text = doc.meta_data["original_text"]
+                                else:
+                                    text = doc.text
+                            assert doc.meta_data["programming_language"], "Programming language is required for BM25 tokenization"
+                            future_to_index[executor.submit(self.build_bm25_index, text, doc.meta_data["programming_language"])] = i
+                        logger.info('All tasks submitted, waiting for results...')
+                        # Collect results in the correct order with progress bar
+                        results = [None] * len(documents)
+                        with tqdm(total=len(documents), desc="BM25 multithreading indexing") as pbar:
+                            for future in as_completed(future_to_index):
+                                index = future_to_index[future]
+                                try:
+                                    tokens = future.result()
+                                    results[index] = tokens
+                                    pbar.update(1)
+                                except Exception as e:
+                                    logger.error(f"Error processing document {index}: {e}")
+                                    raise
 
-                    # Collect results in the correct order
-                    results = [None] * len(documents)
-                    for future in as_completed(future_to_index):
-                        index = future_to_index[future]
-                        try:
-                            tokens = future.result()
-                            results[index] = tokens
-                        except Exception as e:
-                            logger.error(f"Error processing document {index}: {e}")
-                            raise
-                    
-                    corpus = results
-                # end_time = time.time()
-                # print('time taken for bm25 multithreading:', end_time - start_time)
+                        corpus = results
+                    except KeyboardInterrupt as e:
+                        logger.error(f"Keyboard interrupt: {e}")
+                        raise
+                    finally:
+                        logger.info("BM25 multithreading indexing completed")
+                end_time = time.time()
+                logger.info(f'time taken for bm25 multithreading: {end_time - start_time}')
             else:
                 # Process documents sequentially (single-threaded)
-                # start_time = time.time()
-                for doc in documents:
+                start_time = time.time()
+                for doc in tqdm(documents, desc="BM25 single threading indexing"):
                     if isinstance(doc, DualVectorDocument):
                         # For dual vector documents, combine code and understanding text
-                        text = doc.original_doc.text + "\n" + doc.understanding_text
+                        if "original_text" in doc.original_doc.meta_data and doc.original_doc.meta_data["original_text"]:
+                            text = doc.original_doc.meta_data["original_text"]
+                        else:
+                            text = doc.original_doc.text
                     else:
-                        text = doc.text
+                        if "original_text" in doc.meta_data and doc.meta_data["original_text"]:
+                            text = doc.meta_data["original_text"]
+                        else:
+                            text = doc.text
 
                     # Tokenize text for BM25 (simple whitespace + punctuation splitting)
                     assert doc.meta_data["programming_language"], "Programming language is required for BM25 tokenization"
                     tokens = self.build_bm25_index(text, doc.meta_data["programming_language"])
-                    print('tokens:' ,tokens)
                     corpus.append(tokens)
-                # end_time = time.time()
-                # print('time taken for bm25 single threading:', end_time - start_time)            
+                end_time = time.time()
+                logger.info(f'time taken for bm25 single threading: {end_time - start_time}')            
             # Initialize BM25 with custom parameters
             self.bm25 = BM25Okapi(corpus, k1=self.k1, b=self.b)
 
@@ -126,277 +160,8 @@ class BM25Retriever:
 
     def build_bm25_index(self, code: str, language: str) -> List[str]:
         set_debug_mode(0)
-        return tokenize_for_bm25(code, language)
-
-    def _build_bm25_index_python(self, code: str) -> List[str]:
-        """纯Python实现的BM25索引构建"""
-        # 跨语言的函数定义模式
-        function_definition_patterns = [
-            r'def\s+(\w+)',           # Python: def function_name
-            r'function\s+(\w+)',      # JavaScript: function name
-            r'(?:public|private|protected)?\s*(?:static)?\s*(?:\w+(?:\s*\*)*\s+)?(\w+)\s*\([^)]*\)\s*{',  # C/C++/Java: return_type function_name(...)
-            r'(?:public|private|protected)?\s*(?:static)?\s*\w+\s+(\w+)\s*\([^)]*\)\s*;',   # C++/Java prototype
-            r'(?:public|private|protected)?\s*(?:static)?\s*(?:\w+(?:\s*\*)*\s+)?(\w+)\s*\([^)]*\)\s*throws',  # Java with throws
-            r'(?:\w+\s+)+(\w+)\s*\([^)]*\)(?:\s*const)?\s*{',  # C++: return_type function_name(...) const {
-        ]
-        
-        # 类定义模式
-        class_definition_patterns = [
-            r'class\s+(\w+)',         # Python/Java/C++: class ClassName
-        ]
-        
-        # 常见的关键字，不应被识别为函数调用
-        # C/C++ keywords
-        cpp_keywords = {
-            'alignas', 'alignof', 'and', 'and_eq', 'asm', 'auto', 'bitand', 'bitor', 'bool', 'break', 
-            'case', 'catch', 'char', 'char8_t', 'char16_t', 'char32_t', 'class', 'compl', 'concept', 
-            'const', 'consteval', 'constexpr', 'constinit', 'const_cast', 'continue', 'co_await', 
-            'co_return', 'co_yield', 'decltype', 'default', 'delete', 'do', 'double', 'dynamic_cast', 
-            'else', 'enum', 'explicit', 'export', 'extern', 'false', 'float', 'for', 'friend', 'goto', 
-            'if', 'inline', 'int', 'long', 'mutable', 'namespace', 'new', 'noexcept', 'not', 'not_eq', 
-            'nullptr', 'operator', 'or', 'or_eq', 'private', 'protected', 'public', 'register', 
-            'reinterpret_cast', 'requires', 'return', 'short', 'signed', 'sizeof', 'static', 
-            'static_assert', 'static_cast', 'struct', 'switch', 'template', 'this', 'thread_local', 
-            'throw', 'true', 'try', 'typedef', 'typeid', 'typename', 'union', 'unsigned', 'using', 
-            'virtual', 'void', 'volatile', 'wchar_t', 'while', 'xor', 'xor_eq'
-        }
-        
-        # Java keywords
-        java_keywords = {
-            'abstract', 'assert', 'boolean', 'break', 'byte', 'case', 'catch', 'char', 'class', 
-            'const', 'continue', 'default', 'do', 'double', 'else', 'enum', 'extends', 'final', 
-            'finally', 'float', 'for', 'goto', 'if', 'implements', 'import', 'instanceof', 'int', 
-            'interface', 'long', 'native', 'new', 'package', 'private', 'protected', 'public', 
-            'return', 'short', 'static', 'strictfp', 'super', 'switch', 'synchronized', 'this', 
-            'throw', 'throws', 'transient', 'try', 'void', 'volatile', 'while', '_', 'true', 'false', 
-            'null', 'var', 'record', 'sealed', 'non-sealed', 'permits', 'module', 'open', 'requires', 
-            'exports', 'opens', 'uses', 'provides', 'to', 'with', 'transitive'
-        }
-        
-        # Python keywords
-        python_keywords = {
-            'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class', 
-            'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 
-            'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 
-            'try', 'while', 'with', 'yield', 'match', 'case', 'type'
-        }
-        
-        # JavaScript/TypeScript keywords
-        js_ts_keywords = {
-            'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 
-            'do', 'else', 'export', 'extends', 'false', 'finally', 'for', 'function', 'if', 'import', 
-            'in', 'instanceof', 'new', 'null', 'return', 'super', 'switch', 'this', 'throw', 'true', 
-            'try', 'typeof', 'var', 'void', 'while', 'with', 'let', 'static', 'yield', 'await', 'enum', 
-            'implements', 'interface', 'package', 'private', 'protected', 'public', 'arguments', 'as', 
-            'async', 'eval', 'from', 'get', 'of', 'set', 'type', 'declare', 'namespace', 'module', 
-            'abstract', 'any', 'boolean', 'constructor', 'symbol', 'readonly', 'keyof', 'infer', 'is', 
-            'asserts', 'global', 'bigint', 'object', 'number', 'string', 'undefined', 'unknown', 
-            'never', 'override', 'intrinsic'
-        }
-        
-        # 合并所有关键字
-        keywords = cpp_keywords | java_keywords | python_keywords | js_ts_keywords
-        
-        # 简单的分词方法：按空格和换行符分割，然后进一步处理
-        tokens = []
-        lines = code.split('\n')
-        for line in lines:
-            # 先提取完整的函数调用字符串（用于规则3）
-            # 匹配 a.b.c->f() 或 a->f() 或 a.b.f() 等模式
-            full_calls = []
-            
-            # 对象方法调用: a.f(
-            obj_full_calls = re.findall(r'(\w+(?:\.\w+)*\.\w+)\s*\(', line)
-            full_calls.extend(obj_full_calls)
-            
-            # 指针方法调用: a->f(
-            ptr_full_calls = re.findall(r'(\w+(?:\.\w+)*(?:->\w+)+)\s*\(', line)
-            full_calls.extend(ptr_full_calls)
-            
-            # 查找类定义并添加[CLASSDEF]前缀
-            class_name = None
-            for pattern in class_definition_patterns:
-                class_def_match = re.search(pattern, line)
-                if class_def_match:
-                    class_name = class_def_match.group(1)
-                    # 添加[CLASSDEF]标记作为单独的token
-                    tokens.append('[CLASSDEF]{}'.format(class_name))
-                    break
-            
-            # 查找函数定义并添加[FUNCDEF]前缀
-            func_name = None
-            for pattern in function_definition_patterns:
-                func_def_match = re.search(pattern, line)
-                if func_def_match:
-                    potential_func_name = func_def_match.group(1)
-                    # 排除关键字作为函数名（避免将for、if等控制结构误认为函数定义）
-                    if potential_func_name not in keywords:
-                        func_name = potential_func_name
-                        # 添加[FUNCDEF]标记作为单独的token
-                        tokens.append('[FUNCDEF]{}'.format(func_name))
-                        break
-            
-            # 提取不同类型的函数调用模式
-            # 1. 对象方法调用: a.f(
-            obj_method_calls = re.findall(r'\.(\w+)\s*\(', line)
-            for method in obj_method_calls:
-                # 添加[OBJCALL]标记
-                tokens.append('[OBJCALL]{}'.format(method))
-            
-            # 2. 指针方法调用: a->f(
-            ptr_method_calls = re.findall(r'->(\w+)\s*\(', line)
-            for method in ptr_method_calls:
-                # 添加[PTRCALL]标记
-                tokens.append('[PTRCALL]{}'.format(method))
-                
-            # Keep track of all processed identifiers to avoid duplicates
-            processed_identifiers = set()
-            
-            # 3. 类方法调用: Class::method(
-            # Handle complex cases like std::vector<int>::push_back and CodeTransform::operator()
-            # This pattern matches namespace::class_name::method or class_name::method
-            # It also handles templates like vector<int>
-            class_method_calls = re.findall(r'((?:\w+::)*\w+(?:<[^>]*>)?)::(\w+)\s*\(', line)
-            for full_class_name, method in class_method_calls:
-                # 添加[CLASSCALL]标记给方法
-                classcall_token = '[CLASSCALL]{}'.format(method)
-                if classcall_token not in tokens:  # Avoid duplicates
-                    tokens.append(classcall_token)
-                processed_identifiers.add(method)
-                
-                # Extract base class/namespace names
-                # Split by '::' but be careful with templates
-                parts = full_class_name.split('::')
-                for part in parts:
-                    # For template classes, extract the base name
-                    base_name = part.split('<')[0]
-                    if base_name not in processed_identifiers:  # Avoid duplicates
-                        tokens.append(base_name)
-                        processed_identifiers.add(base_name)
-            
-            # 4. 普通函数调用: f( 但排除关键字和函数定义
-            # First, find all potential function calls
-            all_func_calls = re.findall(r'\b(\w+)\s*\(', line)
-            for func in all_func_calls:
-                # Skip if this function was already processed
-                if func in processed_identifiers:
-                    continue
-                    
-                # 排除关键字 - keywords should not be treated as function calls
-                if func not in keywords:
-                    # Check if this is actually a function definition rather than a call
-                    is_func_def = False
-                    
-                    # Check for Python/JavaScript function definitions
-                    func_def_pattern = r'(?:def|function)\s+' + re.escape(func) + r'\s*\('
-                    if re.search(func_def_pattern, line):
-                        is_func_def = True
-                    
-                    # Check for C++/Java function definitions by looking for the specific function we found
-                    if not is_func_def:
-                        # For each function definition pattern, check if it matches and captures this function name
-                        for pattern in function_definition_patterns:
-                            match = re.search(pattern, line)
-                            if match and match.group(1) == func:
-                                is_func_def = True
-                                break
-                    
-                    # If it's not a function definition, treat it as a function call
-                    if not is_func_def:
-                        # But also check that it's not part of a method call (which we handle separately)
-                        # Method calls like obj.method() are handled by the object method patterns
-                        # Class method calls like Class::method() are handled by the class method patterns
-                        # So we only add [CALL] for standalone function calls
-                        # Check if it's preceded by '.' or '->' which would indicate it's a method call
-                        method_call_pattern = r'(?:\.\s*|->\s*)' + re.escape(func) + r'\s*\('
-                        class_method_call_pattern = r'(?:\w+(?:::\w+)*)::' + re.escape(func) + r'\s*\('
-                        if not re.search(method_call_pattern, line) and not re.search(class_method_call_pattern, line):
-                            # 添加[CALL]标记
-                            call_token = '[CALL]{}'.format(func)
-                            if call_token not in tokens:  # Avoid duplicates
-                                tokens.append(call_token)
-                            processed_identifiers.add(func)
-                # Note: We do NOT add keywords to processed_identifiers here
-                # because keywords should still be processed in the general identifier section
-                # Keywords found in function call patterns are NOT added to processed_identifiers
-            
-            # 添加完整的函数调用字符串作为token（规则3）
-            for full_call in full_calls:
-                tokens.append(full_call)
-            
-            # 处理字符串字面量
-            string_literals = re.findall(r'"([^"]*)"', line)  # 双引号字符串
-            string_literals.extend(re.findall(r"'([^']*)'", line))  # 单引号字符串
-            for literal in string_literals:
-                # 清理字符串字面量，只保留字母数字和下划线
-                clean_literal = re.sub(r'[^\w]', '', literal)
-                if clean_literal:  # 只添加非空字符串
-                    tokens.append(clean_literal)
-            
-            # 提取所有标识符，包括关键字
-            identifiers = re.findall(r'\b(\w+)\b', line)
-            for identifier in identifiers:
-                # 排除函数名（避免重复）
-                is_function_name = False
-                if func_name and identifier == func_name:
-                    is_function_name = True
-                
-                # 排除类名（避免重复）
-                is_class_name = False
-                if class_name and identifier == class_name:
-                    is_class_name = True
-                    
-                # 排除已经被标记为函数调用的标识符
-                # We need to check if the identifier part of the token matches exactly
-                # For example, [CALL]print should not match identifier 'int' even though 'print' ends with 'int'
-                is_function_call = False
-                for token in tokens:
-                    if token.startswith(('[CALL]', '[OBJCALL]', '[PTRCALL]', '[CLASSCALL]')):
-                        # Extract the identifier part (after the last ])
-                        if ']' in token:
-                            token_identifier = token[token.rfind(']')+1:]
-                        else:
-                            token_identifier = token
-                        if token_identifier == identifier:
-                            is_function_call = True
-                            break
-                
-                # 排除已在类方法处理中处理过的标识符
-                already_processed = identifier in processed_identifiers
-                
-                # NOTE: We're NOT excluding keywords here as per requirements
-                # Keywords like 'int', 'def', 'return' should be included
-                if not is_function_name and not is_class_name and not is_function_call and not already_processed:
-                    tokens.append(identifier)
-            
-            # 添加参数（如果是函数定义）
-            func_def_match = None
-            for pattern in function_definition_patterns:
-                func_def_match = re.search(pattern, line)
-                if func_def_match:
-                    func_name = func_def_match.group(1)
-                    break
-            
-            if func_def_match and func_name:
-                # 获取参数部分
-                param_match = re.search(r'{}\s*\(([^)]*)\)'.format(re.escape(func_name)), line)
-                if param_match:
-                    params = param_match.group(1)
-                    # 分割参数，处理各种情况
-                    for param in params.split(','):
-                        # 去除类型声明(如 int a, String b)
-                        param = param.strip().split()[-1] if param.strip() else ""
-                        # 去除默认值(如 a=1)
-                        param = param.split('=')[0]
-                        # 去除指针符号等
-                        param = re.sub(r'[&*]+', '', param)
-                        # 清理参数名，去除标点符号
-                        param = re.sub(r'[^\w]', '', param)
-                        # 添加参数名作为token
-                        if param and param != 'void':  # void不是参数名
-                            tokens.append(param)
-        # 不去除重复的token，保留所有token
-        return tokens
+        result = tokenize_for_bm25(code, language)
+        return result
     
     def get_scores(self, query: str) -> List[float]:
         """Get BM25 scores for all documents given a query."""
@@ -718,7 +483,7 @@ class HybridRetriever:
 
         logger.info(
             f"Hybrid retriever initialized with dual_vector={'enabled' if self.use_dual_vector else 'disabled'}"
-            f"BM25 parameters: k1={self.bm25_k1}, b={self.bm25_b}, weight={self.bm25_weight}"
+            f"BM25 parameters: k1={self.bm25_k1}, b={self.bm25_b}, weight={self.bm25_weight}. "
             f"Other parameters: top_k={self.top_k}"
         )
 
@@ -808,7 +573,6 @@ class HybridRetriever:
     def call(self, bm25_keywords: str, faiss_query: str) -> List[RetrieverOutput]:
         """Perform hybrid retrieval combining BM25 and FAISS."""
 
-
         try:
             if bm25_keywords:
                 bm25_retriever = self._initialize_bm25_retriever(self.documents, top_k=len(self.documents))
@@ -825,16 +589,7 @@ class HybridRetriever:
                 raise ValueError("BM25 keywords and FAISS query cannot be empty at the same time")
 
             scores = self._mix_bm25_score_faiss_score(self.documents, bm25_indices, bm25_scores, faiss_results)
-            # if bm25_keywords and faiss_query:
-            #     assert len(faiss_results[0].documents) == len(bm25_indices), f"Mismatch in number of documents between BM25 and FAISS results: {len(bm25_indices)} vs {len(faiss_results[0]['documents'])}"
-            # elif bm25_keywords:
-            #     scores = [0] * len(bm25_indices)
-            #     for i, doc in enumerate(bm25_indices):
-            #         scores[doc] = bm25_scores[i]
-            # else:
-            #     scores = [0] * len(faiss_results[0].doc_indices)
-            #     for i, doc in enumerate(faiss_results[0].doc_indices):
-            #         scores[doc] = faiss_results[0].doc_scores[i]
+
             doc_indices = sorted(
                 range(len(scores)), key=lambda i: scores[i], reverse=True
             )[:self.top_k]

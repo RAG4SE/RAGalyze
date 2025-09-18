@@ -1,0 +1,247 @@
+<START_OF_SYS_PROMPT>
+
+You are a code assistant which answers user questions on a Github Repo or a local repo.
+You will receive user query, relevant context, and past conversation history.
+
+LANGUAGE DETECTION AND RESPONSE:
+- Detect the language of the user's query
+- Respond in the SAME language as the user's query
+- IMPORTANT:If a specific language is requested in the prompt, prioritize that language over the query language
+
+FORMAT YOUR RESPONSE USING MARKDOWN:
+- Use proper markdown syntax for all formatting
+- For code blocks, use triple backticks with language specification (```python, ```javascript, etc.)
+- Use ## headings for major sections
+- Use bullet points or numbered lists where appropriate
+- Format tables using markdown table syntax when presenting structured data
+- Use **bold** and *italic* for emphasis
+- When referencing file paths, use `inline code` formatting
+
+IMPORTANT FORMATTING RULES:
+1. DO NOT include ```markdown fences at the beginning or end of your answer
+2. Start your response directly with the content
+3. The content will already be rendered as markdown, so just provide the raw markdown content
+
+Think step by step and ensure your answer is well-structured and visually organized.
+
+
+Please provide a comprehensive answer to the user's question based on the provided context.
+
+IMPORTANT FORMATTING RULES:
+1. Respond in the same language as the user's question
+2. Format your response using markdown for better readability
+3. Use code blocks, bullet points, headings, and other markdown features as appropriate
+4. Be clear, concise, and helpful
+5. If you use code examples, make sure they are properly formatted with language-specific syntax highlighting
+6. Structure your answer logically with clear sections if the question is complex
+<END_OF_SYS_PROMPT>
+<START_OF_CONTEXT>
+1.
+File Path: src/test/java/org/apache/ibatis/submitted/encoding/EncodingTest.java
+Code Snippet:
+```
+0: /*
+1:  *    Copyright 2009-2024 the original author or authors.
+2:  *
+3:  *    Licensed under the Apache License, Version 2.0 (the "License");
+4:  *    you may not use this file except in compliance with the License.
+5:  *    You may obtain a copy of the License at
+6:  *
+7:  *       https://www.apache.org/licenses/LICENSE-2.0
+8:  *
+9:  *    Unless required by applicable law or agreed to in writing, software
+10:  *    distributed under the License is distributed on an "AS IS" BASIS,
+11:  *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12:  *    See the License for the specific language governing permissions and
+13:  *    limitations under the License.
+14:  */
+15: package org.apache.ibatis.submitted.encoding;
+16: 
+17: import static org.junit.jupiter.api.Assertions.assertEquals;
+18: 
+19: import java.io.Reader;
+20: import java.nio.charset.Charset;
+21: 
+22: import org.apache.ibatis.BaseDataTest;
+23: import org.apache.ibatis.io.Resources;
+24: import org.apache.ibatis.session.SqlSession;
+25: import org.apache.ibatis.session.SqlSessionFactory;
+26: import org.apache.ibatis.session.SqlSessionFactoryBuilder;
+27: import org.junit.jupiter.api.BeforeAll;
+28: import org.junit.jupiter.api.Test;
+29: 
+30: class EncodingTest {
+31: 
+32:   protected static SqlSessionFactory sqlSessionFactory;
+33: 
+34:   @BeforeAll
+35:   static void setUp() throws Exception {
+36:     try (Reader reader = Resources.getResourceAsReader("org/apache/ibatis/submitted/encoding/EncodingConfig.xml")) {
+37:       sqlSessionFactory = new SqlSessionFactoryBuilder().build(reader);
+38:     }
+39: 
+40:     Charset charset = Resources.getCharset();
+41:     try {
+42:       // make sure that the SQL file has been saved in UTF-8!
+43:       Resources.setCharset(Charset.forName("utf-8"));
+44:       BaseDataTest.runScript(sqlSessionFactory.getConfiguration().getEnvironment().getDataSource(),
+45:           "org/apache/ibatis/submitted/encoding/CreateDB.sql");
+46:     } finally {
+47:       Resources.setCharset(charset);
+48:     }
+49:   }
+50: 
+51:   @Test
+52:
+```
+2.
+File Path: src/test/java/org/apache/ibatis/submitted/encoding/EncodingTest.java
+Code Snippet:
+```
+0: /*
+1:  *    Copyright 2009-2024 the original author or authors.
+2:  *
+3:  *    Licensed under the Apache License, Version 2.0 (the "License");
+4:  *    you may not use this file except in compliance with the License.
+5:  *    You may obtain a copy of the License at
+6:  *
+7:  *       https://www.apache.org/licenses/LICENSE-2.0
+8:  *
+9:  *    Unless required by applicable law or agreed to in writing, software
+10:  *    distributed under the License is distributed on an "AS IS" BASIS,
+11:  *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+12:  *    See the License for the specific language governing permissions and
+13:  *    limitations under the License.
+14:  */
+15: package org.apache.ibatis.submitted.encoding;
+16: 
+17: import static org.junit.jupiter.api.Assertions.assertEquals;
+18: 
+19: import java.io.Reader;
+20: import java.nio.charset.Charset;
+21: 
+22: import org.apache.ibatis.BaseDataTest;
+23: import org.apache.ibatis.io.Resources;
+24: import org.apache.ibatis.session.SqlSession;
+25: import org.apache.ibatis.session.SqlSessionFactory;
+26: import org.apache.ibatis.session.SqlSessionFactoryBuilder;
+27: import org.junit.jupiter.api.BeforeAll;
+28: import org.junit.jupiter.api.Test;
+29: 
+30: class EncodingTest {
+31: 
+32:   protected static SqlSessionFactory sqlSessionFactory;
+33: 
+34:   @BeforeAll
+35:   static void setUp() throws Exception {
+36:     try (Reader reader = Resources.getResourceAsReader("org/apache/ibatis/submitted/encoding/EncodingConfig.xml")) {
+37:       sqlSessionFactory = new SqlSessionFactoryBuilder().build(reader);
+38:     }
+39: 
+40:     Charset charset = Resources.getCharset();
+41:     try {
+42:       // make sure that the SQL file has been saved in UTF-8!
+43:       Resources.setCharset(Charset.forName("utf-8"));
+44:       BaseDataTest.runScript(sqlSessionFactory.getConfiguration().getEnvironment().getDataSource(),
+45:           "org/apache/ibatis/submitted/encoding/CreateDB.sql");
+46:     } finally {
+47:       Resources.setCharset(charset);
+48:     }
+49:   }
+50: 
+51:   @Test
+52:   void encoding1() {
+53:     try (SqlSession sqlSession = sqlSessionFactory.openSession()) {
+54:       EncodingMapper mapper = sqlSession.getMapper(EncodingMapper.class);
+55:       String answer = mapper.select1();
+56:       assertEquals("Mara\u00f1\u00f3n", answer);
+57:     }
+58:   }
+59: 
+60:   @Test
+61:   void encoding2() {
+62:     try (SqlSession sqlSession = sqlSessionFactory.openSession()) {
+63:       EncodingMapper mapper = sqlSession.getMapper(EncodingMapper.class);
+64:       String answer = mapper.select2();
+65:       assertEquals("Mara\u00f1\u00f3n", answer);
+66:     }
+67:   }
+68: }
+```
+3.
+File Path: src/test/java/org/apache/ibatis/submitted/encoding/EncodingTest.java
+Code Snippet:
+```
+ import org.apache.ibatis.session.SqlSession;
+25: import org.apache.ibatis.session.SqlSessionFactory;
+26: import org.apache.ibatis.session.SqlSessionFactoryBuilder;
+27: import org.junit.jupiter.api.BeforeAll;
+28: import org.junit.jupiter.api.Test;
+29: 
+30: class EncodingTest {
+31: 
+32:   protected static SqlSessionFactory sqlSessionFactory;
+33: 
+34:   @BeforeAll
+35:   static void setUp() throws Exception {
+36:     try (Reader reader = Resources.getResourceAsReader("org/apache/ibatis/submitted/encoding/EncodingConfig.xml")) {
+37:       sqlSessionFactory = new SqlSessionFactoryBuilder().build(reader);
+38:     }
+39: 
+40:     Charset charset = Resources.getCharset();
+41:     try {
+42:       // make sure that the SQL file has been saved in UTF-8!
+43:       Resources.setCharset(Charset.forName("utf-8"));
+44:       BaseDataTest.runScript(sqlSessionFactory.getConfiguration().getEnvironment().getDataSource(),
+45:           "org/apache/ibatis/submitted/encoding/CreateDB.sql");
+46:     } finally {
+47:       Resources.setCharset(charset);
+48:     }
+49:   }
+50: 
+51:   @Test
+52:   void encoding1() {
+53:     try (SqlSession sqlSession = sqlSessionFactory.openSession()) {
+54:       EncodingMapper mapper = sqlSession.getMapper(EncodingMapper.class);
+55:       String answer = mapper.select1();
+56:       assertEquals("Mara\u00f1\u00f3n", answer);
+57:     }
+58:   }
+59: 
+60:   @Test
+61:   void encoding2() {
+62:     try (SqlSession sqlSession = sqlSessionFactory.openSession()) {
+63:       EncodingMapper mapper = sqlSession.getMapper(EncodingMapper.class);
+64:       String answer = mapper.select2();
+65:       assertEquals("Mara\u00f1\u00f3n", answer);
+66:     }
+67:   }
+68: }
+```
+<END_OF_CONTEXT>
+<START_OF_USER_PROMPT>
+Find the true definition of select1 that is being called in function encoding1
+None
+1. Analyze the calling function context to understand how select1 is being used
+2. Examine the retrieved documents between <START_OF_CONTEXT> and <END_OF_CONTEXT> to identify all candidate definitions of select1
+3. Determine which specific definition is being called based on:
+   - Function parameter types and counts
+   - Template arguments (if applicable)
+   - Object type and inheritance hierarchy
+   - Function signature matching
+   - Context of the call site
+4. If multiple valid candidates exist, explain why one is more likely than others
+5. Provide the exact code snippet with line numbers if available
+6. Include the file path for each found declaration/definition
+7. If the target cannot be resolved with the given context, state this clearly
+---------- Output Format ----------
+You MUST output EXACTLY in this format, no extra text, no introduction, no summary.
+
+{
+    "file_path": "[File path]",
+    "function_name": "[Function name]",
+    "code_snippet": "[Code snippet]"
+}
+
+
+<END_OF_USER_PROMPT>

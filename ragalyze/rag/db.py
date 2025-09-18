@@ -209,7 +209,8 @@ def get_programming_language(file_extension: str) -> str:
         '.jsonl': 'documentation',
         '.yaml': 'documentation',
         '.yml': 'documentation',
-        '.xml': 'documentation',
+        # A special case for mybatis framework, xml is actually code
+        '.xml': 'xml',
     }
     
     return extension_to_language.get(file_extension.lower(), 'unknown')
@@ -687,7 +688,9 @@ def _read_all_documents_sync(path: str, max_workers: int = 8):
             programming_language = get_programming_language(ext)
             
             # Determine if this is actually code based on the programming language
-            is_actually_code = programming_language not in ['documentation', 'text', 'json', 'yaml', 'xml', 'unknown']
+            # xml is not actually code, but java can be used with xml in mybatis framework,
+            # so we need to count xml as code
+            is_actually_code = programming_language not in ['documentation', 'text', 'json', 'yaml', 'unknown']
             
             if is_actually_code:
                 # Determine if this is an implementation file

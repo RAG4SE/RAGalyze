@@ -65,6 +65,7 @@ class MyTextSplitter(TextSplitter):
                     raise ValueError(f"Text should not be None. Doc id: {doc.id}")
 
                 # prefix each line of doc.text with the 0-based line number
+                doc.meta_data["original_text"] = doc.text
                 doc.text = "\n".join(f"{i}: {line}" for i, line in enumerate(doc.text.splitlines()))
                 text_splits = self.split_text(doc.text)
                 

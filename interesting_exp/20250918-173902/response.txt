@@ -1,0 +1,40 @@
+==================================================
+QUERY INFORMATION
+==================================================
+Repository: /Users/mac/repo/RAGalyzeBench/mybatis-3
+BM25 keywords: [FUNCDEF]encoding1 [XMLELEMENT]select1 [FUNCDEF]select1
+FAISS query: 
+Question: Find the true definition of select1 that is being called in function encoding1
+None
+1. Analyze the calling function context to understand how select1 is being used
+2. Examine the retrieved documents between <START_OF_CONTEXT> and <END_OF_CONTEXT> to identify all candidate definitions of select1
+3. Determine which specific definition is being called based on:
+   - Function parameter types and counts
+   - Template arguments (if applicable)
+   - Object type and inheritance hierarchy
+   - Function signature matching
+   - Context of the call site
+4. If multiple valid candidates exist, explain why one is more likely than others
+5. Provide the exact code snippet with line numbers if available
+6. Include the file path for each found declaration/definition
+7. If the target cannot be resolved with the given context, state this clearly
+---------- Output Format ----------
+You MUST output EXACTLY in this format, no extra text, no introduction, no summary.
+
+{
+    "file_path": "[File path]",
+    "function_name": "[Function name]",
+    "code_snippet": "[Code snippet]"
+}
+
+
+Timestamp: 2025-09-18 17:39:02
+
+==================================================
+RESPONSE
+==================================================
+{
+    "file_path": "src/test/java/org/apache/ibatis/submitted/encoding/EncodingMapper.java",
+    "function_name": "select1",
+    "code_snippet": "String select1();"
+}

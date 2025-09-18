@@ -129,13 +129,16 @@ static TSNode fallback_sub_declarator_node_for_cpp(TSNode node) {
         return ts_node_child_by_field_name(node, "declarator", 10);
     }
     else {
-        char* type_names[] = {"reference_declarator", "pointer_declarator", "identifier", "field_identifier", "operator_name", "function_declarator", "array_declarator", "qualified_identifier", "field_declaration"};
+        char* type_names[] = {"reference_declarator", "pointer_declarator", "pointer_type_declarator", "identifier", "field_identifier", "operator_name", "function_declarator", "array_declarator", "qualified_identifier", "field_declaration", "structured_binding_declarator"};
         for (size_t i = 0; i < sizeof(type_names) / sizeof(type_names[0]); i++) {
             if (!ts_node_is_null(ts_node_child_by_type_name(node, type_names[i]))) {
                 return ts_node_child_by_type_name(node, type_names[i]);
             }
         }
     }
+
+    TSNode empty_node = {0};
+    return empty_node;
 }
 
 static char* normalize_function_name(const char* func_name) {
@@ -190,9 +193,9 @@ static const TSLanguage* get_language(const char* language_name) {
     } else if (strcmp(language_name, "java") == 0) {
         debug_printf("Using Java parser\n");
         return tree_sitter_java();
-    } else if (strcmp(language_name, "javascript") == 0) {
-        debug_printf("Using JavaScript parser\n");
-        return tree_sitter_javascript();
+    // } else if (strcmp(language_name, "javascript") == 0) {
+    //     debug_printf("Using JavaScript parser\n");
+    //     return tree_sitter_javascript();
     } else if (strcmp(language_name, "xml") == 0) {
         debug_printf("Using XML parser\n");
         return tree_sitter_xml();
@@ -360,11 +363,15 @@ static void traverse_declaration_cpp(TSNode name_declarator, const char* source_
         traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
     }
     else if (strcmp(decl_type, "pointer_declarator") == 0 ||
-             strcmp(decl_type, "reference_declarator") == 0) {
-        // Pointer or reference declaration (e.g., int* i; int& i;)
+             strcmp(decl_type, "reference_declarator") == 0 ||
+             strcmp(decl_type, "pointer_type_declarator") == 0) {
+        // Pointer, reference, or pointer type declaration (e.g., int* i; int& i;)
         TSNode sub_declarator = fallback_sub_declarator_node_for_cpp(name_declarator);
-        treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
-        traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
+        if (!ts_node_is_null(sub_declarator)) {
+            const char* sub_decl_type = ts_node_type(sub_declarator);
+            
+            traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
+        }
     }
     else if (strcmp(decl_type, "qualified_identifier") == 0) {
         // Qualified identifier (e.g., Class::method)
@@ -386,8 +393,24 @@ static void traverse_declaration_cpp(TSNode name_declarator, const char* source_
         treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
         traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
     }
+    else if (strcmp(decl_type, "structured_binding_declarator") == 0) {
+        // Structured binding declarator (C++17) - e.g., auto [x, y] = getPair();
+        // Extract the variable names from the structured binding
+        uint32_t child_count = ts_node_child_count(name_declarator);
+        for (uint32_t i = 0; i < child_count; i++) {
+            TSNode child = ts_node_child(name_declarator, i);
+            const char* child_type = ts_node_type(child);
+            if (strcmp(child_type, "identifier") == 0 || strcmp(child_type, "field_identifier") == 0) {
+                const char* var_name = get_node_text(child, source_code);
+                debug_printf("DEBUG: Found structured binding variable: '%s'\n", var_name);
+                add_node(results, "var_declaration", var_name);
+                free(var_name);
+            }
+        }
+    }
     else {
-        treesitter_assert(0, concatenate_string("Invalid declarator type: ", decl_type), NULL, __FILE__, __LINE__);
+        return;
+        // treesitter_assert(0, concatenate_string("Invalid declarator type: ", decl_type), NULL, __FILE__, __LINE__);
     }
 }
 
@@ -768,79 +791,86 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 if (strcmp(decl_type, "function_declarator") == 0) {
                     break;  // Found the actual function declarator
                 }
-                else if (strcmp(decl_type, "reference_declarator") == 0 ||
-                         strcmp(decl_type, "pointer_declarator") == 0) {
+                else {
                     // Move to the child declarator
                     function_declarator = fallback_sub_declarator_node_for_cpp(function_declarator);
-                    
-                    treesitter_assert(!ts_node_is_null(function_declarator), "No nested declarator found", node_text, __FILE__, __LINE__);
+                    // There could be some weird cases. For instance, `explicit operator bool() const { return *this != invalid(); }`
+                    // of which `() const` is recognized as `abstract_function_declarator`, the child of which is
+                    // Child 0: field='parameters', type='parameter_list', text='()'
+                    // Child 1: type='type_qualifier', text='const'
+                    // We skip such dummy cases.
+                    if (ts_node_is_null(function_declarator)) {
+                        break;
+                    }
+                    // treesitter_assert(!ts_node_is_null(function_declarator), "No nested declarator found", node_text, __FILE__, __LINE__);
+                }
+                // else {
+                //     treesitter_assert(0, concatenate_string("Invalid function declarator type: ", decl_type), node_text, __FILE__, __LINE__);
+                // }
+            }
+            
+            if (!ts_node_is_null(function_declarator)) {
+                TSNode parameters_node = ts_node_child_by_field_name(function_declarator, "parameters", 10);
+                treesitter_assert(!ts_node_is_null(parameters_node), "No parameters field found", node_text, __FILE__, __LINE__);
+                traverse_tree(parameters_node, source_code, results, language_name);
+    
+                // Get the actual function name (recursively if needed)
+                TSNode name_node = ts_node_child_by_field_name(function_declarator, "declarator", 10);
+                treesitter_assert(!ts_node_is_null(name_node), "No declarator field found in function_declarator", node_text, __FILE__, __LINE__);
+    
+                // Handle cases where the name is nested in pointer/reference declarators
+                while (strcmp(ts_node_type(name_node), "pointer_declarator") == 0 ||
+                       strcmp(ts_node_type(name_node), "reference_declarator") == 0) {
+                    name_node = ts_node_child_by_field_name(name_node, "declarator", 10);
+                    treesitter_assert(!ts_node_is_null(name_node), "No nested declarator found for name", node_text, __FILE__, __LINE__);
+                }
+    
+                if (strcmp(ts_node_type(name_node), "qualified_identifier") == 0) {
+                    TSNode short_name_node = ts_node_child_by_field_name(name_node, "name", 4);
+                    treesitter_assert(!ts_node_is_null(short_name_node), "No name field found", node_text, __FILE__, __LINE__);
+                    const char* short_func_name = get_node_text(short_name_node, source_code);
+                    debug_printf("DEBUG: Found Python function definition via name field: '%s'\n", short_func_name);
+                    add_node(results, "function_definition", short_func_name);
+                    free(short_func_name);
+    
+                    // Also add the qualified name
+                    const char* qualified_func_name = get_node_text(name_node, source_code);
+                    debug_printf("DEBUG: Adding qualified function name: '%s'\n", qualified_func_name);
+                    add_node(results, "function_definition", qualified_func_name);
+                    free(qualified_func_name);
+                }
+                else if (strcmp(ts_node_type(name_node), "template_function") == 0) {
+                    // For template functions, extract just the base function name without template parameters
+                    TSNode base_name_node = ts_node_child_by_field_name(name_node, "name", 4);
+                    treesitter_assert(!ts_node_is_null(base_name_node), "No name field found in template_function", node_text, __FILE__, __LINE__);
+                    const char* base_func_name = get_node_text(base_name_node, source_code);
+                    debug_printf("DEBUG: Found template function definition via base name field: '%s'\n", base_func_name);
+                    add_node(results, "function_definition", base_func_name);
+                    free(base_func_name);
                 }
                 else {
-                    treesitter_assert(0, concatenate_string("Invalid function declarator type: ", decl_type), node_text, __FILE__, __LINE__);
+                    const char* func_name = get_node_text(name_node, source_code);
+                    debug_printf("DEBUG: Found function definition via declarator field: '%s'\n", func_name);
+                    add_node(results, "function_definition", func_name);
+                    free(func_name);
                 }
             }
-
-            TSNode parameters_node = ts_node_child_by_field_name(function_declarator, "parameters", 10);
-            treesitter_assert(!ts_node_is_null(parameters_node), "No parameters field found", node_text, __FILE__, __LINE__);
-            traverse_tree(parameters_node, source_code, results, language_name);
-
-            // Get the actual function name (recursively if needed)
-            TSNode name_node = ts_node_child_by_field_name(function_declarator, "declarator", 10);
-            treesitter_assert(!ts_node_is_null(name_node), "No declarator field found in function_declarator", node_text, __FILE__, __LINE__);
-
-            // Handle cases where the name is nested in pointer/reference declarators
-            while (strcmp(ts_node_type(name_node), "pointer_declarator") == 0 ||
-                   strcmp(ts_node_type(name_node), "reference_declarator") == 0) {
-                name_node = ts_node_child_by_field_name(name_node, "declarator", 10);
-                treesitter_assert(!ts_node_is_null(name_node), "No nested declarator found for name", node_text, __FILE__, __LINE__);
-            }
-
-            if (strcmp(ts_node_type(name_node), "qualified_identifier") == 0) {
-                TSNode short_name_node = ts_node_child_by_field_name(name_node, "name", 4);
-                treesitter_assert(!ts_node_is_null(short_name_node), "No name field found", node_text, __FILE__, __LINE__);
-                const char* short_func_name = get_node_text(short_name_node, source_code);
-                debug_printf("DEBUG: Found Python function definition via name field: '%s'\n", short_func_name);
-                add_node(results, "function_definition", short_func_name);
-                free(short_func_name);
-
-                // Also add the qualified name
-                const char* qualified_func_name = get_node_text(name_node, source_code);
-                debug_printf("DEBUG: Adding qualified function name: '%s'\n", qualified_func_name);
-                add_node(results, "function_definition", qualified_func_name);
-                free(qualified_func_name);
-            }
-            else if (strcmp(ts_node_type(name_node), "template_function") == 0) {
-                // For template functions, extract just the base function name without template parameters
-                TSNode base_name_node = ts_node_child_by_field_name(name_node, "name", 4);
-                treesitter_assert(!ts_node_is_null(base_name_node), "No name field found in template_function", node_text, __FILE__, __LINE__);
-                const char* base_func_name = get_node_text(base_name_node, source_code);
-                debug_printf("DEBUG: Found template function definition via base name field: '%s'\n", base_func_name);
-                add_node(results, "function_definition", base_func_name);
-                free(base_func_name);
-            }
-            else {
-                const char* func_name = get_node_text(name_node, source_code);
-                debug_printf("DEBUG: Found function definition via declarator field: '%s'\n", func_name);
-                add_node(results, "function_definition", func_name);
-                free(func_name);
-            }
-
-            // ======================= AGENT START =======================
-            // Check for field initializer list (common in constructors) and skip it
-            uint32_t child_count = ts_node_child_count(node);
-            debug_printf("DEBUG: Function definition has %d children\n", child_count);
-            for (uint32_t i = 0; i < child_count; i++) {
-                TSNode child = ts_node_child(node, i);
-                const char* child_type = ts_node_type(child);
-                debug_printf("DEBUG: Child %d type: '%s'\n", i, child_type);
-                if (strcmp(child_type, "field_initializer_list") == 0) {
-                    debug_printf("DEBUG: Found field initializer list, skipping it to avoid duplicate field identifiers\n");
-                    debug_print_child(child, source_code);
-                    // Skip this child - don't traverse field initializer lists
-                    continue;
-                }
-            }
-            // ======================= AGENT END =======================
+            // // ======================= AGENT START =======================
+            // // Check for field initializer list (common in constructors) and skip it
+            // uint32_t child_count = ts_node_child_count(node);
+            // debug_printf("DEBUG: Function definition has %d children\n", child_count);
+            // for (uint32_t i = 0; i < child_count; i++) {
+            //     TSNode child = ts_node_child(node, i);
+            //     const char* child_type = ts_node_type(child);
+            //     debug_printf("DEBUG: Child %d type: '%s'\n", i, child_type);
+            //     if (strcmp(child_type, "field_initializer_list") == 0) {
+            //         debug_printf("DEBUG: Found field initializer list, skipping it to avoid duplicate field identifiers\n");
+            //         debug_print_child(child, source_code);
+            //         // Skip this child - don't traverse field initializer lists
+            //         continue;
+            //     }
+            // }
+            // // ======================= AGENT END =======================
 
             // Process function body normally (if it exists)
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
@@ -862,10 +892,10 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             free(class_name);
 
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
-            treesitter_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
-
-            // For classes and structs, traverse normally to process field declarations and methods
-            traverse_tree(body_node, source_code, results, language_name);
+            if (!ts_node_is_null(body_node)) {
+                // For classes and structs, traverse normally to process field declarations and methods
+                traverse_tree(body_node, source_code, results, language_name);
+            }
             return;
         }
         else if (strcmp(node_type, "union_specifier") == 0) {
@@ -953,7 +983,8 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
             }
             else {
-                treesitter_assert(0, "Invalid function type", node_text, __FILE__, __LINE__);
+                return;
+                // treesitter_assert(0, concatenate_string("Invalid function type: ", node_text), node_text, __FILE__, __LINE__);
             }
             const char* func_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found call expression via function field: '%s'\n", func_name);
@@ -1022,22 +1053,22 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 }
                 parent = ts_node_parent(parent);
             }
-
+            
             TSNode declarator_node = ts_node_child_by_field_name(node, "declarator", 10);
-            treesitter_assert(!ts_node_is_null(declarator_node), "No declarator field found", node_text, __FILE__, __LINE__);
-
-            if (is_lambda_param) {
-                const char* param_name = get_node_text(declarator_node, source_code);
-                debug_printf("DEBUG: Found lambda parameter identifier: '%s'\n", param_name);
-                add_node(results, "var_declaration", param_name);
-                free(param_name);
-            } else if (is_function_declaration_param) {
-                // For function declaration parameters, don't process as variable declarations
-                debug_printf("DEBUG: Found function declaration parameter, skipping variable declaration\n");
-            } else {
-                // For regular function parameters, use the normal declaration processing
-                traverse_declaration_cpp(declarator_node, source_code, results, language_name, false);
-            }
+            if (!ts_node_is_null(declarator_node)) {
+                if (is_lambda_param) {
+                    const char* param_name = get_node_text(declarator_node, source_code);
+                    debug_printf("DEBUG: Found lambda parameter identifier: '%s'\n", param_name);
+                    add_node(results, "var_declaration", param_name);
+                    free(param_name);
+                } else if (is_function_declaration_param) {
+                    // For function declaration parameters, don't process as variable declarations
+                    debug_printf("DEBUG: Found function declaration parameter, skipping variable declaration\n");
+                } else {
+                    // For regular function parameters, use the normal declaration processing
+                    traverse_declaration_cpp(declarator_node, source_code, results, language_name, false);
+                }
+            }    
 
             return;
         }
@@ -1382,136 +1413,84 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
         }
     }
     else if (strcmp(language_name, "xml") == 0) {
-        if (strcmp(node_type, "element") == 0) {
-            debug_printf("DEBUG: XML element child nodes:\n");
-            debug_print_child(node, source_code);
+        if (strcmp(node_type, "Attribute") == 0) {
+            // Parse the attribute text to extract name and value
+            char* attr_text = strdup(node_text);
+            char* equals_pos = strchr(attr_text, '=');
+            if (equals_pos) {
+                // Extract attribute name
+                *equals_pos = '\0';
+                char* attr_name = attr_text;
 
-            // Extract element name from STag (start tag)
-            uint32_t child_count = ts_node_child_count(node);
-            for (uint32_t i = 0; i < child_count; i++) {
-                TSNode child = ts_node_child(node, i);
-                const char* child_type = ts_node_type(child);
-
-                if (strcmp(child_type, "STag") == 0) {
-                    // Find the Name node within STag
-                    uint32_t stag_child_count = ts_node_child_count(child);
-                    for (uint32_t j = 0; j < stag_child_count; j++) {
-                        TSNode stag_child = ts_node_child(child, j);
-                        if (strcmp(ts_node_type(stag_child), "Name") == 0) {
-                            const char* element_name = get_node_text(stag_child, source_code);
-                            debug_printf("DEBUG: Found XML element: '%s'\n", element_name);
-                            add_node(results, "xml_element", element_name);
-                            free(element_name);
-                            break;
-                        }
-                    }
-                }
-                else if (strcmp(child_type, "EmptyElemTag") == 0) {
-                    // Find the Name node within EmptyElemTag (self-closing tags)
-                    uint32_t empty_child_count = ts_node_child_count(child);
-                    for (uint32_t j = 0; j < empty_child_count; j++) {
-                        TSNode empty_child = ts_node_child(child, j);
-                        if (strcmp(ts_node_type(empty_child), "Name") == 0) {
-                            const char* element_name = get_node_text(empty_child, source_code);
-                            debug_printf("DEBUG: Found XML self-closing element: '%s'\n", element_name);
-                            add_node(results, "xml_element", element_name);
-                            free(element_name);
-                            break;
-                        }
+                // Extract attribute value (remove quotes)
+                char* attr_value = equals_pos + 1;
+                if (attr_value[0] == '"' || attr_value[0] == '\'') {
+                    attr_value++;
+                    size_t len = strlen(attr_value);
+                    if (len > 0 && (attr_value[len-1] == '"' || attr_value[len-1] == '\'')) {
+                        attr_value[len-1] = '\0';
                     }
                 }
 
-                // Process all children normally to capture nested elements and content
-                traverse_tree(child, source_code, results, language_name);
-            }
-            return;
-        }
-        else if (strcmp(node_type, "Name") == 0) {
-            // Process Name nodes (could be element names or attribute names)
-            const char* name = get_node_text(node, source_code);
-            debug_printf("DEBUG: Found XML Name: '%s'\n", name);
+                // Check if this is an "id" attribute in a MyBatis mapper file
+                if (strcmp(attr_name, "id") == 0) {
+                    // Check if the parent attribute is part of a MyBatis tag
+                    TSNode parent = ts_node_parent(node);
+                    if (!ts_node_is_null(parent)) {
+                        const char* parent_type = ts_node_type(parent);
 
-            // Check if this Name is part of an attribute by looking at parent
-            TSNode parent = ts_node_parent(node);
-            if (!ts_node_is_null(parent)) {
-                const char* parent_type = ts_node_type(parent);
-                if (strcmp(parent_type, "Attribute") == 0) {
-                    debug_printf("DEBUG: Found XML attribute: '%s'\n", name);
-                    add_node(results, "xml_attribute", name);
-                }
-            }
+                        if (strcmp(parent_type, "STag") == 0 || strcmp(parent_type, "EmptyElemTag") == 0) {
+                            // Find the element name to check if it's a MyBatis tag
+                            TSNode grandparent = ts_node_parent(parent);
+                            if (!ts_node_is_null(grandparent)) {
+                                // Find the STag/EmptyElemTag in the grandparent to get element name
+                                uint32_t child_count = ts_node_child_count(grandparent);
 
-            free(name);
-            return;
-        }
-        else if (strcmp(node_type, "CharData") == 0) {
-            debug_printf("DEBUG: XML CharData node\n");
-            const char* text_content = get_node_text(node, source_code);
-            // Only process non-whitespace text content
-            if (strlen(text_content) > 0 && !is_whitespace(text_content)) {
-                debug_printf("DEBUG: Found XML text content: '%s'\n", text_content);
-                // Add as identifier since text content can be meaningful for search
-                add_node(results, "identifier", text_content);
-            }
-            free(text_content);
-            return;
-        }
-        else if (strcmp(node_type, "Comment") == 0) {
-            debug_printf("DEBUG: XML comment - skipping\n");
-            return;
-        }
-        else if (strcmp(node_type, "DTD") == 0) {
-            debug_printf("DEBUG: XML DTD - skipping\n");
-            return;
-        }
-        else if (strcmp(node_type, "PI") == 0) {
-            debug_printf("DEBUG: XML processing instruction - skipping\n");
-            return;
-        }
-        else if (strcmp(node_type, "content") == 0) {
-            debug_printf("DEBUG: XML content node - processing nested elements\n");
+                                for (uint32_t i = 0; i < child_count; i++) {
+                                    TSNode child = ts_node_child(grandparent, i);
+                                    const char* child_type = ts_node_type(child);
 
-            // Check if this is a CDATA section by looking at the parent
-            TSNode parent = ts_node_parent(node);
-            if (!ts_node_is_null(parent)) {
-                const char* parent_type = ts_node_type(parent);
-                // Look for ERROR nodes with CDATA pattern
-                if (strcmp(parent_type, "ERROR") == 0) {
-                    const char* parent_text = get_node_text(parent, source_code);
-                    if (parent_text && strstr(parent_text, "<![CDATA[") == parent_text) {
-                        // This is a CDATA section - extract the content between <![CDATA[ and ]]>
-                        const char* start_tag = "<![CDATA[";
-                        const char* end_tag = "]]>";
-                        const char* content_start = parent_text + strlen(start_tag);
-                        const char* content_end = strstr(parent_text, end_tag);
+                                    if (strcmp(child_type, "STag") == 0 || strcmp(child_type, "EmptyElemTag") == 0) {
+                                        uint32_t stag_child_count = ts_node_child_count(child);
 
-                        if (content_end && content_end > content_start) {
-                            size_t content_len = content_end - content_start;
-                            char* cdata_content = malloc(content_len + 1);
-                            if (cdata_content) {
-                                memcpy(cdata_content, content_start, content_len);
-                                cdata_content[content_len] = '\0';
-                                debug_printf("DEBUG: Found CDATA content: '%s'\n", cdata_content);
-                                // Add as identifier since CDATA content can be meaningful for search
-                                add_node(results, "identifier", cdata_content);
-                                free(cdata_content);
+                                        for (uint32_t k = 0; k < stag_child_count; k++) {
+                                            TSNode stag_child = ts_node_child(child, k);
+                                            const char* stag_child_type = ts_node_type(stag_child);
+
+                                            if (strcmp(stag_child_type, "Name") == 0) {
+                                                const char* element_name = get_node_text(stag_child, source_code);
+
+                                                // Check if this is a MyBatis mapper tag
+                                                if (strcmp(element_name, "select") == 0 || strcmp(element_name, "insert") == 0 ||
+                                                    strcmp(element_name, "update") == 0 || strcmp(element_name, "delete") == 0 ||
+                                                    strcmp(element_name, "sql") == 0) {
+
+                                                    // Add as a special node type for MyBatis functions
+                                                    add_node(results, "mybatis_function", attr_value);
+                                                }
+                                                free(element_name);
+                                                break;
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
                             }
                         }
-                        free(parent_text);
-                        return;
                     }
-                    free(parent_text);
                 }
             }
-
-            // Process all children normally to capture nested elements
-            uint32_t child_count = ts_node_child_count(node);
-            for (uint32_t i = 0; i < child_count; i++) {
-                TSNode child = ts_node_child(node, i);
-                traverse_tree(child, source_code, results, language_name);
-            }
+            free(attr_text);
             return;
         }
+
+        // For all other XML node types, just process children to find attributes
+        uint32_t child_count = ts_node_child_count(node);
+        for (uint32_t i = 0; i < child_count; i++) {
+            TSNode child = ts_node_child(node, i);
+            traverse_tree(child, source_code, results, language_name);
+        }
+        return;
     }
 
     else {
@@ -1800,19 +1779,16 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
             continue;
         }
 
-        // XML elements - include with prefix
-        if (strcmp(node_type, "xml_element") == 0) {
+        // Handle MyBatis functions - these are added by the XML parser as special nodes
+        if (strcmp(node_type, "mybatis_function") == 0) {
             char prefixed_token[256];
-            snprintf(prefixed_token, sizeof(prefixed_token), "[XMLELEMENT]%s", node_text);
+            snprintf(prefixed_token, sizeof(prefixed_token), "[FUNCDEF]%s", node_text);
             add_token(tokens, prefixed_token);
             continue;
         }
 
-        // XML attributes - include with prefix
-        if (strcmp(node_type, "xml_attribute") == 0) {
-            char prefixed_token[256];
-            snprintf(prefixed_token, sizeof(prefixed_token), "[XMLATTRIBUTE]%s", node_text);
-            add_token(tokens, prefixed_token);
+        // Skip all XML elements and attributes - they are now processed in the AST parsing stage
+        if (strcmp(node_type, "xml_element") == 0 || strcmp(node_type, "xml_attribute") == 0) {
             continue;
         }
     }
@@ -1826,20 +1802,24 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
 static PyObject* parse_code_with_treesitter(PyObject* self, PyObject* args) {
     const char* code;
     const char* language_name = NULL;
-    
+
     if (!PyArg_ParseTuple(args, "s|z", &code, &language_name)) {
         return NULL;
     }
-    
+
     if (!language_name) {
         printf("ERROR: Language name is required for parsing\n");
         exit(1);
     }
-    
-    // Parse the code using tree-sitter
-    ParseResults* results = parse_with_treesitter(code, language_name);
-    
-    // Convert results to Python list of tuples
+
+    ParseResults* results = NULL;
+
+    // Release GIL during CPU-intensive tree-sitter operations
+    Py_BEGIN_ALLOW_THREADS
+    results = parse_with_treesitter(code, language_name);
+    Py_END_ALLOW_THREADS
+
+    // Convert results to Python list of tuples (needs GIL)
     PyObject* py_results = PyList_New(results->count);
     for (size_t i = 0; i < results->count; i++) {
         PyObject* tuple = PyTuple_New(2);
@@ -1847,10 +1827,10 @@ static PyObject* parse_code_with_treesitter(PyObject* self, PyObject* args) {
         PyTuple_SetItem(tuple, 1, PyUnicode_FromString(results->node_texts[i]));
         PyList_SetItem(py_results, i, tuple);
     }
-    
+
     // Cleanup
     free_parse_results(results);
-    
+
     return py_results;
 }
 
@@ -1858,7 +1838,7 @@ static PyObject* parse_code_with_treesitter(PyObject* self, PyObject* args) {
 static PyObject* tokenize_for_bm25(PyObject* self, PyObject* args) {
     const char* code;
     const char* language_name = NULL;
-    
+
     if (!PyArg_ParseTuple(args, "s|z", &code, &language_name)) {
         return NULL;
     }
@@ -1866,18 +1846,23 @@ static PyObject* tokenize_for_bm25(PyObject* self, PyObject* args) {
         printf("ERROR: Language name is required for BM25 tokenization\n");
         exit(1);
     }
-    
-    // Extract BM25 tokens using tree-sitter
-    TokenResults* results = extract_bm25_tokens_treesitter(code, language_name);
-    // Convert results to Python list
+
+    TokenResults* results = NULL;
+
+    // Release GIL during CPU-intensive tree-sitter operations
+    Py_BEGIN_ALLOW_THREADS
+    results = extract_bm25_tokens_treesitter(code, language_name);
+    Py_END_ALLOW_THREADS
+
+    // Convert results to Python list (needs GIL)
     PyObject* py_results = PyList_New(results->count);
     for (size_t i = 0; i < results->count; i++) {
         PyList_SetItem(py_results, i, PyUnicode_FromString(results->tokens[i]));
     }
-    
+
     // Cleanup
     free_token_results(results);
-    
+
     return py_results;
 }
 
@@ -1901,25 +1886,30 @@ static PyObject* get_debug_mode(PyObject* self, PyObject* args) {
 static PyObject* fallback_parse_py(PyObject* self, PyObject* args) {
     const char* code;
     const char* language;
-    
+
     if (!PyArg_ParseTuple(args, "ss", &code, &language)) {
         return NULL;
     }
-    
-    // Call the C fallback_parse function
-    ParseResults* results = fallback_parse(code, language);
+
+    ParseResults* results = NULL;
+
+    // Release GIL during CPU-intensive parsing operations
+    Py_BEGIN_ALLOW_THREADS
+    results = fallback_parse(code, language);
+    Py_END_ALLOW_THREADS
+
     if (!results) {
         PyErr_SetString(PyExc_RuntimeError, "Failed to parse code");
         return NULL;
     }
-    
-    // Convert results to Python list of dictionaries
+
+    // Convert results to Python list of dictionaries (needs GIL)
     PyObject* py_results = PyList_New(0);
     if (!py_results) {
         free_parse_results(results);
         return NULL;
     }
-    
+
     for (size_t i = 0; i < results->count; i++) {
         PyObject* node_dict = PyDict_New();
         if (!node_dict) {
@@ -1927,7 +1917,7 @@ static PyObject* fallback_parse_py(PyObject* self, PyObject* args) {
             free_parse_results(results);
             return NULL;
         }
-        
+
         // Add type and name to dictionary
         PyObject* type_str = PyUnicode_FromString(results->node_types[i]);
         PyObject* name_str = PyUnicode_FromString(results->node_texts[i]);
