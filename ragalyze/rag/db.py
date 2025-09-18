@@ -210,7 +210,7 @@ def get_programming_language(file_extension: str) -> str:
         '.yaml': 'documentation',
         '.yml': 'documentation',
         # A special case for mybatis framework, xml is actually code
-        '.xml': 'xml',
+        '.xml': 'documentation',
     }
     
     return extension_to_language.get(file_extension.lower(), 'unknown')
