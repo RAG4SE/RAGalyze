@@ -308,11 +308,19 @@ class OpenAIClient(ModelClient):
             )
 
     def chat(self, api_kwargs: Dict = {}):
+        # Add JSON format support if requested
+        if api_kwargs.get('response_format') == 'json':
+            api_kwargs = api_kwargs.copy()
+            api_kwargs['response_format'] = {"type": "json_object"}
         completion = self.sync_client.chat.completions.create(**api_kwargs)
         return completion
 
     async def achat(self, api_kwargs: Dict = {}):
         """Async version of chat method."""
+        # Add JSON format support if requested
+        if api_kwargs.get('response_format') == 'json':
+            api_kwargs = api_kwargs.copy()
+            api_kwargs['response_format'] = {"type": "json_object"}
         completion = await self.async_client.chat.completions.create(**api_kwargs)
         return completion
 
@@ -739,7 +747,6 @@ class OpenAIBatchEmbedder(adal.BatchEmbedder):
         self,
         input: BatchEmbedderInputType,
         model_kwargs: Optional[Dict] = {},
-        force_recreate: bool = False,
     ) -> BatchEmbedderOutputType:
         """
         Call operator interface, delegates to call method

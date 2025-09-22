@@ -10,6 +10,7 @@ pathlib2
 rank-bm25
 numpy
 chardet
+json-repair
 
 # used by huggingface_embedder_client.py, lazy install
 # torch>=2.0.0

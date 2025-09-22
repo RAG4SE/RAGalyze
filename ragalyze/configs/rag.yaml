@@ -9,11 +9,13 @@ rag:
       encoding_format: float
     batch_size: 10
     sketch_filling: true
-    force_embedding: false
+  
+  recreate_db: false
 
   retriever:
     query-driven: true
-    top_k: 20
+    faiss:
+      top_k: 20
     bm25:
       # We first use bm25 to retrieve top_k candidate documents
       # based on syntax similarity
@@ -22,6 +24,7 @@ rag:
       # The weight of bm25 score in the final score in `normal_add`
       # 0.5 means equal contribution from both BM25 and FAISS
       weight: 0.5
+      top_k: 20
     # fusion strategy includes `normal_add` and `rrf`
     # `normal_add` performs normalization before addition of faiss score and bm25 score
     # while `rrf` (Ranked Relevance Fusion) combines scores based on their rank
@@ -29,6 +32,7 @@ rag:
     rrf:
       # A smoothing constant
       k: 60
+    query_driven: true
   
   text_splitter:
     split_by: token
@@ -51,18 +55,13 @@ rag:
 
   code_understanding:
     provider: dashscope
-    model: qwen3-8b
+    model: qwen3-4b
     api_key: ""
     base_url: ""
     batch_size: 10
     model_kwargs:
       temperature: 0.7
       top_p: 0.8
-
-  # Query-driven configuration
-  query_driven:
-    enabled: true
-    top_k: 100
 
   # After retrieving a document, the number of adjacent documents to consider
   # For instance, if the count is 1, then consider the retrieved doc, the doc before the retrieved doc, and the doc after the retrieved doc

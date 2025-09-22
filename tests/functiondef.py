@@ -2,7 +2,7 @@
 Function Call
 """
 from ragalyze import *
-from ragalyze.prompts import GET_FUNCTION_IMPLEMENTATION_TEMPLATE
+from ragalyze.prompts import FETCH_FUNC_IMPLEMENTATION_TEMPLATE
 
 repo_path = "/Users/mac/repo/solidity"
 # repo_path = "/home/lyr/solidity"
@@ -20,14 +20,14 @@ dict_config.rag.query_driven.top_k = 30
 # 排序策略
 dict_config.rag.retriever.fusion = "normal_add"
 
-dict_config.rag.embedder.force_embedding = True
+dict_config.rag.recreate_db = True
 
 set_global_configs(dict_config)
 
 bm25_keywords = "[FUNC]builtin [FUNC]EVMDialect::builtin"
 faiss_query = ""
 # question = FIND_FUNCTION_CALL_TEMPLATE.call(function_name="EVMDialect::builtin")
-question = GET_FUNCTION_IMPLEMENTATION_TEMPLATE.call(
+question = FETCH_FUNC_IMPLEMENTATION_TEMPLATE.call(
     function_name="EVMDialect::builtin"
 )
 

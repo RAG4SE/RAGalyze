@@ -1,3 +1,7 @@
+"""
+This file implements the embedding transformer for the RAG system.
+Given a Document instance, it will return a Document instance with the embedding vector filled in.
+"""
 from typing import List, Literal
 from copy import deepcopy
 from tqdm import tqdm

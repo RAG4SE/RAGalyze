@@ -1,12 +1,11 @@
 import os
-from typing import List, Optional, Tuple, Union, Literal
+from typing import List, Optional, Tuple, Union, Literal, Any
 import glob
-import re
 import fnmatch
 import pickle
 import asyncio
 import aiofiles
-from functools import partial
+from tqdm import tqdm
 
 import adalflow as adal
 from adalflow.core.types import Document, List
@@ -15,11 +14,15 @@ from adalflow.core.db import LocalDB
 
 from ragalyze.rag.splitter import MyTextSplitter
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
-from ragalyze.rag.transformer_registry import create_embedder_transformer
+from ragalyze.rag.transformer_registry import (
+    create_embedder_transformer,
+    create_splitter_transformer,
+    create_bm25_transformer,
+)
 from ragalyze.core.types import DualVectorDocument
-from ragalyze.rag.code_understanding import CodeUnderstandingGenerator
 from ragalyze.rag.dynamic_splitter_transformer import DynamicSplitterTransformer
 from ragalyze.configs import get_batch_embedder, configs
+from ragalyze.rag.bm25_transformer import BM25Transformer
 
 # The setting is from the observation that the maximum length of Solidity compiler's files is 919974
 MAX_EMBEDDING_LENGTH = 1000000
@@ -31,189 +34,153 @@ logger = get_tqdm_compatible_logger(__name__)
 def get_programming_language(file_extension: str) -> str:
     """
     Determine the programming language based on file extension.
-    
+
     Args:
         file_extension: The file extension (e.g., '.py', '.js', '.md')
-        
+
     Returns:
         str: The programming language name or 'documentation' for non-code files
     """
     extension_to_language = {
         # Python
-        '.py': 'python',
-        '.pyi': 'python',
-        
+        ".py": "python",
+        ".pyi": "python",
         # JavaScript/TypeScript
-        '.js': 'javascript',
-        '.jsx': 'javascript',
-        '.ts': 'typescript',
-        '.tsx': 'typescript',
-        
+        ".js": "javascript",
+        ".jsx": "javascript",
+        ".ts": "typescript",
+        ".tsx": "typescript",
         # Java
-        '.java': 'java',
-        
+        ".java": "java",
         # C/C++
-        '.c': 'c',
-        '.h': 'c',
-        '.cpp': 'cpp',
-        '.hpp': 'cpp',
-        '.cc': 'cpp',
-        '.cxx': 'cpp',
-        
+        ".c": "c",
+        ".h": "c",
+        ".cpp": "cpp",
+        ".hpp": "cpp",
+        ".cc": "cpp",
+        ".cxx": "cpp",
         # Go
-        '.go': 'go',
-        
+        ".go": "go",
         # Rust
-        '.rs': 'rust',
-        
+        ".rs": "rust",
         # Web
-        '.html': 'html',
-        '.css': 'css',
-        '.php': 'php',
-        
+        ".html": "html",
+        ".css": "css",
+        ".php": "php",
         # Swift
-        '.swift': 'swift',
-        
+        ".swift": "swift",
         # C#
-        '.cs': 'csharp',
-        
+        ".cs": "csharp",
         # Solidity
-        '.sol': 'solidity',
-        
+        ".sol": "solidity",
         # OCaml
-        '.ml': 'ocaml',
-        '.mli': 'ocaml',
-        
+        ".ml": "ocaml",
+        ".mli": "ocaml",
         # Haskell
-        '.hs': 'haskell',
-        '.lhs': 'haskell',
-        
+        ".hs": "haskell",
+        ".lhs": "haskell",
         # F#
-        '.fs': 'fsharp',
-        '.fsi': 'fsharp',
-        '.fsx': 'fsharp',
-        
+        ".fs": "fsharp",
+        ".fsi": "fsharp",
+        ".fsx": "fsharp",
         # Erlang
-        '.erl': 'erlang',
-        '.hrl': 'erlang',
-        
+        ".erl": "erlang",
+        ".hrl": "erlang",
         # Elixir
-        '.ex': 'elixir',
-        '.exs': 'elixir',
-        
+        ".ex": "elixir",
+        ".exs": "elixir",
         # Clojure
-        '.clj': 'clojure',
-        '.cljs': 'clojure',
-        '.cljc': 'clojure',
-        
+        ".clj": "clojure",
+        ".cljs": "clojure",
+        ".cljc": "clojure",
         # Scheme/Lisp
-        '.scm': 'scheme',
-        '.ss': 'scheme',
-        '.lisp': 'lisp',
-        '.lsp': 'lisp',
-        
+        ".scm": "scheme",
+        ".ss": "scheme",
+        ".lisp": "lisp",
+        ".lsp": "lisp",
         # Elm
-        '.elm': 'elm',
-        
+        ".elm": "elm",
         # Ruby
-        '.rb': 'ruby',
-        
+        ".rb": "ruby",
         # Perl
-        '.pl': 'perl',
-        '.pm': 'perl',
-        
+        ".pl": "perl",
+        ".pm": "perl",
         # Scala
-        '.scala': 'scala',
-        '.sc': 'scala',
-        
+        ".scala": "scala",
+        ".sc": "scala",
         # Kotlin
-        '.kt': 'kotlin',
-        '.kts': 'kotlin',
-        
+        ".kt": "kotlin",
+        ".kts": "kotlin",
         # Dart
-        '.dart': 'dart',
-        
+        ".dart": "dart",
         # Lua
-        '.lua': 'lua',
-        
+        ".lua": "lua",
         # R
-        '.r': 'r',
-        '.R': 'r',
-        
+        ".r": "r",
+        ".R": "r",
         # Objective-C
-        '.m': 'objectivec',
-        
+        ".m": "objectivec",
         # Julia
-        '.jl': 'julia',
-        
+        ".jl": "julia",
         # Nim
-        '.nim': 'nim',
-        
+        ".nim": "nim",
         # Crystal
-        '.cr': 'crystal',
-        
+        ".cr": "crystal",
         # Zig
-        '.zig': 'zig',
-        
+        ".zig": "zig",
         # V
-        '.v': 'vlang',
-        
+        ".v": "vlang",
         # SystemVerilog/Verilog
-        '.sv': 'systemverilog',
-        '.vhd': 'vhdl',
-        '.vhdl': 'vhdl',
-        
+        ".sv": "systemverilog",
+        ".vhd": "vhdl",
+        ".vhdl": "vhdl",
         # Assembly
-        '.s': 'assembly',
-        '.S': 'assembly',
-        '.asm': 'assembly',
-        
+        ".s": "assembly",
+        ".S": "assembly",
+        ".asm": "assembly",
         # Shell scripts
-        '.sh': 'shell',
-        '.bash': 'shell',
-        '.zsh': 'shell',
-        '.fish': 'shell',
-        '.ps1': 'shell',
-        '.psm1': 'shell',
-        '.bat': 'shell',
-        '.cmd': 'shell',
-        
+        ".sh": "shell",
+        ".bash": "shell",
+        ".zsh": "shell",
+        ".fish": "shell",
+        ".ps1": "shell",
+        ".psm1": "shell",
+        ".bat": "shell",
+        ".cmd": "shell",
         # Configuration files
-        '.toml': 'ini',
-        '.ini': 'ini',
-        '.cfg': 'ini',
-        '.conf': 'ini',
-        '.xaml': 'ini',
-        '.proto': 'ini',
-        '.graphql': 'ini',
-        '.gql': 'ini',
-        '.sql': 'ini',
-        
+        ".toml": "ini",
+        ".ini": "ini",
+        ".cfg": "ini",
+        ".conf": "ini",
+        ".xaml": "ini",
+        ".proto": "ini",
+        ".graphql": "ini",
+        ".gql": "ini",
+        ".sql": "ini",
         # Build systems
-        '.mk': 'makefile',
-        '.cmake': 'makefile',
-        '.gradle': 'makefile',
-        '.sbt': 'makefile',
-        '.bazel': 'makefile',
-        '.bzl': 'makefile',
-        
+        ".mk": "makefile",
+        ".cmake": "makefile",
+        ".gradle": "makefile",
+        ".sbt": "makefile",
+        ".bazel": "makefile",
+        ".bzl": "makefile",
         # Documentation and data formats
-        '.md': 'documentation',
-        '.markdown': 'documentation',
-        '.mdown': 'documentation',
-        '.mkd': 'documentation',
-        '.mkdn': 'documentation',
-        '.rst': 'documentation',
-        '.txt': 'documentation',
-        '.json': 'documentation',
-        '.jsonl': 'documentation',
-        '.yaml': 'documentation',
-        '.yml': 'documentation',
+        ".md": "documentation",
+        ".markdown": "documentation",
+        ".mdown": "documentation",
+        ".mkd": "documentation",
+        ".mkdn": "documentation",
+        ".rst": "documentation",
+        ".txt": "documentation",
+        ".json": "documentation",
+        ".jsonl": "documentation",
+        ".yaml": "documentation",
+        ".yml": "documentation",
         # A special case for mybatis framework, xml is actually code
-        '.xml': 'xml',
+        ".xml": "documentation",
     }
-    
-    return extension_to_language.get(file_extension.lower(), 'unknown')
+
+    return extension_to_language.get(file_extension.lower(), "unknown")
 
 
 async def safe_read_file_async(file_path: str) -> Tuple[Optional[str], str]:
@@ -244,7 +211,7 @@ async def safe_read_file_async(file_path: str) -> Tuple[Optional[str], str]:
                 b"\x89PNG",  # PNG
                 b"GIF8",  # GIF
                 b"%PDF",  # PDF
-                b"\x50\x4B",  # ZIP/JAR/etc
+                b"\x50\x4b",  # ZIP/JAR/etc
                 b"\x7fELF",  # ELF executable
                 b"MZ",  # DOS/Windows executable
             ]
@@ -304,7 +271,9 @@ async def safe_read_file_async(file_path: str) -> Tuple[Optional[str], str]:
     # Try each encoding
     for encoding in encodings_to_try:
         try:
-            async with aiofiles.open(file_path, "r", encoding=encoding, errors="strict") as f:
+            async with aiofiles.open(
+                file_path, "r", encoding=encoding, errors="strict"
+            ) as f:
                 content = await f.read()
 
                 # Additional validation for the content
@@ -328,7 +297,9 @@ async def safe_read_file_async(file_path: str) -> Tuple[Optional[str], str]:
 
     # If all encodings failed, try one more time with errors='replace'
     try:
-        async with aiofiles.open(file_path, "r", encoding="utf-8", errors="replace") as f:
+        async with aiofiles.open(
+            file_path, "r", encoding="utf-8", errors="replace"
+        ) as f:
             content = await f.read()
             if content.strip():
                 logger.warning(
@@ -348,6 +319,7 @@ def safe_read_file(file_path: str) -> Tuple[Optional[str], str]:
         if loop.is_running():
             # If we're already in an event loop, run in a thread
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, safe_read_file_async(file_path))
                 return future.result()
@@ -369,8 +341,14 @@ def _safe_read_file_sync(file_path: str) -> Tuple[Optional[str], str]:
                 return None, "empty_file"
 
             binary_signatures = [
-                b"\x00", b"\xff\xd8\xff", b"\x89PNG", b"GIF8", b"%PDF", 
-                b"\x50\x4B", b"\x7fELF", b"MZ"
+                b"\x00",
+                b"\xff\xd8\xff",
+                b"\x89PNG",
+                b"GIF8",
+                b"%PDF",
+                b"\x50\x4b",
+                b"\x7fELF",
+                b"MZ",
             ]
 
             if b"\x00" in chunk:
@@ -381,7 +359,8 @@ def _safe_read_file_sync(file_path: str) -> Tuple[Optional[str], str]:
                     return None, f"binary_file_signature_{sig.hex()}"
 
             printable_chars = sum(
-                1 for byte in chunk
+                1
+                for byte in chunk
                 if 32 <= byte <= 126 or byte in [9, 10, 13] or byte >= 128
             )
             if len(chunk) > 0 and printable_chars / len(chunk) < 0.7:
@@ -391,19 +370,20 @@ def _safe_read_file_sync(file_path: str) -> Tuple[Optional[str], str]:
         logger.error(f"File access error for {file_path}: {e}")
         raise
 
-    encodings_to_try = [
-        "utf-8", "utf-8-sig", "latin1", "cp1252", "iso-8859-1", "ascii"
-    ]
+    encodings_to_try = ["utf-8", "utf-8-sig", "latin1", "cp1252", "iso-8859-1", "ascii"]
 
     try:
         import chardet
+
         try:
             with open(file_path, "rb") as f:
                 raw_data = f.read()
                 detected = chardet.detect(raw_data)
                 if detected["encoding"] and detected["confidence"] > 0.7:
                     detected_encoding = detected["encoding"].lower()
-                    if detected_encoding not in [enc.lower() for enc in encodings_to_try]:
+                    if detected_encoding not in [
+                        enc.lower() for enc in encodings_to_try
+                    ]:
                         encodings_to_try.insert(0, detected["encoding"])
         except Exception:
             pass
@@ -417,7 +397,9 @@ def _safe_read_file_sync(file_path: str) -> Tuple[Optional[str], str]:
                 if not content.strip():
                     return None, "empty_content"
                 if encoding != "utf-8":
-                    logger.debug(f"Successfully read {file_path} with {encoding} encoding")
+                    logger.debug(
+                        f"Successfully read {file_path} with {encoding} encoding"
+                    )
                 return content, f"success_{encoding}"
         except UnicodeDecodeError as e:
             logger.debug(f"Failed to read {file_path} with {encoding}: {e}")
@@ -459,7 +441,9 @@ async def read_all_documents_async(path: str, max_concurrent: int = 50):
     code_extensions = configs()["repo"]["file_extensions"]["code_extensions"]
     doc_extensions = configs()["repo"]["file_extensions"]["doc_extensions"]
 
-    logger.info(f"Reading documents from {path} with {max_concurrent} concurrent coroutines")
+    logger.info(
+        f"Reading documents from {path} with {max_concurrent} concurrent coroutines"
+    )
 
     def should_process_file(
         file_path: str,
@@ -493,7 +477,9 @@ async def read_all_documents_async(path: str, max_concurrent: int = 50):
 
         return True
 
-    async def process_file_async(file_path: str, path: str, is_code: bool) -> Optional[Document]:
+    async def process_file_async(
+        file_path: str, path: str, is_code: bool
+    ) -> Optional[Document]:
         """Process a single file asynchronously and return Document object or None if skipped."""
         # Check if file should be processed based on inclusion/exclusion rules
         if not should_process_file(file_path, excluded_patterns):
@@ -529,10 +515,16 @@ async def read_all_documents_async(path: str, max_concurrent: int = 50):
         try:
             ext = os.path.splitext(relative_path)[1]
             programming_language = get_programming_language(ext)
-            
+
             # Determine if this is actually code based on the programming language
-            is_actually_code = programming_language not in ['documentation', 'ini', 'makefile', 'shell', 'unknown']
-            
+            is_actually_code = programming_language not in [
+                "documentation",
+                "ini",
+                "makefile",
+                "shell",
+                "unknown",
+            ]
+
             if is_code and is_actually_code:
                 # Determine if this is an implementation file
                 is_implementation = (
@@ -541,7 +533,7 @@ async def read_all_documents_async(path: str, max_concurrent: int = 50):
                     and not relative_path.startswith("build")
                     and "test" not in relative_path.lower()
                 )
-                
+
                 return Document(
                     text=content,
                     meta_data={
@@ -574,13 +566,13 @@ async def read_all_documents_async(path: str, max_concurrent: int = 50):
 
     # Collect all files to process
     all_files = []
-    
+
     # Process code files
     for ext in set(code_extensions):
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
         for file_path in files:
             all_files.append((file_path, True))  # True indicates code file
-    
+
     # Process documentation files
     for ext in set(doc_extensions):
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
@@ -591,8 +583,10 @@ async def read_all_documents_async(path: str, max_concurrent: int = 50):
 
     # Process files concurrently with asyncio
     semaphore = asyncio.Semaphore(max_concurrent)
-    
-    async def process_with_semaphore(file_path: str, path: str, is_code: bool) -> Optional[Document]:
+
+    async def process_with_semaphore(
+        file_path: str, path: str, is_code: bool
+    ) -> Optional[Document]:
         async with semaphore:
             return await process_file_async(file_path, path, is_code)
 
@@ -601,10 +595,10 @@ async def read_all_documents_async(path: str, max_concurrent: int = 50):
         process_with_semaphore(file_path, path, is_code)
         for file_path, is_code in all_files
     ]
-    
+
     # Wait for all tasks to complete and collect results
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     documents = []
     for i, result in enumerate(results):
         file_path, _ = all_files[i]
@@ -620,11 +614,11 @@ async def read_all_documents_async(path: str, max_concurrent: int = 50):
 def read_all_documents(path: str, max_concurrent: int = 50):
     """
     Synchronous wrapper for read_all_documents_async for backward compatibility.
-    
+
     Args:
         path (str): The root directory path.
         max_concurrent (int): Maximum number of concurrent coroutines for file processing.
-    
+
     Returns:
         list: A list of Document objects with metadata.
     """
@@ -648,19 +642,23 @@ def _read_all_documents_sync(path: str, max_workers: int = 8):
     code_extensions = configs()["repo"]["file_extensions"]["code_extensions"]
     doc_extensions = configs()["repo"]["file_extensions"]["doc_extensions"]
 
-    logger.info(f"Reading documents from {path} (sync fallback with {max_workers} workers)")
+    logger.info(
+        f"Reading documents from {path} (sync fallback with {max_workers} workers)"
+    )
 
     def should_process_file(file_path: str, excluded_patterns: List[str]) -> bool:
         normalized_path = os.path.normpath(file_path).replace("\\", "/")
+
         def matches_pattern(text: str, pattern: str) -> bool:
             return fnmatch.fnmatch(text, pattern)
+
         for excluded_pattern in excluded_patterns:
             if matches_pattern(normalized_path, excluded_pattern):
                 return False
         return True
 
     documents = []
-    
+
     # Process code files
     for ext in set(code_extensions):
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
@@ -683,15 +681,21 @@ def _read_all_documents_sync(path: str, max_workers: int = 8):
             if len(content) > MAX_EMBEDDING_LENGTH:
                 logger.warning(f"Skipping large file {relative_path}: exceeds limit")
                 continue
-            
+
             ext = os.path.splitext(relative_path)[1]
             programming_language = get_programming_language(ext)
-            
+
             # Determine if this is actually code based on the programming language
             # xml is not actually code, but java can be used with xml in mybatis framework,
             # so we need to count xml as code
-            is_actually_code = programming_language not in ['documentation', 'text', 'json', 'yaml', 'unknown']
-            
+            is_actually_code = programming_language not in [
+                "documentation",
+                "text",
+                "json",
+                "yaml",
+                "unknown",
+            ]
+
             if is_actually_code:
                 # Determine if this is an implementation file
                 is_implementation = (
@@ -700,7 +704,7 @@ def _read_all_documents_sync(path: str, max_workers: int = 8):
                     and not relative_path.startswith("build")
                     and "test" not in relative_path.lower()
                 )
-                
+
                 doc = Document(
                     text=content,
                     meta_data={
@@ -753,7 +757,7 @@ def _read_all_documents_sync(path: str, max_workers: int = 8):
                 continue
             ext = os.path.splitext(relative_path)[1]
             programming_language = get_programming_language(ext)
-            
+
             doc = Document(
                 text=content,
                 meta_data={
@@ -771,93 +775,48 @@ def _read_all_documents_sync(path: str, max_workers: int = 8):
     logger.info(f"Found {len(documents)} files to be processed")
     return documents
 
-
-def prepare_data_transformer(
-    mode: Literal[
-        "only_splitter", "only_embedder", "splitter_and_embedder"
-    ] = "splitter_and_embedder"
-) -> adal.Sequential:
+class DB(LocalDB):
     """
-    Creates and returns the data transformation pipeline.
-    Uses dynamic splitter that automatically selects appropriate splitter
-    (code_splitter or natural_language_splitter) based on document type.
-
-    Returns:
-        adal.Sequential: The data transformation pipeline
+    Database class that inherits from LocalDB.
     """
-    use_dual_vector = configs()["rag"]["embedder"]["sketch_filling"]
-    code_understanding_config = configs()["rag"]["code_understanding"]
 
-    if mode != "only_embedder":
-        if configs()["rag"]["dynamic_splitter"]["enabled"]:
-            # Use dynamic splitter that automatically selects appropriate splitter
-            splitter = DynamicSplitterTransformer(
-                batch_size=configs()["rag"]["dynamic_splitter"]["batch_size"],
-                parallel=configs()["rag"]["dynamic_splitter"]["parallel"],
-            )
+    def add(
+        self,
+        item: Any,
+        index: Optional[int] = None,
+        apply_transformer: bool = True,
+        transformer_key: Optional[str] = None,
+    ):
+        """Add a single item by index or append to the end. Optionally apply the transformer.
+
+        .. note::
+            The item will be transformed using the registered transformer.
+            Only if the transformed data keeps the same length as the original data, the ``insert`` operation will work correctly.
+
+        Args:
+            item (Any): The item to add.
+            index (int, optional): The index to add the item at. Defaults to None.
+            When None, the item is appended to the end.
+            apply_transformer (bool, optional): Whether to apply the transformer to the item. Defaults to True.
+            transformer_key (str, optional): The key of the transformer to apply. Defaults to None.
+        """
+        if transformer_key is None:
+            super().add(item, index, apply_transformer)
         else:
-            text_splitter_kwargs = configs()["rag"]["text_splitter"]
-            if configs()["rag"]["adjacent_documents"]["enabled"]:
-                text_splitter_kwargs["chunk_overlap"] = False
-            splitter = MyTextSplitter(
-                enable_line_number=configs()["generator"]["enable_line_number"],
-                **text_splitter_kwargs,
-            )
 
-        if mode == "only_splitter":
-            return adal.Sequential(splitter)
+            if index is not None:
+                self.items.insert(index, item)
+            else:
+                self.items.append(item)
 
-    embedder = get_batch_embedder()
-
-    # Create code understanding generator (required for dual vector mode)
-    code_understanding_generator = None
-    if use_dual_vector:
-        code_understanding_generator = CodeUnderstandingGenerator(
-            **code_understanding_config
-        )
-
-    # Use registry pattern to create appropriate embedder transformer
-    embedder_transformer = create_embedder_transformer(
-        embedder=embedder,
-        use_dual_vector=use_dual_vector,
-        code_understanding_generator=code_understanding_generator,
-    )
-
-    if mode == "splitter_and_embedder":
-        data_transformer = adal.Sequential(splitter, embedder_transformer)
-    elif mode == "only_embedder":
-        data_transformer = adal.Sequential(embedder_transformer)
-
-    return data_transformer
-
-
-def transform_documents_and_save_to_db(
-    documents: List[Document],
-    db_path: str,
-) -> LocalDB:
-    """
-    Transforms a list of documents and saves them to a local database.
-
-    Args:
-        documents (list): A list of `Document` objects.
-        db_path (str): The path to the local database file.
-
-    Returns:
-        LocalDB: The local database instance.
-    """
-    data_transformer = prepare_data_transformer(mode="splitter_and_embedder")
-
-    # Save the documents to a local database
-    db = LocalDB()
-    # Build a relation from the key to the data transformer, required by adalflow.core.db
-    db.register_transformer(transformer=data_transformer, key=os.path.basename(db_path))
-    db.load(documents)
-    # Suppose the data transformer is HuggingfaceClientToEmbeddings, then
-    # this function will call the HuggingfaceClientToEmbeddings.__call__ function
-    db.transform(key=os.path.basename(db_path))
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    db.save_state(filepath=db_path)
-    return db
+            if apply_transformer:
+                transformed_docs = self.transformer_setups[transformer_key](item)
+                if index is not None:
+                    for doc in transformed_docs:
+                        self.transformed_items[transformer_key].insert(index, doc)
+                else:
+                    for doc in transformed_docs:
+                        self.transformed_items[transformer_key].append(doc)
 
 
 class DatabaseManager:
@@ -865,49 +824,19 @@ class DatabaseManager:
     Manages the creation, loading, transformation, and persistence of LocalDB instances.
     """
 
-    def __init__(self, repo_path: str):
+    def __init__(self):
         self.db = None
-        self.db_info = None
-        self.repo_path = repo_path
 
-        assert "rag" in configs(), "configs() must contain rag section"
         rag_config = configs()["rag"]
-        assert "embedder" in rag_config, "rag_config must contain embedder section"
-        assert (
-            "sketch_filling" in rag_config["embedder"]
-        ), "rag_config must contain sketch_filling section"
         self.use_dual_vector = rag_config["embedder"]["sketch_filling"]
+        self.query_driven = rag_config["retriever"]["query_driven"]
+        self.dynamic_splitter = rag_config["dynamic_splitter"]["enabled"]
+        self.repo_path = configs()["repo_path"]
+        self.cache_file_path = self._prepare_cache_file_path()
 
-        # Query-driven specific attributes
-        self.query_driven = rag_config.get("query_driven", {}).get("enabled", False)
-
-        self.dynamic_splitter = rag_config.get("dynamic_splitter", {}).get(
-            "enabled", False
-        )
-
-    def _create_db_info(self) -> None:
-        logger.info(f"Preparing repo storage for {self.repo_path}...")
-
-        root_path = get_adalflow_default_root_path()
-
-        os.makedirs(root_path, exist_ok=True)
-
-        save_db_file = os.path.join(
-            root_path, "databases", f"{self._prepare_embedding_cache_file_name()}.pkl"
-        )
-
-        os.makedirs(os.path.dirname(save_db_file), exist_ok=True)
-
-        self.db_info = {
-            "repo_path": self.repo_path,
-            "db_file_path": save_db_file,
-        }
-        logger.info(f"DB info: {self.db_info}")
-
-    def _prepare_embedding_cache_file_name(self):
+    def _prepare_cache_file_path(self):
         # Extract repository name from path
-        repo_name = os.path.abspath(self.repo_path.rstrip("/"))
-        file_name = repo_name
+        file_name = os.path.abspath(os.path.expanduser(self.repo_path.rstrip("/")))
         if self.use_dual_vector:
             file_name += "-dual-vector"
         if self.query_driven:
@@ -918,102 +847,68 @@ class DatabaseManager:
         embedding_provider = configs()["rag"]["embedder"]["provider"]
         embedding_model = configs()["rag"]["embedder"]["model"]
         file_name += f"-{embedding_provider}-{embedding_model}".replace("/", "#")
-        return file_name
+        file_path = os.path.join(
+            get_adalflow_default_root_path(), "ragalyze_cache", file_name + ".pkl"
+        )
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        return file_path
 
-    def prepare_database(self) -> List[Union[Document, DualVectorDocument]]:
-        """
-        Create a new database from the repository.
-
-        Returns:
-            List[Document]: List of Document objects
-        """
-        self._create_db_info()
-        return self.prepare_db_index()
-
-    def prepare_db_index(self) -> List[Union[Document, DualVectorDocument]]:
+    def prepare_db(self) -> List[Union[Document, DualVectorDocument]]:
         """
         Prepare the indexed database for the repository.
-
-        Returns:
-            List[Document]: List of Document objects
         """
-
-        force_recreate = configs()["rag"]["embedder"]["force_embedding"]
-
-        if not self.query_driven:
-            # check the database
-            if (
-                self.db_info
-                and os.path.exists(self.db_info["db_file_path"])
-                and not force_recreate
-            ):
-                logger.info("Loading existing database...")
-                self.db = LocalDB.load_state(self.db_info["db_file_path"])
-                documents = self.db.get_transformed_data(
-                    key=os.path.basename(self.db_info["db_file_path"])
-                )
-                if documents:
-                    logger.info(
-                        f"Loaded {len(documents)} documents from existing database"
-                    )
-                    return documents
-                else:
-                    logger.warning("No documents found in the existing database")
-                    return []
-            
-            cache_dir = os.path.expanduser(configs()["doc_cache_path"])
-            os.makedirs(cache_dir, exist_ok=True)
-            self.cache_file_path = os.path.join(
-                cache_dir, self.db_info["repo_path"].replace("/", "#") + ".pkl"
-            )
-            if not configs()["rag"]["embedder"]["force_embedding"] and os.path.exists(
-                self.cache_file_path
-            ):
-                logger.info(f"Loading documents from cache file {self.cache_file_path}")
-                documents = pickle.load(open(self.cache_file_path, "rb"))
-            else:
-                documents = read_all_documents(
-                    self.db_info["repo_path"],
-                )
-                pickle.dump(documents, open(self.cache_file_path, "wb"))
-
-            self.db = transform_documents_and_save_to_db(
-                documents, self.db_info["db_file_path"]
-            )
+        os.makedirs(os.path.dirname(self.cache_file_path), exist_ok=True)
+        # check the database
+        if os.path.exists(self.cache_file_path) and not configs()["rag"]["recreate_db"]:
+            logger.info("Loading existing database...")
+            self.db = DB.load_state(self.cache_file_path)
             documents = self.db.get_transformed_data(
-                key=os.path.basename(self.db_info["db_file_path"])
+                key=os.path.basename(self.cache_file_path)
             )
-            if isinstance(documents[0], Document):
-                id2doc = {doc.id: doc for doc in documents}
-            elif isinstance(documents[0], DualVectorDocument):
-                id2doc = {doc.original_doc.id: doc.original_doc for doc in documents}
+            if documents:
+                logger.info(f"Loaded {len(documents)} documents from existing database")
+                return documents
             else:
-                raise ValueError("documents must be a list of Document or DualVectorDocument")
-            pickle.dump(id2doc, open(self.cache_file_path + ".id2doc.pkl", "wb"))
-            # If query-driven, return the original documents directly
-            return documents
-
+                logger.warning("No documents found in the existing database")
+                return []
+        self.db = DB()
+        self.db.register_transformer(
+            transformer=create_splitter_transformer(), key="split"
+        )
+        self.db.register_transformer(
+            transformer=create_bm25_transformer(), key="bm25_index"
+        )
+        self.db.register_transformer(
+            transformer=create_embedder_transformer(), key="embed"
+        )
+        self.db.register_transformer(
+            transformer=adal.Sequential(
+                create_splitter_transformer(), create_bm25_transformer()
+            ),
+            key="split_bm25",
+        )
+        self.db.register_transformer(
+            transformer=adal.Sequential(
+                create_splitter_transformer(),
+                create_bm25_transformer(),
+                create_embedder_transformer(),
+            ),
+            key="split_bm25_embed",
+        )
+        documents = read_all_documents(
+            self.repo_path,
+        )
+        self.db.load(documents)
+        if not self.query_driven:
+            self.db.transform(key="split_bm25_embed")
+            transformed_documents = self.db.get_transformed_data(key="split_plus_bm25")
         else:
-            cache_dir = os.path.expanduser(configs()["doc_cache_path"])
-            os.makedirs(cache_dir, exist_ok=True)
-            self.cache_file_path = os.path.join(
-                cache_dir, self.db_info["repo_path"].replace("/", "#") + ".pkl"
-            )
-            if not configs()["rag"]["embedder"]["force_embedding"] and os.path.exists(
-                self.cache_file_path
-            ):
-                logger.info(f"Loading documents from cache file {self.cache_file_path}")
-                return pickle.load(open(self.cache_file_path, "rb"))
+            self.db.transform(key="split_bm25")
+            transformed_documents = self.db.get_transformed_data(key="split_bm25")
 
-            documents = read_all_documents(
-                self.db_info["repo_path"],
-            )
-            splitter = prepare_data_transformer(mode="only_splitter")
-            splitted_documents = splitter(documents)
-            id2doc = {doc.id: doc for doc in splitted_documents}
-            pickle.dump(splitted_documents, open(self.cache_file_path, "wb"))
-            pickle.dump(id2doc, open(self.cache_file_path + ".id2doc.pkl", "wb"))
-            return splitted_documents
+        self.db.save_state(filepath=self.cache_file_path)
+        id2doc = {doc.id: doc for doc in transformed_documents}
+        return transformed_documents, id2doc
 
     def update_database_with_documents(
         self, documents: List[Document]
@@ -1027,30 +922,9 @@ class DatabaseManager:
         Returns:
             List[Union[Document, DualVectorDocument]]: List of embedded documents
         """
-        if not documents:
-            return []
 
-        key = (
-            os.path.basename(self.db_info["db_file_path"])
-            if self.db_info
-            else "default"
-        )
-
-        # Ensure we have a database instance
-        if self.db is None:
-            # Try to load existing database first
-            if (
-                self.db_info
-                and os.path.exists(self.db_info["db_file_path"])
-                and not configs()["rag"]["embedder"]["force_embedding"]
-            ):
-                logger.info("Loading existing database...")
-                self.db = LocalDB.load_state(self.db_info["db_file_path"])
-            else:
-                # Create new database if none exists
-                logger.info("Creating new database...")
-                self.db = LocalDB()
-                self.db.transformed_items[key] = []
+        if not self.db:
+            raise ValueError("Database is not initialized")
 
         # Add documents to database
         # Only add documents that are not already in the database
@@ -1077,7 +951,7 @@ class DatabaseManager:
 
         cached_embedded_documents = [
             doc
-            for doc in self.db.transformed_items[key]
+            for doc in self.db.transformed_items["split_bm25_embed"]
             if (hasattr(doc, "id") and doc.id in document_ids)
             or (
                 hasattr(doc, "original_doc")
@@ -1086,39 +960,15 @@ class DatabaseManager:
             )
         ]
 
-        new_embedded_documents = []
-
-        if len(new_documents) > 0:
-            embedder = prepare_data_transformer(mode="only_embedder")
-            new_embedded_documents = embedder(new_documents)
-            self.db.transformed_items[key] = (
-                self.db.transformed_items[key] + new_embedded_documents
-            )
-            self.db.items = self.db.items + new_documents
+        for doc in new_documents:
+            self.db.add(doc, transformer_key="split_bm25_embed")
 
         logger.info(
-            f"Updated database with {len(new_embedded_documents)} new documents and {len(cached_embedded_documents)} cached documents"
+            f"Updated database with {len(new_documents)} new documents and {len(cached_embedded_documents)} cached documents"
         )
 
         # Save the updated database
-        if self.db_info and self.db_info.get("db_file_path"):
-            self.db.save_state(filepath=self.db_info["db_file_path"])
-            logger.info(f"Database updated and saved to {self.db_info['db_file_path']}")
-        return new_embedded_documents + cached_embedded_documents
-
-    def get_embedded_documents(self) -> List[Union[Document, DualVectorDocument]]:
-        """
-        Get all embedded documents from the database.
-
-        Returns:
-            List[Union[Document, DualVectorDocument]]: List of embedded documents
-        """
-        if self.db is None:
-            return []
-
-        key = (
-            os.path.basename(self.db_info["db_file_path"])
-            if self.db_info
-            else "default"
-        )
-        return self.db.get_transformed_data(key=key)
+        if self.cache_file_path:
+            self.db.save_state(filepath=self.cache_file_path)
+            logger.info(f"Database updated and saved to {self.cache_file_path}")
+        return self.db.get_transformed_data(key="split_bm25_embed")

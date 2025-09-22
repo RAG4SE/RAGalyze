@@ -7,11 +7,10 @@ replacing the original if-else judgment logic.
 
 from typing import Dict, Type, Callable, Any, Optional
 from abc import ABC, abstractmethod
-import inspect
 
 import adalflow as adal
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
-from ragalyze.rag.embedding import (
+from ragalyze.rag.embedding_transformer import (
     ToEmbeddings,
     DashScopeToEmbeddings,
     HuggingfaceToEmbeddings,
@@ -19,11 +18,15 @@ from ragalyze.rag.embedding import (
     DualVectorToEmbeddings,
 )
 from ragalyze.rag.code_understanding import CodeUnderstandingGenerator
+from ragalyze.configs import get_batch_embedder, configs
+from ragalyze.rag.dynamic_splitter_transformer import DynamicSplitterTransformer
+from ragalyze.rag.splitter import MyTextSplitter
+from ragalyze.rag.bm25_transformer import BM25Transformer
 
 logger = get_tqdm_compatible_logger(__name__)
 
 
-class TransformerFactory(ABC):
+class EmbedderTransformerFactory(ABC):
     """Abstract base class for transformer factories"""
 
     @abstractmethod
@@ -41,7 +44,7 @@ class TransformerFactory(ABC):
         pass
 
 
-class DualVectorTransformerFactory(TransformerFactory):
+class DualVectorEmbedderFactory(EmbedderTransformerFactory):
     """Factory for dual-vector transformers"""
 
     def create_transformer(
@@ -63,7 +66,7 @@ class DualVectorTransformerFactory(TransformerFactory):
         return kwargs.get("use_dual_vector", False)
 
 
-class HuggingfaceTransformerFactory(TransformerFactory):
+class HuggingfaceEmbedderFactory(EmbedderTransformerFactory):
     """Factory for HuggingFace transformers"""
 
     def create_transformer(
@@ -83,7 +86,7 @@ class HuggingfaceTransformerFactory(TransformerFactory):
         ]
 
 
-class DashScopeTransformerFactory(TransformerFactory):
+class DashScopeEmbedderFactory(EmbedderTransformerFactory):
     """Factory for DashScope transformers"""
 
     def create_transformer(
@@ -100,7 +103,7 @@ class DashScopeTransformerFactory(TransformerFactory):
         return embedder_class_name in ["DashScopeBatchEmbedder", "DashScopeEmbedder"]
 
 
-class OpenAITransformerFactory(TransformerFactory):
+class OpenAIEmbedderFactory(EmbedderTransformerFactory):
     """Factory for OpenAI transformers"""
 
     def create_transformer(
@@ -116,7 +119,7 @@ class OpenAITransformerFactory(TransformerFactory):
         embedder_class_name = embedder.__class__.__name__
         return embedder_class_name in ["OpenAIBatchEmbedder", "OpenAIEmbedder"]
 
-class LocalServerTransformerFactory(TransformerFactory):
+class LocalServerEmbedderFactory(EmbedderTransformerFactory):
     """Factory for OpenAI transformers"""
 
     def create_transformer(
@@ -133,7 +136,7 @@ class LocalServerTransformerFactory(TransformerFactory):
         return embedder_class_name in ["LocalServerBatchEmbedder", "LocalServerEmbedder"]
 
 
-class TransformerRegistry:
+class EmbedderTransformerRegistry:
     """
     Transformer Registry
 
@@ -141,22 +144,22 @@ class TransformerRegistry:
     """
 
     def __init__(self):
-        self._factories: list[TransformerFactory] = []
+        self._factories: list[EmbedderTransformerFactory] = []
         self._register_default_factories()
 
     def _register_default_factories(self):
         """Register default factory classes"""
         # Note: DualVector factory has the highest priority as it may override other conditions
-        self.register_factory(DualVectorTransformerFactory())
-        self.register_factory(HuggingfaceTransformerFactory())
-        self.register_factory(DashScopeTransformerFactory())
-        self.register_factory(OpenAITransformerFactory())
-        self.register_factory(LocalServerTransformerFactory())
+        self.register_factory(DualVectorEmbedderFactory())
+        self.register_factory(HuggingfaceEmbedderFactory())
+        self.register_factory(DashScopeEmbedderFactory())
+        self.register_factory(OpenAIEmbedderFactory())
+        self.register_factory(LocalServerEmbedderFactory())
 
-    def register_factory(self, factory: TransformerFactory):
+    def register_factory(self, factory: EmbedderTransformerFactory):
         """Register a new factory"""
-        if not isinstance(factory, TransformerFactory):
-            raise TypeError("Factory must be an instance of TransformerFactory")
+        if not isinstance(factory, EmbedderTransformerFactory):
+            raise TypeError("Factory must be an instance of EmbedderTransformerFactory")
         self._factories.append(factory)
         logger.debug(f"Registered transformer factory: {factory.__class__.__name__}")
 
@@ -192,19 +195,15 @@ class TransformerRegistry:
 
 
 # Global registry instance
-_global_registry = TransformerRegistry()
+_global_registry = EmbedderTransformerRegistry()
 
 
-def get_transformer_registry() -> TransformerRegistry:
+def get_transformer_registry() -> EmbedderTransformerRegistry:
     """Get the global transformer registry"""
     return _global_registry
 
 
-def create_embedder_transformer(
-    embedder: adal.Embedder | adal.BatchEmbedder,
-    use_dual_vector: bool = False,
-    code_understanding_generator: Optional[CodeUnderstandingGenerator] = None,
-) -> ToEmbeddings:
+def create_embedder_transformer() -> ToEmbeddings:
     """
     Convenience function: create an appropriate embedder transformer
 
@@ -217,8 +216,33 @@ def create_embedder_transformer(
         ToEmbeddings: appropriate transformer instance
     """
     registry = get_transformer_registry()
+    code_understanding_generator = None
+    if configs()["rag"]["embedder"]["sketch_filling"]:
+        code_understanding_generator = CodeUnderstandingGenerator(
+            **configs()["rag"]["code_understanding"]
+        )
     return registry.create_transformer(
-        embedder=embedder,
-        use_dual_vector=use_dual_vector,
+        embedder=get_batch_embedder(),
+        use_dual_vector=configs()["rag"]["embedder"]["sketch_filling"],
         code_understanding_generator=code_understanding_generator,
     )
+
+def create_splitter_transformer():
+    if configs()["rag"]["dynamic_splitter"]["enabled"]:
+        # Use dynamic splitter that automatically selects appropriate splitter
+        splitter = DynamicSplitterTransformer(
+            batch_size=configs()["rag"]["dynamic_splitter"]["batch_size"],
+            parallel=configs()["rag"]["dynamic_splitter"]["parallel"],
+        )
+    else:
+        text_splitter_kwargs = configs()["rag"]["text_splitter"]
+        if configs()["rag"]["adjacent_documents"]["enabled"]:
+            text_splitter_kwargs["chunk_overlap"] = False
+        splitter = MyTextSplitter(
+            **text_splitter_kwargs,
+        )
+    return splitter
+
+
+def create_bm25_transformer():
+    return BM25Transformer()

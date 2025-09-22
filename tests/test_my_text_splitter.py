@@ -27,7 +27,6 @@ Line 4: This is the fifth line."""
     
     # Create splitter with small chunk size to force multiple chunks
     splitter = MyTextSplitter(
-        enable_line_number=True,
         split_by="word",
         chunk_size=8,  # Small chunk size to create multiple chunks
         chunk_overlap=2
@@ -71,7 +70,7 @@ def test_my_text_splitter_edge_cases():
         id="single_line_doc"
     )
     
-    splitter = MyTextSplitter(enable_line_number=True, split_by="word", chunk_size=5, chunk_overlap=1)
+    splitter = MyTextSplitter(split_by="word", chunk_size=5, chunk_overlap=1)
     result = splitter.call([single_line_doc])
     
     print(f"Single line document split into {len(result)} chunks")
@@ -112,7 +111,7 @@ Fourth sentence on line 2."""
     doc = Document(text=test_text, id="sentence_test")
     
     # Use sentence splitting
-    splitter = MyTextSplitter(enable_line_number=True, split_by="sentence", chunk_size=2, chunk_overlap=0)
+    splitter = MyTextSplitter(split_by="sentence", chunk_size=2, chunk_overlap=0)
     result = splitter.call([doc])
     
     print(f"Sentence splitting result: {len(result)} chunks")
@@ -131,7 +130,7 @@ def test_multiple_documents():
         Document(text="Doc3 single line", id="doc3")
     ]
     
-    splitter = MyTextSplitter(enable_line_number=True, split_by="word", chunk_size=4, chunk_overlap=1)
+    splitter = MyTextSplitter(split_by="word", chunk_size=4, chunk_overlap=1)
     result = splitter.call(docs)
     
     print(f"Multiple documents ({len(docs)}) split into {len(result)} chunks")

@@ -5,7 +5,7 @@ from adalflow.core.types import Document
 from adalflow.components.data_process.text_splitter import (
     TextSplitter,
     DocumentSplitterInputType,
-    DocumentSplitterOutputType,
+    DocumentSplitterOutputType
 )
 from tqdm import tqdm
 
@@ -13,43 +13,10 @@ from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 
 logger = get_tqdm_compatible_logger(__name__)
 
-
 class MyTextSplitter(TextSplitter):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-    def split_text(self, text: str) -> list:
-        """Override split_text to always split at line boundaries."""
-        if not text.strip():
-            return []
-
-        chunks = []
-        start = 0
-        text_length = len(text)
-
-        while start < text_length:
-            # Find the next potential split point
-            end = min(start + self.chunk_size, text_length)
-
-            # If we're not at the end, extend to the next line break
-            if end < text_length:
-                # Find the next newline after the chunk_size
-                next_newline = text.find('\n', end)
-                if next_newline != -1:
-                    end = next_newline + 1  # Include the newline
-                else:
-                    # No more newlines, take the rest of the text
-                    end = text_length
-
-            # Extract the chunk
-            chunk = text[start:end]
-            if chunk:
-                chunks.append(chunk)
-
-            start = end
-
-        return chunks
 
     def call(self, documents: DocumentSplitterInputType) -> DocumentSplitterOutputType:
         """
@@ -97,13 +64,11 @@ class MyTextSplitter(TextSplitter):
                     raise ValueError(f"Text should not be None. Doc id: {doc.id}")
 
                 # prefix each line of doc.text with the 0-based line number
-                doc.text = "\n".join(
-                    f"{i}: {line}" for i, line in enumerate(doc.text.splitlines())
-                )
+                doc.text = "\n".join(f"{i}: {line}" for i, line in enumerate(doc.text.splitlines()))
                 text_splits = self.split_text(doc.text)
-
+                
                 meta_data = deepcopy(doc.meta_data)
-
+                
                 start_pos = 0
                 prev_doc = None
                 for i, chunk in enumerate(text_splits):
@@ -114,16 +79,14 @@ class MyTextSplitter(TextSplitter):
                         start_pos = chunk_start
                     else:
                         chunk_start = start_pos  # fallback
-                    start_line = doc.text[:chunk_start].count("\n")
+                    start_line = doc.text[:chunk_start].count('\n')
                     chunk_meta = deepcopy(meta_data) if meta_data else {}
                     chunk_meta["start_line"] = start_line
-
+                    
                     # Remove line numbers from chunk to get original text
-                    original_text = "\n".join(
-                        line.split(": ", 1)[1] if ": " in line else line
-                        for line in chunk.splitlines()
-                    )
-
+                    original_text = "\n".join(line.split(": ", 1)[1] if ": " in line else line 
+                                             for line in chunk.splitlines())
+                    
                     this_doc = Document(
                         text=chunk,
                         meta_data=chunk_meta,
@@ -132,11 +95,11 @@ class MyTextSplitter(TextSplitter):
                         vector=[],
                     )
                     if prev_doc:
-                        prev_doc.meta_data["next_doc_id"] = this_doc.id
-                        this_doc.meta_data["prev_doc_id"] = prev_doc.id
+                        prev_doc.meta_data['next_doc_id'] = this_doc.id
+                        this_doc.meta_data['prev_doc_id'] = prev_doc.id
                         this_doc.meta_data["next_doc_id"] = None
                     else:
-                        this_doc.meta_data["prev_doc_id"] = None
+                        this_doc.meta_data['prev_doc_id'] = None
                         this_doc.meta_data["next_doc_id"] = None
                     this_doc.meta_data["original_text"] = original_text
                     split_docs.append(this_doc)
@@ -146,3 +109,4 @@ class MyTextSplitter(TextSplitter):
             f"Processed {len(documents)} documents into {len(split_docs)} split documents."
         )
         return split_docs
+        

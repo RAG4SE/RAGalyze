@@ -24,13 +24,14 @@ from ragalyze.core.types import DualVectorDocument
 logger = get_tqdm_compatible_logger(__name__)
 
 
-def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: str, faiss_query: str, question: str) -> str:
+def save_query_results(
+    result: Dict[str, Any], bm25_keywords: str, faiss_query: str, question: str
+) -> str:
     """
     Save query results to reply folder with timestamp
 
     Args:
         result: Query result dictionary
-        repo_path: Repository path that was queried
         bm25_keywords: BM25 keywords
         faiss_query: FAISS query
         question: Question that was asked
@@ -39,7 +40,7 @@ def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: st
         Path to the created output directory
     """
     # Create timestamp-based folder name
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S.%f")[:-3]
     output_dir = Path("reply") / timestamp
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -50,7 +51,7 @@ def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: st
             f.write("=" * 50 + "\n")
             f.write("QUERY INFORMATION\n")
             f.write("=" * 50 + "\n")
-            f.write(f"Repository: {repo_path}\n")
+            f.write(f"Repository: {configs()['repo_path']}\n")
             f.write(f"BM25 keywords: {bm25_keywords}\n")
             f.write(f"FAISS query: {faiss_query}\n")
             f.write(f"Question: {question}\n")
@@ -60,8 +61,11 @@ def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: st
             f.write("RESPONSE\n")
             f.write("=" * 50 + "\n")
             # Convert escaped newlines to actual line breaks
-            formatted_response = result["response"].replace("\\n", "\n").replace("\\t", "    ")
+            formatted_response = (
+                result["response"].replace("\\n", "\n").replace("\\t", "    ")
+            )
             f.write(formatted_response + "\n")
+            f.write(f"Estimated Token Count: {result['estimated_token_count']}\n")
 
     # Save retrieved documents if available
     if result.get("retrieved_documents"):
@@ -93,7 +97,6 @@ def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: st
                     f.write("Full Content:\n")
                     f.write(doc.text + "\n")
 
-
     if result.get("context"):
         docs_file = output_dir / "context.txt"
         with open(docs_file, "w", encoding="utf-8") as f:
@@ -108,13 +111,12 @@ def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: st
                 f.write("Full Content:\n")
                 f.write(doc.text + "\n")
 
-
     # Save metadata
     metadata_file = output_dir / "metadata.txt"
     with open(metadata_file, "w", encoding="utf-8") as f:
         f.write("Query Metadata\n")
         f.write("=" * 30 + "\n")
-        f.write(f"Repository: {repo_path}\n")
+        f.write(f"Repository: {configs()['repo_path']}\n")
         f.write(f"Question: {question}\n")
         f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Error Message: {result.get('error_msg', 'None')}\n")
@@ -132,7 +134,6 @@ def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: st
                 if understanding_text:
                     docs_with_understanding += 1
         f.write(f"Documents with Code Understanding: {docs_with_understanding}\n")
-
 
     if result.get("bm25_docs"):
         bm25_doc_file = output_dir / "bm25_retrieved.txt"
@@ -157,13 +158,14 @@ def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: st
     if result.get("bm25_scores"):
         bm25_score_file = output_dir / "bm25_scores.csv"
         with open(bm25_score_file, "w", encoding="utf-8") as f:
-            f.write("doc_id, original_score, minmax_score, zscore_score\n")
             # Sort by original score (score[0]) in descending order
             if isinstance(list(result["bm25_scores"].values())[0], tuple):
+                f.write("doc_id, original_score, minmax_score, zscore_score\n")
                 sorted_scores = sorted(
                     result["bm25_scores"].items(), key=lambda x: x[1][0], reverse=True
                 )
             else:
+                f.write("doc_id, original_score\n")
                 sorted_scores = sorted(
                     result["bm25_scores"].items(), key=lambda x: x[1], reverse=True
                 )
@@ -206,46 +208,20 @@ def save_query_results(result: Dict[str, Any], repo_path: str, bm25_keywords: st
             for doc_id, score in sorted_scores:
                 f.write(f"{doc_id}, {score}\n")
 
+    if result.get("prompt"):
+        prompt_file = output_dir / "prompt.txt"
+        with open(prompt_file, "w", encoding="utf-8") as f:
+            f.write(result["prompt"])
+
     return str(output_dir)
 
 
-def analyze_repository(repo_path: str) -> RAG:
-    """
-    Analyze a code repository and return a RAG instance.
-
-    Args:
-        repo_path: Path to the repository
-
-    Returns:
-        RAG: Initialized RAG instance
-
-    Raises:
-        ValueError: If repository path doesn't exist
-        Exception: If analysis fails
-    """
-    repo_path = os.path.abspath(repo_path)
-
-    # Check if path exists
-    if not os.path.exists(repo_path):
-        raise ValueError(f"core/query.py:Repository path does not exist: {repo_path}")
-
-    logger.info(f"🚀 Starting new analysis for: {repo_path}")
-
-    logger.info("Using standard RAG")
-    # Initialize standard RAG
-    rag = RAG()
-    # Prepare retriever
-    rag.prepare_retriever(repo_path)
-
-    logger.info(f"✅ Analysis complete for: {repo_path}")
-
-    return rag
-
-
-def build_contexts(
-    retrieved_docs: List[Document | DualVectorDocument], id2doc: Dict[str, Document]
-) -> List[Document]:
-
+def build_context(
+    retrieved_doc: Document | DualVectorDocument,
+    id2doc: Dict[str, Document],
+    direction: str = "both",
+    count: int = 0,
+) -> Document:
     """
     Build context strings from retrieved documents.
 
@@ -255,59 +231,66 @@ def build_contexts(
     Returns:
         List of context strings.
     """
-    if isinstance(retrieved_docs[0], DualVectorDocument):
-        contexts = [doc.original_doc for doc in retrieved_docs]
+    if isinstance(retrieved_doc, DualVectorDocument):
+        doc = retrieved_doc.original_doc
     else:
-        contexts = retrieved_docs
+        doc = retrieved_doc
 
-    if not configs()["rag"]["adjacent_documents"]["enabled"]:
-        return contexts
-
-    count = configs()["rag"]["adjacent_documents"]["count"]
-    direction = configs()["rag"]["adjacent_documents"]["direction"]
     assert direction in ["both", "previous", "next"], f"Invalid direction: {direction}"
-    new_contexts = []
 
-    for doc in contexts:
-        new_doc = deepcopy(doc)
+    new_doc = deepcopy(doc)
+    cnt = 0
+    this_doc = doc
+    cannot_extend_previous = False
+    cannot_extend_next = False
+    if direction == "both" or direction == "previous":
+        while doc.meta_data["prev_doc_id"] is not None and cnt < count:
+            prev_doc = id2doc[doc.meta_data["prev_doc_id"]]
+            new_doc.text = prev_doc.text + new_doc.text
+            doc = prev_doc
+            cnt += 1
+        if doc.meta_data["prev_doc_id"] is None:
+            cannot_extend_previous = True
+        doc = this_doc
         cnt = 0
-        this_doc = doc
-        if direction == "both" or direction == "previous":
-            while doc.meta_data["prev_doc_id"] is not None and cnt < count:
-                prev_doc = id2doc[doc.meta_data["prev_doc_id"]]
-                new_doc.text = prev_doc.text + new_doc.text
-                doc = prev_doc
-                cnt += 1
-            doc = this_doc
-            cnt = 0
-        if direction == "both" or direction == "next":
-            while doc.meta_data["next_doc_id"] is not None and cnt < count:
-                next_doc = id2doc[doc.meta_data["next_doc_id"]]
-                new_doc.text = new_doc.text + next_doc.text
-                doc = next_doc
-                cnt += 1
-        new_contexts.append(new_doc)
-    return new_contexts
+    if direction == "both" or direction == "next":
+        while doc.meta_data["next_doc_id"] is not None and cnt < count:
+            next_doc = id2doc[doc.meta_data["next_doc_id"]]
+            new_doc.text = new_doc.text + next_doc.text
+            doc = next_doc
+            cnt += 1
+        if doc.meta_data["next_doc_id"] is None:
+            cannot_extend_next = True
+        doc = this_doc
+        cnt = 0
+    if direction == "both":
+        cannot_extend = cannot_extend_previous and cannot_extend_next
+    elif direction == "previous":
+        cannot_extend = cannot_extend_previous
+    elif direction == "next":
+        cannot_extend = cannot_extend_next
+    return new_doc, cannot_extend
+
 
 def query(question: str) -> str:
     generator = GeneratorWrapper()
     result = generator(input_str=question)
     return result.data.strip()
 
+
 def query_repository(
-    repo_path: str, bm25_keywords: str, faiss_query: str, question: str
+    bm25_keywords: str, faiss_query: str, question: str
 ) -> Dict[str, Any]:
     """
     Query a repository about a question and return structured results.
 
     Args:
-        repo_path: Path to the repository to analyze
         bm25_keywords: BM25 keywords
         faiss_query: FAISS query
         question: Question to ask about the repository
     """
-    rag = analyze_repository(repo_path=repo_path)
-    result = rag.call(bm25_keywords=bm25_keywords, faiss_query=faiss_query)
+    rag = RAG()
+    result = rag.retrieve(bm25_keywords=bm25_keywords, faiss_query=faiss_query)
 
     # result[0] is RetrieverOutput
     retriever_output = result[0] if isinstance(result, list) else result
@@ -318,78 +301,47 @@ def query_repository(
     # Generate answer
     logger.info("🤖 Generating answer...")
     try:
-        id2doc = pickle.load(open(rag.db_manager.cache_file_path + ".id2doc.pkl", "rb"))
-        contexts = build_contexts(retrieved_docs, id2doc)
-
-        generator_result = rag.generator(
-            input_str=question,
-            contexts=contexts
-        )
+        contexts = []
+        for doc in retrieved_docs:
+            contexts.append(build_context(doc, rag.id2doc)[0])
+        return rag.query(input_str=question, contexts=contexts)
     except Exception as e:
         logger.error(f"Error calling generator: {e}")
         raise
 
-    # Only use the content of the first choice
-    rag_answer = generator_result.data.strip()
 
-    assert rag_answer, "Generator result is empty"
-
-    logger.info(f"✅ Final answer length: {len(rag_answer)} characters")
-
-    return {
-        "response": rag_answer,
-        "context": contexts,
-        "retrieved_documents": retrieved_docs,
-        "bm25_docs": (
-            rag.retriever.bm25_documents
-            if hasattr(rag.retriever, "bm25_documents") and rag.retriever.bm25_documents
-            else []
-        ),
-        "bm25_scores": (
-            rag.retriever.doc_id_to_bm25_scores
-            if hasattr(rag.retriever, "doc_id_to_bm25_scores")
-            else []
-        ),
-        "faiss_scores": (
-            rag.retriever.doc_id_to_faiss_scores
-            if hasattr(rag.retriever, "doc_id_to_faiss_scores")
-            else []
-        ),
-        "rrf_scores": (
-            rag.retriever.doc_id_to_rrf_scores
-            if hasattr(rag.retriever, "doc_id_to_rrf_scores")
-            else []
-        )
-    }
-
-def print_result(result: Dict[str, Any]) -> None:
+def print_result(
+    result: Dict[str, Any], print_retrieved_documents: bool = False
+) -> None:
     if result.get("response"):
         print("\n" + "=" * 50)
         print("RESPONSE:")
         print("=" * 50)
         # Convert escaped newlines to actual line breaks for better readability
-        formatted_response = result["response"].replace("\\n", "\n").replace("\\t", "    ")
+        formatted_response = (
+            result["response"].replace("\\n", "\n").replace("\\t", "    ")
+        )
         print(formatted_response)
 
-    # if result["retrieved_documents"]:
-    #     print("\n" + "=" * 50)
-    #     print("RETRIEVED DOCUMENTS:")
-    #     print("=" * 50)
-    #     for i, doc in enumerate(result["retrieved_documents"], 1):
-    #         if isinstance(doc, DualVectorDocument):
-    #             print(
-    #                 f"\n{i}. File: {getattr(doc.original_doc, 'meta_data', {}).get('file_path', 'Unknown')}"
-    #             )
-    #             print(
-    #                 f"   Preview: {(doc.original_doc.text[:200] + '...') if len(doc.original_doc.text) > 200 else doc.original_doc.text}"
-    #             )
-    #         else:
-    #             print(
-    #                 f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}"
-    #             )
-    #             print(
-    #                 f"   Preview: {(doc.text[:200] + '...') if len(doc.text) > 200 else doc.text}"
-    #             )
+    if result["retrieved_documents"] and print_retrieved_documents:
+        print("\n" + "=" * 50)
+        print("RETRIEVED DOCUMENTS:")
+        print("=" * 50)
+        for i, doc in enumerate(result["retrieved_documents"], 1):
+            if isinstance(doc, DualVectorDocument):
+                print(
+                    f"\n{i}. File: {getattr(doc.original_doc, 'meta_data', {}).get('file_path', 'Unknown')}"
+                )
+                print(
+                    f"   Preview: {(doc.original_doc.text[:200] + '...') if len(doc.original_doc.text) > 200 else doc.original_doc.text}"
+                )
+            else:
+                print(
+                    f"\n{i}. File: {getattr(doc, 'meta_data', {}).get('file_path', 'Unknown')}"
+                )
+                print(
+                    f"   Preview: {(doc.text[:200] + '...') if len(doc.text) > 200 else doc.text}"
+                )
     print("For more details, please check the reply folder")
 
 

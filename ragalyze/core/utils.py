@@ -1,4 +1,5 @@
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 
 class AsyncWrapper:
     """
@@ -42,3 +43,19 @@ def minmax_norm(scores):
 def zscore_norm(scores):
     mu, sigma = np.mean(scores), np.std(scores)
     return [(s - mu) / (sigma + 1e-12) for s in scores]
+
+class DaemonThreadPoolExecutor(ThreadPoolExecutor):
+    """
+    ThreadPoolExecutor  whose worker threads are all daemonic.
+    Python 3.8+
+    """
+    def _start_queue_management_thread(self):
+        super()._start_queue_management_thread()
+        for t in self._threads:
+            if t.is_alive():
+                t.daemon = True 
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Override to immediately cancel all pending futures and skip waiting
+        self.shutdown(wait=False, cancel_futures=True)
+        return False

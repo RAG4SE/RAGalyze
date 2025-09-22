@@ -9,10 +9,48 @@
 
 // Global debug flag
 static int debug_enabled = 0;
+static char* current_file_path = NULL;
+
+// Debug printf function that only prints when debug mode is enabled
+static void debug_printf(const char* format, ...) {
+    if (debug_enabled) {
+        va_list args;
+        va_start(args, format);
+        vprintf(format, args);
+        va_end(args);
+    }
+}
+
+static char* concatenate_string(const char* str1, const char* str2) {
+    if (!str1 || !str2) {
+        printf("DEBUG: concatenate_string called with NULL pointer\n");
+        return NULL;
+    }
+    
+    debug_printf("DEBUG: Concatenating '%s' and '%s'\n", str1, str2);
+    
+    size_t len1 = strlen(str1);
+    size_t len2 = strlen(str2);
+    size_t total_len = len1 + len2;
+    
+    char* result = malloc(total_len + 1);
+    if (!result) {
+        printf("DEBUG: Memory allocation failed for concatenated string\n");
+        return NULL;
+    }
+    
+    memcpy(result, str1, len1);
+    memcpy(result + len1, str2, len2);
+    result[total_len] = '\0';
+    
+    return result;
+}
+
 
 // Enhanced assert function with cleanup and debugging
 static void treesitter_assert(int condition, const char* message, void* cleanup_ptr, const char* file, int line) {
     if (!condition) {
+        message = concatenate_string(message, current_file_path);
         printf("ASSERTION FAILED at %s:%d: %s\n", file, line, message);
         if (cleanup_ptr) {
             free(cleanup_ptr);
@@ -28,16 +66,6 @@ static void treesitter_assert(int condition, const char* message, void* cleanup_
 // Macro for asserting pointer allocation
 #define ASSERT_ALLOC(ptr, cleanup_ptr) \
     TREESITTER_ASSERT((ptr) != NULL, "Memory allocation failed", cleanup_ptr)
-
-// Debug printf function that only prints when debug mode is enabled
-static void debug_printf(const char* format, ...) {
-    if (debug_enabled) {
-        va_list args;
-        va_start(args, format);
-        vprintf(format, args);
-        va_end(args);
-    }
-}
 
 // Function to check if a string contains only whitespace
 static int is_whitespace(const char* str) {
@@ -77,32 +105,6 @@ static void debug_print_child(TSNode node, const char* source_code) {
         }
     }
 }
-
-static char* concatenate_string(const char* str1, const char* str2) {
-    if (!str1 || !str2) {
-        printf("DEBUG: concatenate_string called with NULL pointer\n");
-        return NULL;
-    }
-    
-    debug_printf("DEBUG: Concatenating '%s' and '%s'\n", str1, str2);
-    
-    size_t len1 = strlen(str1);
-    size_t len2 = strlen(str2);
-    size_t total_len = len1 + len2;
-    
-    char* result = malloc(total_len + 1);
-    if (!result) {
-        printf("DEBUG: Memory allocation failed for concatenated string\n");
-        return NULL;
-    }
-    
-    memcpy(result, str1, len1);
-    memcpy(result + len1, str2, len2);
-    result[total_len] = '\0';
-    
-    return result;
-}
-
 
 static TSNode ts_node_child_by_type_name(TSNode node, const char* type_name) {
     for (uint32_t i = 0; i < ts_node_child_count(node); i++) {
@@ -903,15 +905,18 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             debug_print_child(node, source_code);
 
             TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
-            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
-
-            const char* class_name = get_node_text(name_node, source_code);
-            debug_printf("DEBUG: Found union definition via name field: '%s'\n", class_name);
-            add_node(results, "class_definition", class_name);
-            free(class_name);
+            if (!ts_node_is_null(name_node)) {
+                const char* class_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found union definition via name field: '%s'\n", class_name);
+                add_node(results, "class_definition", class_name);
+                free(class_name);
+            }
 
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
-            treesitter_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
+            if (ts_node_is_null(body_node)) {
+                debug_printf("DEBUG: No body field found, skipping\n");
+                return;
+            }
 
             // For unions, don't process field declarations as variables
             uint32_t child_count = ts_node_child_count(body_node);
@@ -1838,10 +1843,14 @@ static PyObject* parse_code_with_treesitter(PyObject* self, PyObject* args) {
 static PyObject* tokenize_for_bm25(PyObject* self, PyObject* args) {
     const char* code;
     const char* language_name = NULL;
+    const char* file_path = NULL;
 
-    if (!PyArg_ParseTuple(args, "s|z", &code, &language_name)) {
+    if (!PyArg_ParseTuple(args, "s|zz", &code, &language_name, &file_path)) {
         return NULL;
     }
+
+    current_file_path = file_path;
+
     if (!language_name) {
         printf("ERROR: Language name is required for BM25 tokenization\n");
         exit(1);

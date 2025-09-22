@@ -258,6 +258,33 @@ void encoding1() {
 #      """, sorted([])),
     ]
 
+test_codes_bm25_funcs = [
+    ('cpp', """
+/*
+	This file is part of solidity.
+	solidity is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+	solidity is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+ 	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ 	GNU General Public License for more details.
+ 
+ 	You should have received a copy of the GNU General Public License
+ 	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ // SPDX-License-Identifier: GPL-3.0
+ /**
+  * Specific AST walkers that collect semantical facts.
+  */
+ 
+ #include <libyul/optimiser/Semantics.h>
+ 
+ #include <libyul/optimiser
+     """, [])
+]
+
 def parse_code(code, language):
     """
     Parse code with the specified language using the C extension.
@@ -276,7 +303,7 @@ def parse_code(code, language):
         # Fallback implementation if C extension is not available
         raise RuntimeError("C extension treesitter_parse is not available.")
 
-def tokenize_for_bm25(code, language=None):
+def tokenize_for_bm25(code, language, file_path):
     """
     Tokenize code for BM25 search with [FUNCDEF] and [CALL] prefixes.
     
@@ -289,7 +316,7 @@ def tokenize_for_bm25(code, language=None):
     """
     try:
         # Try to import the C extension - try both absolute and relative imports
-        return treesitter_parse.tokenize_for_bm25(code, language)
+        return treesitter_parse.tokenize_for_bm25(code, language, file_path)
     except ImportError:
         raise RuntimeError("C extension treesitter_parse is not available.")
 
@@ -316,7 +343,7 @@ def main():
     for i, (lang, code, expected_tokens) in enumerate(test_codes_bm25_funcs):
         print(f"\n--- BM25 Test Case {i + 1} ---")
         print(f"Code: {code}")
-        tokens = tokenize_for_bm25(code, lang)
+        tokens = tokenize_for_bm25(code, lang, "")
         tokens = sorted(tokens)
         assert tokens == expected_tokens, f"Expected: {expected_tokens}, but got: {tokens}"
         print(f"BM25 tokens: {tokens}")

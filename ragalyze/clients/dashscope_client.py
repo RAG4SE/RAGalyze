@@ -502,7 +502,6 @@ class DashScopeBatchEmbedder(adal.BatchEmbedder):
         self,
         input: BatchEmbedderInputType,
         model_kwargs: Optional[Dict] = {},
-        force_recreate: bool = False,
     ) -> BatchEmbedderOutputType:
         """
         Call operator interface, delegates to call method.

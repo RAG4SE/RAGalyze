@@ -34,6 +34,7 @@ def set_global_configs(cfg: DictConfig = None):
     global global_configs
     global_configs = all_configs
 
+
 def set_global_config_value(key: str, value):
     """
     Set a specific configuration value in the global configs.
@@ -57,6 +58,9 @@ def set_global_config_value(key: str, value):
     # Set the final value
     current[keys[-1]] = value
     logger.debug(f"Set config {key} = {value}")
+    load_generator_config(global_configs)
+    load_rag_config(global_configs)
+
 
 
 def configs():
@@ -73,6 +77,8 @@ PROVIDER_NAME_TO_CLASS = {
     "lingxi": LingxiClient,
     "local_server": LocalServerClient,
     "openai": OpenAIClient,
+    "kimi": KimiClient,
+    "modelscope": ModelScopeClient,
 }
 
 # Define provider to embedder class name mappings
@@ -82,6 +88,7 @@ EMBEDDER_PROVIDER_TO_CLASS_NAMES = {
     "lingxi": ("LingxiEmbedder", "LingxiBatchEmbedder"),
     "local_server": ("LocalServerEmbedder", "LocalServerBatchEmbedder"),
     "openai": ("OpenAIEmbedder", "OpenAIBatchEmbedder"),
+    "modelscope": ("ModelScopeEmbedder", "ModelScopeBatchEmbedder"),
 }
 
 # Define provider to code understanding client class name mappings
@@ -91,6 +98,8 @@ CODE_UNDERSTANDING_PROVIDER_TO_CLASS_NAME = {
     "lingxi": "LingxiClient",
     "local_server": "LocalServerClient",
     "openai": "OpenAIClient",
+    "kimi": "KimiClient",
+    "modelscope": "ModelScopeClient",
 }
 
 
@@ -156,6 +165,7 @@ def load_rag_config(configs: dict):
     # Set model client
     code_understanding_config["model_client"] = model_client
 
+set_global_configs()
 
 def main():
     """

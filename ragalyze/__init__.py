@@ -37,7 +37,6 @@ from .query import (
     print_result,
     query_repository,
     query,
-    analyze_repository,
 )
 from .configs import (
     configs,
@@ -45,15 +44,18 @@ from .configs import (
     load_default_config,
     set_global_config_value,
 )
+from .agent import FetchCallerHeaderAgent, FetchCallerNameAgent, FetchCallerNameFromHeaderAgent
 
 __all__ = [
     "query_repository",
     "query",
-    "analyze_repository",
     "save_query_results",
     "set_global_configs",
     "print_result",
     "load_default_config",
     "configs",
     "set_global_config_value",
+    "FetchCallerHeaderAgent",
+    "FetchCallerNameAgent",
+    "FetchCallerNameFromHeaderAgent",
 ]

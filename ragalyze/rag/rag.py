@@ -24,21 +24,6 @@ LANGUAGE DETECTION AND RESPONSE:
 - Respond in the SAME language as the user's query
 - IMPORTANT:If a specific language is requested in the prompt, prioritize that language over the query language
 
-FORMAT YOUR RESPONSE USING MARKDOWN:
-- Use proper markdown syntax for all formatting
-- For code blocks, use triple backticks with language specification (```python, ```javascript, etc.)
-- Use ## headings for major sections
-- Use bullet points or numbered lists where appropriate
-- Format tables using markdown table syntax when presenting structured data
-- Use **bold** and *italic* for emphasis
-- When referencing file paths, use `inline code` formatting
-
-IMPORTANT FORMATTING RULES:
-1. DO NOT include ```markdown fences at the beginning or end of your answer
-2. Start your response directly with the content
-3. The content will already be rendered as markdown, so just provide the raw markdown content
-
-Think step by step and ensure your answer is well-structured and visually organized.
 """
 
 # Template for RAG
@@ -85,25 +70,15 @@ class GeneratorWrapper:
 
     def __init__(self):
         """Initialize the generator wrapper with configuration from configs"""
-        assert "generator" in configs(), "configs must contain generator section"
         generator_config = configs()["generator"]
-        assert (
-            "provider" in generator_config
-        ), "generator_config must contain provider section"
-        assert (
-            "model" in generator_config
-        ), "generator_config must contain model section"
         model = generator_config["model"]
-        assert (
-            "model_client" in generator_config
-        ), "generator_config must contain model_client section"
         model_client_class = generator_config["model_client"]
         model_client = model_client_class()
-        assert (
-            "model_kwargs" in generator_config
-        ), "generator_config must contain model_kwargs section"
         model_kwargs = generator_config["model_kwargs"]
         model_kwargs["model"] = model
+
+        if generator_config["json_output"]:
+            model_kwargs["response_format"] = {"type": "json_object"}
 
         # Format instructions for natural language output (no structured parsing)
         format_instructions = """
@@ -121,9 +96,9 @@ IMPORTANT FORMATTING RULES:
         self.generator = adal.Generator(
             template=RAG_TEMPLATE,
             prompt_kwargs={
-                "output_format_str": format_instructions,
+                "output_format_str": "",
                 "conversation_history": None,  # No conversation history
-                "system_prompt": system_prompt,
+                "system_prompt": "You are a code assistant who will lose your job if you cannot answer the user's question precisely:).",
                 "contexts": None,
             },
             model_client=model_client,
@@ -146,13 +121,17 @@ IMPORTANT FORMATTING RULES:
             "input_str": input_str,
             "contexts": contexts,
         }
+        self.prompt = self.generator.get_prompt(**prompt_kwargs)
 
         return self.generator(prompt_kwargs=prompt_kwargs)
+
+    def estimated_token_count(self):
+        return self.generator.estimated_token_count
 
 
 class RAG(adal.Component):
     """RAG with one repo.
-    If you want to load a new repos, call prepare_retriever(repo_path) first."""
+    If you want to load a new repos, call prepare_retriever() first."""
 
     def __init__(self):
         """
@@ -164,13 +143,9 @@ class RAG(adal.Component):
         self.generator = GeneratorWrapper()
 
         self.retriever = None
-        self.db_manager = None
-        self.documents = None
-
-    def initialize_db_manager(self, repo_path: str):
-        """Initialize the database manager with local storage"""
-        self.db_manager = DatabaseManager(repo_path)
+        self.db_manager = DatabaseManager()
         self.documents = []
+        self.retrieved_docs = []
 
     def _validate_and_filter_embeddings(
         self, documents: List[Document | DualVectorDocument]
@@ -360,29 +335,22 @@ class RAG(adal.Component):
                     valid_documents.append(doc)
             return valid_documents
 
-    def prepare_retriever(self, repo_path: str):
+    def _prepare_retriever(self):
         """
         Prepare the retriever for a repository.
-
-        Args:
-            repo_path: Local path to the repository
         """
-        self.initialize_db_manager(repo_path)
-
         logger.info(f"🔍 Build up database...")
         # self.documents is a list of Document or DualVectorDocument
-        self.documents = self.db_manager.prepare_database()
+        self.documents, self.id2doc = self.db_manager.prepare_db()
         logger.info(f"✅ Loaded {len(self.documents)} documents for retrieval")
-        if not configs()["rag"]["query_driven"]["enabled"]:
+        if not configs()["rag"]["retriever"]["query_driven"]:
             # Validate and filter embeddings to ensure consistent sizes
             self.documents = self._validate_and_filter_embeddings(self.documents)
             logger.info(f"🎉Validated and filtered {len(self.documents)} documents")
         if not self.documents:
-            raise ValueError(
-                "No valid documents with embeddings found. Cannot create retriever."
-            )
+            raise ValueError("No valid documents found. Cannot create retriever.")
 
-        if configs()["rag"]["query_driven"]["enabled"]:
+        if configs()["rag"]["retriever"]["query_driven"]:
             # Use QueryDrivenRetriever which employs on-demand embedding
             self.retriever = QueryDrivenRetriever(
                 documents=self.documents,
@@ -392,29 +360,52 @@ class RAG(adal.Component):
             # Use HybridRetriever which combines BM25 and FAISS
             self.retriever = HybridRetriever(documents=self.documents)
 
-    def prepare_retriever_with_documents(self, documents: List[Document | DualVectorDocument]):
-        self.documents = documents
-        if configs()["rag"]["query_driven"]["enabled"]:
-            # Use QueryDrivenRetriever which employs on-demand embedding
-            self.retriever = QueryDrivenRetriever(documents=self.documents)
-        else:
-            # Use HybridRetriever which combines BM25 and FAISS
-            self.retriever = HybridRetriever(documents=self.documents)
-
-
-    def call(self, bm25_keywords: str, faiss_query: str) -> List[RetrieverOutput]:
+    def retrieve(self, bm25_keywords: str, faiss_query: str) -> List[RetrieverOutput]:
         """
         Query the RAG system.
         If you want to ask a question about only a few documents instead of all documents from self.db_manager.prepare_database(), you can pass those documents as the 'documents' argument.
         """
-        if not self.retriever:
-            raise ValueError("Retriever not prepared. Call prepare_retriever first.")
 
-        logger.info(f"🏃 Running RAG for query: 'bm25_keywords: {bm25_keywords}' and 'faiss_query: {faiss_query}'")
+        self._prepare_retriever()
+
+        logger.info(
+            f"🏃 Running RAG for query: 'bm25_keywords: {bm25_keywords}' and 'faiss_query: {faiss_query}'"
+        )
 
         try:
-            retrieved_docs = self.retriever.call(bm25_keywords, faiss_query)
-            return retrieved_docs
+            self.retrieved_docs = self.retriever.call(bm25_keywords, faiss_query)
+            return self.retrieved_docs
         except Exception as e:
             logger.error(f"Error in RAG call: {str(e)}")
             raise
+
+    def query(self, input_str: str, contexts: List = None):
+        reply = self.generator(input_str=input_str, contexts=contexts).data.strip()
+        return {
+            "response": reply,
+            "prompt": self.generator.prompt,
+            "estimated_token_count": self.generator.estimated_token_count(),
+            "context": contexts,
+            "retrieved_documents": self.retrieved_docs[0].documents,
+            "bm25_docs": (
+                self.retriever.bm25_documents
+                if hasattr(self.retriever, "bm25_documents")
+                and self.retriever.bm25_documents
+                else []
+            ),
+            "bm25_scores": (
+                self.retriever.doc_id_to_bm25_scores
+                if hasattr(self.retriever, "doc_id_to_bm25_scores")
+                else []
+            ),
+            "faiss_scores": (
+                self.retriever.doc_id_to_faiss_scores
+                if hasattr(self.retriever, "doc_id_to_faiss_scores")
+                else []
+            ),
+            "rrf_scores": (
+                self.retriever.doc_id_to_rrf_scores
+                if hasattr(self.retriever, "doc_id_to_rrf_scores")
+                else []
+            ),
+        }

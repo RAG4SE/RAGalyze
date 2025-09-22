@@ -3,17 +3,10 @@ This file implements various retrieval strategies including single vector, dual 
 hybrid BM25+FAISS, and query-driven retrievers for semantic document search in the RAG system.
 """
 
-import re
 from typing import List, Optional, Union, Callable
 from rank_bm25 import BM25Okapi
 from collections import defaultdict
 from copy import deepcopy
-import pickle
-import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import multiprocessing
-import numpy as np
-from tqdm import tqdm
 
 from adalflow.core.types import RetrieverOutput, Document, RetrieverOutputType
 from adalflow.components.retriever.faiss_retriever import (
@@ -29,28 +22,13 @@ from ragalyze.rag.treesitter_parse_interface import tokenize_for_bm25, set_debug
 
 logger = get_tqdm_compatible_logger(__name__)
 
-class DaemonThreadPoolExecutor(ThreadPoolExecutor):
-    """
-    ThreadPoolExecutor  whose worker threads are all daemonic.
-    Python 3.8+
-    """
-    def _start_queue_management_thread(self):
-        super()._start_queue_management_thread()
-        for t in self._threads:
-            if t.is_alive():
-                t.daemon = True 
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        # Override to immediately cancel all pending futures and skip waiting
-        self.shutdown(wait=False, cancel_futures=True)
-        return False
 
 class BM25Retriever:
     """Standalone BM25 retriever that can be used by other retrievers."""
 
-    def __init__(self, documents: List[Union[Document, DualVectorDocument]], 
-                 k1: float = 1.5, b: float = 0.75, top_k: int = 20, 
-                 use_multithreading: bool = True, max_workers: Optional[int] = None):
+    def __init__(self, documents: List[Union[Document, DualVectorDocument]],
+                 use_multithreading: bool = True, max_workers: Optional[int] = None,
+                 ):
         """
         Initialize the BM25 retriever.
 
@@ -63,106 +41,12 @@ class BM25Retriever:
             max_workers: Maximum number of worker threads (None for CPU count)
         """
         self.documents = documents
-        self.k1 = k1
-        self.b = b
-        assert top_k > 0, "Top k must be greater than 0"
-        self.top_k = top_k
+        self.top_k = configs()["rag"]["retriever"]["bm25"]["top_k"]
         self.use_multithreading = use_multithreading
         self.max_workers = max_workers
-        self.bm25 = None
-        self._initialize_bm25(documents)
+        corpus = [doc.original_doc.meta_data["bm25_index"] if isinstance(doc, DualVectorDocument) else doc.meta_data["bm25_index"] for doc in documents]
+        self.bm25 = BM25Okapi(corpus, k1=configs()["rag"]["retriever"]["bm25"]["k1"], b=configs()["rag"]["retriever"]["bm25"]["b"])
 
-    def _initialize_bm25(self, documents: List[Union[Document, DualVectorDocument]]):
-        """Initialize BM25 index with document texts."""
-
-        try:
-            # Extract text content from documents for BM25 indexing
-            corpus = []
-            import time
-            if self.use_multithreading and len(documents) > 1:
-                # Determine number of worker threads
-                if self.max_workers is not None:
-                    num_workers = self.max_workers
-                else:
-                    num_workers = min(multiprocessing.cpu_count(), len(documents))
-                logger.info(f"Using {num_workers} threads for bm25 indexing")
-                start_time = time.time()
-                # Use ThreadPoolExecutor to parallelize tokenization
-                with DaemonThreadPoolExecutor(max_workers=num_workers) as executor:
-                    # Submit all tokenization tasks
-                    try:
-                        future_to_index = {}
-                        for i, doc in enumerate(documents):
-                            if isinstance(doc, DualVectorDocument):
-                                # For dual vector documents, combine code and understanding text
-                                if "original_text" in doc.original_doc.meta_data and doc.original_doc.meta_data["original_text"]:
-                                    text = doc.original_doc.meta_data["original_text"]
-                                else:
-                                    text = doc.original_doc.text
-                                # text = doc.original_doc.text + "\n" + doc.understanding_text
-                            else:
-                                if "original_text" in doc.meta_data and doc.meta_data["original_text"]:
-                                    text = doc.meta_data["original_text"]
-                                else:
-                                    text = doc.text
-                            assert doc.meta_data["programming_language"], "Programming language is required for BM25 tokenization"
-                            future_to_index[executor.submit(self.build_bm25_index, text, doc.meta_data["programming_language"])] = i
-                        logger.info('All tasks submitted, waiting for results...')
-                        # Collect results in the correct order with progress bar
-                        results = [None] * len(documents)
-                        with tqdm(total=len(documents), desc="BM25 multithreading indexing") as pbar:
-                            for future in as_completed(future_to_index):
-                                index = future_to_index[future]
-                                try:
-                                    tokens = future.result()
-                                    results[index] = tokens
-                                    pbar.update(1)
-                                except Exception as e:
-                                    logger.error(f"Error processing document {index}: {e}")
-                                    raise
-
-                        corpus = results
-                    except KeyboardInterrupt as e:
-                        logger.error(f"Keyboard interrupt: {e}")
-                        raise
-                    finally:
-                        logger.info("BM25 multithreading indexing completed")
-                end_time = time.time()
-                logger.info(f'time taken for bm25 multithreading: {end_time - start_time}')
-            else:
-                # Process documents sequentially (single-threaded)
-                start_time = time.time()
-                for doc in tqdm(documents, desc="BM25 single threading indexing"):
-                    if isinstance(doc, DualVectorDocument):
-                        # For dual vector documents, combine code and understanding text
-                        if "original_text" in doc.original_doc.meta_data and doc.original_doc.meta_data["original_text"]:
-                            text = doc.original_doc.meta_data["original_text"]
-                        else:
-                            text = doc.original_doc.text
-                    else:
-                        if "original_text" in doc.meta_data and doc.meta_data["original_text"]:
-                            text = doc.meta_data["original_text"]
-                        else:
-                            text = doc.text
-
-                    # Tokenize text for BM25 (simple whitespace + punctuation splitting)
-                    assert doc.meta_data["programming_language"], "Programming language is required for BM25 tokenization"
-                    tokens = self.build_bm25_index(text, doc.meta_data["programming_language"])
-                    corpus.append(tokens)
-                end_time = time.time()
-                logger.info(f'time taken for bm25 single threading: {end_time - start_time}')            
-            # Initialize BM25 with custom parameters
-            self.bm25 = BM25Okapi(corpus, k1=self.k1, b=self.b)
-
-        except Exception as e:
-            logger.error(f"Failed to initialize BM25: {e}")
-            raise
-
-    def build_bm25_index(self, code: str, language: str) -> List[str]:
-        set_debug_mode(0)
-        result = tokenize_for_bm25(code, language)
-        return result
-    
     def get_scores(self, query: str) -> List[float]:
         """Get BM25 scores for all documents given a query."""
         if not self.bm25:
@@ -185,7 +69,7 @@ class BM25Retriever:
         try:
             # Get BM25 scores for all documents
             scores = self.get_scores(query)
-
+            
             # Get top-k document indices based on BM25 scores
             doc_indices = sorted(
                 range(len(scores)), key=lambda i: scores[i], reverse=True
@@ -255,6 +139,8 @@ class SingleVectorRetriever(FAISSRetriever):
     def __init__(self, documents: List[Document], *args, **kwargs):
         self.original_doc = documents
         super().__init__(documents=documents, *args, **kwargs)
+        self.top_k = configs()["rag"]["retriever"]["faiss"]["top_k"]
+        self.embedder = get_embedder()
         logger.info(
             f"SingleVectorRetriever initialized with {len(documents)} documents"
         )
@@ -295,7 +181,7 @@ class SingleVectorRetriever(FAISSRetriever):
 class DualVectorRetriever:
     """Dual vector retriever: supports dual retrieval from code and summary vectors."""
 
-    def __init__(self, dual_docs: List[DualVectorDocument], embedder, top_k: int = 20):
+    def __init__(self, dual_docs: List[DualVectorDocument]):
         """
         Initializes the dual vector retriever.
 
@@ -305,9 +191,8 @@ class DualVectorRetriever:
             top_k: The number of most relevant documents to return.
         """
         self.dual_docs = dual_docs
-        self.embedder = embedder
-        assert top_k > 0, f"Top k must be greater than 0, got {top_k}"
-        self.top_k = top_k
+        self.embedder = get_embedder()
+        self.top_k = configs()["rag"]["retriever"]["faiss"]["top_k"]
         self.doc_map = {doc.original_doc.id: doc for doc in dual_docs}
 
         logger.info(
@@ -458,7 +343,7 @@ class HybridRetriever:
     3. Results are merged and re-ranked for optimal relevance
     """
 
-    def __init__(self, documents: List[Union[Document, DualVectorDocument]], **kwargs):
+    def __init__(self, documents: List[Union[Document, DualVectorDocument]]):
         """
         Initialize the hybrid retriever.
 
@@ -470,35 +355,17 @@ class HybridRetriever:
 
         rag_config = configs()["rag"]
         self.use_dual_vector = rag_config["embedder"]["sketch_filling"]
-        retriever_config = rag_config["retriever"]
-        self.top_k = retriever_config["top_k"]
-        assert self.top_k > 0, "Top k must be greater than 0"
-        bm25_config = retriever_config["bm25"]
-        self.bm25_k1 = bm25_config["k1"]
-        self.bm25_b = bm25_config["b"]
-        self.bm25_weight = bm25_config["weight"]
-        assert 0 <= self.bm25_weight <= 1, "BM25 weight must be between 0 and 1."
         self.fusion = configs()["rag"]["retriever"]["fusion"]
         assert self.fusion in ["rrf", "normal_add"], f"Invalid fusion method: {self.fusion}"
 
-        logger.info(
-            f"Hybrid retriever initialized with dual_vector={'enabled' if self.use_dual_vector else 'disabled'}"
-            f"BM25 parameters: k1={self.bm25_k1}, b={self.bm25_b}, weight={self.bm25_weight}. "
-            f"Other parameters: top_k={self.top_k}"
-        )
-
     def _initialize_faiss_retriever(self, documents: List[Document | DualVectorDocument], top_k: int):
         """Initialize FAISS retriever based on vector type."""
-        if self.use_dual_vector:
+        if configs()["rag"]["embedder"]["sketch_filling"]:
             faiss_retriever = DualVectorRetriever(
                 dual_docs=documents,
-                embedder=self.embedder,
-                top_k=top_k,
             )
         else:
             faiss_retriever = SingleVectorRetriever(
-                documents=documents,
-                embedder=self.embedder,
                 top_k=top_k,
                 document_map_func=lambda doc: doc.vector,
             )
@@ -509,9 +376,6 @@ class HybridRetriever:
         """Initialize BM25 retriever."""
         bm25_retriever = BM25Retriever(
             documents=documents,
-            k1=self.bm25_k1,
-            b=self.bm25_b,
-            top_k=top_k,
         )
         logger.info(f"BM25 retriever initialized successfully")
         return bm25_retriever
@@ -626,7 +490,7 @@ class QueryDrivenRetriever(HybridRetriever):
             update_database: Function to update the database with new embedded documents
         """
         self.update_database = update_database
-        self.query_driven_top_k = configs()["rag"]["query_driven"]['top_k']
+        self.query_driven_top_k = configs()["rag"]["retriever"]["bm25"]['top_k']
         logger.info(f"Query-driven retriever initialized with query_driven_top_k={self.query_driven_top_k}")
         super().__init__(documents, **kwargs)
 
