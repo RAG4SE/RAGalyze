@@ -1,4 +1,6 @@
-from ragalyze import *
+from ragalyze.configs import *
+from ragalyze.agent import *
+from ragalyze.query import *
 
 
 repo_path = "/Users/mac/repo/RAGalyzeBench/solidity"

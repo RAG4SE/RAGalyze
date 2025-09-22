@@ -210,6 +210,8 @@ static const TSLanguage* get_language(const char* language_name) {
 typedef struct {
     char** node_types;
     char** node_texts;
+    unsigned int* line_numbers;
+    unsigned int* column_numbers;
     size_t count;
     size_t capacity;
 } ParseResults;
@@ -217,6 +219,8 @@ typedef struct {
 // Structure to represent tokenized results for BM25
 typedef struct {
     char** tokens;
+    unsigned int* line_numbers;
+    unsigned int* column_numbers;
     size_t count;
     size_t capacity;
 } TokenResults;
@@ -233,15 +237,19 @@ static ParseResults* init_parse_results() {
     if (!results) {
         return NULL;
     }
-    
+
     results->capacity = 50;
     results->count = 0;
     results->node_types = malloc(results->capacity * sizeof(char*));
     results->node_texts = malloc(results->capacity * sizeof(char*));
-    
-    if (!results->node_types || !results->node_texts) {
+    results->line_numbers = malloc(results->capacity * sizeof(unsigned int));
+    results->column_numbers = malloc(results->capacity * sizeof(unsigned int));
+
+    if (!results->node_types || !results->node_texts || !results->line_numbers || !results->column_numbers) {
         free(results->node_types);
         free(results->node_texts);
+        free(results->line_numbers);
+        free(results->column_numbers);
         free(results);
         return NULL;
     }
@@ -250,15 +258,19 @@ static ParseResults* init_parse_results() {
 }
 
 // Function to add a node to results
-static void add_node(ParseResults* results, const char* type, const char* text) {
+static void add_node(ParseResults* results, const char* type, const char* text, unsigned int line_num, unsigned int col_num) {
     if (results->count >= results->capacity) {
         results->capacity *= 2;
         results->node_types = realloc(results->node_types, results->capacity * sizeof(char*));
         results->node_texts = realloc(results->node_texts, results->capacity * sizeof(char*));
+        results->line_numbers = realloc(results->line_numbers, results->capacity * sizeof(unsigned int));
+        results->column_numbers = realloc(results->column_numbers, results->capacity * sizeof(unsigned int));
     }
-    
+
     results->node_types[results->count] = strdup(type);
     results->node_texts[results->count] = strdup(text);
+    results->line_numbers[results->count] = line_num;
+    results->column_numbers[results->count] = col_num;
     results->count++;
 }
 
@@ -270,6 +282,8 @@ static void free_parse_results(ParseResults* results) {
     }
     free(results->node_types);
     free(results->node_texts);
+    free(results->line_numbers);
+    free(results->column_numbers);
     free(results);
 }
 
@@ -279,16 +293,22 @@ static TokenResults* init_token_results() {
     results->capacity = 100;
     results->count = 0;
     results->tokens = malloc(results->capacity * sizeof(char*));
+    results->line_numbers = malloc(results->capacity * sizeof(unsigned int));
+    results->column_numbers = malloc(results->capacity * sizeof(unsigned int));
     return results;
 }
 
-// Function to add a token
-static void add_token(TokenResults* results, const char* token) {
+// Function to add a token with optional position parameters
+static void add_token(TokenResults* results, const char* token, unsigned int line_num, unsigned int col_num) {
     if (results->count >= results->capacity) {
         results->capacity *= 2;
         results->tokens = realloc(results->tokens, results->capacity * sizeof(char*));
+        results->line_numbers = realloc(results->line_numbers, results->capacity * sizeof(unsigned int));
+        results->column_numbers = realloc(results->column_numbers, results->capacity * sizeof(unsigned int));
     }
     results->tokens[results->count] = strdup(token);
+    results->line_numbers[results->count] = line_num;
+    results->column_numbers[results->count] = col_num;
     results->count++;
 }
 
@@ -298,6 +318,8 @@ static void free_token_results(TokenResults* results) {
         free(results->tokens[i]);
     }
     free(results->tokens);
+    free(results->line_numbers);
+    free(results->column_numbers);
     free(results);
 }
 
@@ -309,6 +331,12 @@ static char* get_node_text(TSNode node, const char* source_code) {
     memcpy(node_text, source_code + start_byte, text_length);
     node_text[text_length] = '\0';
     return node_text;
+}
+
+static void get_node_position(TSNode node, unsigned int* line_num, unsigned int* col_num) {
+    TSPoint start_point = ts_node_start_point(node);
+    *line_num = start_point.row + 1;  // Convert to 1-based line numbering
+    *col_num = start_point.column + 1;  // Convert to 1-based column numbering
 }
 
 static void traverse_tree(TSNode node, const char* source_code, ParseResults* results, const char* language_name);
@@ -335,11 +363,13 @@ static void traverse_declaration_cpp(TSNode name_declarator, const char* source_
         // Simple identifier (e.g., int i;)
         const char* declarator_name = get_node_text(name_declarator, source_code);
         debug_printf("DEBUG: Found var declaration: '%s'\n", declarator_name);
+        unsigned int line_num, col_num;
+        get_node_position(name_declarator, &line_num, &col_num);
         if (is_function_declarator) {
-            add_node(results, "func_declaration", declarator_name);
+            add_node(results, "func_declaration", declarator_name, line_num, col_num);
         }
         else {
-            add_node(results, "var_declaration", declarator_name);
+            add_node(results, "var_declaration", declarator_name, line_num, col_num);
         }
         free(declarator_name);
     }
@@ -379,11 +409,13 @@ static void traverse_declaration_cpp(TSNode name_declarator, const char* source_
         // Qualified identifier (e.g., Class::method)
         const char* full_name = get_node_text(name_declarator, source_code);
         debug_printf("DEBUG: Found qualified declaration: '%s'\n", full_name);
+        unsigned int line_num, col_num;
+        get_node_position(name_declarator, &line_num, &col_num);
         if (is_function_declarator) {
-            add_node(results, "func_declaration", full_name);
+            add_node(results, "func_declaration", full_name, line_num, col_num);
         }
         else {
-            add_node(results, "var_declaration", full_name);
+            add_node(results, "var_declaration", full_name, line_num, col_num);
         }
         free(full_name);
         TSNode sub_declarator = ts_node_child_by_field_name(name_declarator, "name", 4);
@@ -405,7 +437,9 @@ static void traverse_declaration_cpp(TSNode name_declarator, const char* source_
             if (strcmp(child_type, "identifier") == 0 || strcmp(child_type, "field_identifier") == 0) {
                 const char* var_name = get_node_text(child, source_code);
                 debug_printf("DEBUG: Found structured binding variable: '%s'\n", var_name);
-                add_node(results, "var_declaration", var_name);
+                unsigned int line_num, col_num;
+                get_node_position(child, &line_num, &col_num);
+                add_node(results, "var_declaration", var_name, line_num, col_num);
                 free(var_name);
             }
         }
@@ -461,7 +495,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             const char* func_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Python function definition via name field: '%s'\n", func_name);
-            add_node(results, "function_definition", func_name);
+            unsigned int line_num, col_num;
+            get_node_position(name_node, &line_num, &col_num);
+            add_node(results, "function_definition", func_name, line_num, col_num);
             free(func_name);
 
             traverse_tree(parameters_node, source_code, results, language_name);
@@ -483,7 +519,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             const char* class_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Python class definition via name field: '%s'\n", class_name);
-            add_node(results, "class_definition", class_name);
+            unsigned int line_num, col_num;
+            get_node_position(name_node, &line_num, &col_num);
+            add_node(results, "class_definition", class_name, line_num, col_num);
             free(class_name);
 
             // Process superclasses - try field access first, then fall back to child index
@@ -505,7 +543,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     if (strcmp(child_type, "identifier") == 0) {
                         const char* class_name = get_node_text(child, source_code);
                         debug_printf("DEBUG: Found parent class: '%s'\n", class_name);
-                        add_node(results, "identifier", class_name);
+                        unsigned int line_num, col_num;
+                        get_node_position(child, &line_num, &col_num);
+                        add_node(results, "identifier", class_name, line_num, col_num);
                         free(class_name);
                     }
                 }
@@ -580,7 +620,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             // ======================= AGENT END =======================
 
             debug_printf("DEBUG: Found Python call expression via function field: '%s'\n", func_name);
-            add_node(results, "call", func_name);
+            unsigned int line_num, col_num;
+            get_node_position(function_node, &line_num, &col_num);
+            add_node(results, "call", func_name, line_num, col_num);
             free(func_name);
 
             traverse_tree(arguments_node, source_code, results, language_name);
@@ -654,12 +696,14 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             // Check if this identifier is inside a decorator (like @property)
             // Note: parent variable is already declared above
             debug_printf("DEBUG: *** PYTHON IDENTIFIER HANDLER - Parent node type: '%s' ***\n", ts_node_is_null(parent) ? "null" : ts_node_type(parent));
+            unsigned int line_num, col_num;
+            get_node_position(node, &line_num, &col_num);
             if (!ts_node_is_null(parent) && strcmp(ts_node_type(parent), "decorator") == 0) {
                 debug_printf("DEBUG: *** FOUND DECORATOR IDENTIFIER: '%s' ***\n", name);
-                add_node(results, "call", name);
+                add_node(results, "call", name, line_num, col_num);
             } else {
                 debug_printf("DEBUG: *** Found Python identifier: '%s' ***\n", name);
-                add_node(results, "identifier", name);
+                add_node(results, "identifier", name, line_num, col_num);
             }
             free(name);
             return;
@@ -675,7 +719,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 const char* param_name = get_node_text(name_node, source_code);
                 debug_printf("DEBUG: Found Python formal parameter: '%s'\n", param_name);
                 debug_printf("DEBUG: About to add var_declaration for '%s'\n", param_name);
-                add_node(results, "var_declaration", param_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "var_declaration", param_name, line_num, col_num);
                 debug_printf("DEBUG: Added var_declaration for '%s'\n", param_name);
                 free(param_name);
                 return;
@@ -727,14 +773,18 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     // Extract the module name from dotted_name
                     const char* module_name = get_node_text(child, source_code);
                     debug_printf("DEBUG: Found module name in import: '%s'\n", module_name);
-                    add_node(results, "package", module_name);
+                    unsigned int line_num, col_num;
+                    get_node_position(child, &line_num, &col_num);
+                    add_node(results, "package", module_name, line_num, col_num);
                     free(module_name);
                 }
                 else if (strcmp(child_type, "identifier") == 0) {
                     // Handle simple module names
                     const char* module_name = get_node_text(child, source_code);
                     debug_printf("DEBUG: Found simple module name in import: '%s'\n", module_name);
-                    add_node(results, "package", module_name);
+                    unsigned int line_num, col_num;
+                    get_node_position(child, &line_num, &col_num);
+                    add_node(results, "package", module_name, line_num, col_num);
                     free(module_name);
                 }
             }
@@ -757,7 +807,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 if (strcmp(left_type, "identifier") == 0) {
                     const char* var_name = get_node_text(left_node, source_code);
                     debug_printf("DEBUG: Found assignment target: '%s'\n", var_name);
-                    add_node(results, "identifier", var_name);
+                    unsigned int line_num, col_num;
+                    get_node_position(left_node, &line_num, &col_num);
+                    add_node(results, "identifier", var_name, line_num, col_num);
                     free(var_name);
                 } else {
                     traverse_tree(left_node, source_code, results, language_name);
@@ -832,13 +884,16 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     treesitter_assert(!ts_node_is_null(short_name_node), "No name field found", node_text, __FILE__, __LINE__);
                     const char* short_func_name = get_node_text(short_name_node, source_code);
                     debug_printf("DEBUG: Found Python function definition via name field: '%s'\n", short_func_name);
-                    add_node(results, "function_definition", short_func_name);
+                    unsigned int line_num, col_num;
+                    get_node_position(short_name_node, &line_num, &col_num);
+                    add_node(results, "function_definition", short_func_name, line_num, col_num);
                     free(short_func_name);
     
                     // Also add the qualified name
                     const char* qualified_func_name = get_node_text(name_node, source_code);
                     debug_printf("DEBUG: Adding qualified function name: '%s'\n", qualified_func_name);
-                    add_node(results, "function_definition", qualified_func_name);
+                    get_node_position(name_node, &line_num, &col_num);
+                    add_node(results, "function_definition", qualified_func_name, line_num, col_num);
                     free(qualified_func_name);
                 }
                 else if (strcmp(ts_node_type(name_node), "template_function") == 0) {
@@ -847,13 +902,17 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     treesitter_assert(!ts_node_is_null(base_name_node), "No name field found in template_function", node_text, __FILE__, __LINE__);
                     const char* base_func_name = get_node_text(base_name_node, source_code);
                     debug_printf("DEBUG: Found template function definition via base name field: '%s'\n", base_func_name);
-                    add_node(results, "function_definition", base_func_name);
+                    unsigned int line_num, col_num;
+                    get_node_position(base_name_node, &line_num, &col_num);
+                    add_node(results, "function_definition", base_func_name, line_num, col_num);
                     free(base_func_name);
                 }
                 else {
                     const char* func_name = get_node_text(name_node, source_code);
                     debug_printf("DEBUG: Found function definition via declarator field: '%s'\n", func_name);
-                    add_node(results, "function_definition", func_name);
+                    unsigned int line_num, col_num;
+                    get_node_position(name_node, &line_num, &col_num);
+                    add_node(results, "function_definition", func_name, line_num, col_num);
                     free(func_name);
                 }
             }
@@ -890,7 +949,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             const char* class_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found class/struct definition via name field: '%s'\n", class_name);
-            add_node(results, "class_definition", class_name);
+            unsigned int line_num, col_num;
+            get_node_position(name_node, &line_num, &col_num);
+            add_node(results, "class_definition", class_name, line_num, col_num);
             free(class_name);
 
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
@@ -908,7 +969,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             if (!ts_node_is_null(name_node)) {
                 const char* class_name = get_node_text(name_node, source_code);
                 debug_printf("DEBUG: Found union definition via name field: '%s'\n", class_name);
-                add_node(results, "class_definition", class_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "class_definition", class_name, line_num, col_num);
                 free(class_name);
             }
 
@@ -938,7 +1001,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             if (!ts_node_is_null(name_node)) {
                 const char* enum_name = get_node_text(name_node, source_code);
                 debug_printf("DEBUG: Found enum name: '%s'\n", enum_name);
-                add_node(results, "identifier", enum_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "identifier", enum_name, line_num, col_num);
                 free(enum_name);
             }
 
@@ -954,7 +1019,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                         if (!ts_node_is_null(enum_name_node)) {
                             const char* enum_value = get_node_text(enum_name_node, source_code);
                             debug_printf("DEBUG: Found enum value: '%s'\n", enum_value);
-                            add_node(results, "identifier", enum_value);
+                            unsigned int line_num, col_num;
+                            get_node_position(enum_name_node, &line_num, &col_num);
+                            add_node(results, "identifier", enum_value, line_num, col_num);
                             free(enum_value);
                         }
                     }
@@ -982,7 +1049,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             else if (strcmp(ts_node_type(function_node), "qualified_identifier") == 0) {
                 const char* qualified_func_name = get_node_text(function_node, source_code);
                 debug_printf("DEBUG: Found qualified function name: '%s'\n", qualified_func_name);
-                add_node(results, "call", qualified_func_name);
+                unsigned int line_num, col_num;
+                get_node_position(function_node, &line_num, &col_num);
+                add_node(results, "call", qualified_func_name, line_num, col_num);
                 free(qualified_func_name);
                 name_node = ts_node_child_by_field_name(function_node, "name", 4);
                 treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
@@ -993,7 +1062,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             }
             const char* func_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found call expression via function field: '%s'\n", func_name);
-            add_node(results, "call", func_name);
+            unsigned int line_num, col_num;
+            get_node_position(name_node, &line_num, &col_num);
+            add_node(results, "call", func_name, line_num, col_num);
             free(func_name);
 
             TSNode arguments_node = ts_node_child_by_field_name(node, "arguments", 9);
@@ -1064,7 +1135,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 if (is_lambda_param) {
                     const char* param_name = get_node_text(declarator_node, source_code);
                     debug_printf("DEBUG: Found lambda parameter identifier: '%s'\n", param_name);
-                    add_node(results, "var_declaration", param_name);
+                    unsigned int line_num, col_num;
+                    get_node_position(declarator_node, &line_num, &col_num);
+                    add_node(results, "var_declaration", param_name, line_num, col_num);
                     free(param_name);
                 } else if (is_function_declaration_param) {
                     // For function declaration parameters, don't process as variable declarations
@@ -1094,7 +1167,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             const char* name = get_node_text(node, source_code);
             debug_printf("DEBUG: Found C++ identifier: '%s'\n", name);
-            add_node(results, "identifier", name);
+            unsigned int line_num, col_num;
+            get_node_position(node, &line_num, &col_num);
+            add_node(results, "identifier", name, line_num, col_num);
             free(name);
             return;
         }
@@ -1122,7 +1197,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     if (strcmp(prev_type, "placeholder_type_specifier") == 0 && strcmp(next_type, ":") == 0) {
                         const char* var_name = get_node_text(child, source_code);
                         debug_printf("DEBUG: Found for range loop variable: '%s'\n", var_name);
-                        add_node(results, "var_declaration", var_name);
+                        unsigned int line_num, col_num;
+                        get_node_position(child, &line_num, &col_num);
+                        add_node(results, "var_declaration", var_name, line_num, col_num);
                         free(var_name);
                     } else {
                         // Otherwise, process as normal identifier
@@ -1160,7 +1237,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             treesitter_assert(!ts_node_is_null(type_node), "No type field found", node_text, __FILE__, __LINE__);
             const char* type_name = get_node_text(type_node, source_code);
             debug_printf("DEBUG: Found C++ new expression's type: '%s'\n", type_name);
-            add_node(results, "object_creation", type_name);
+            unsigned int line_num, col_num;
+            get_node_position(type_node, &line_num, &col_num);
+            add_node(results, "object_creation", type_name, line_num, col_num);
             if (!ts_node_is_null(arguments_node)) {
                 traverse_tree(arguments_node, source_code, results, language_name);
             }
@@ -1188,10 +1267,12 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             // ======================= AGENT START =======================
             // Check if this is a declaration (no body) or definition (has body)
+            unsigned int line_num, col_num;
+            get_node_position(name_node, &line_num, &col_num);
             if (ts_node_is_null(body_node)) {
-                add_node(results, "func_declaration", method_name);
+                add_node(results, "func_declaration", method_name, line_num, col_num);
             } else {
-                add_node(results, "function_definition", method_name);
+                add_node(results, "function_definition", method_name, line_num, col_num);
             }
             // ======================= AGENT END =======================
             free(method_name);
@@ -1213,7 +1294,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 const char* param_name = get_node_text(name_node, source_code);
                 debug_printf("DEBUG: Found Java formal parameter: '%s'\n", param_name);
                 debug_printf("DEBUG: About to add var_declaration for '%s'\n", param_name);
-                add_node(results, "var_declaration", param_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "var_declaration", param_name, line_num, col_num);
                 debug_printf("DEBUG: Added var_declaration for '%s'\n", param_name);
                 free(param_name);
                 return;
@@ -1234,7 +1317,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             const char* class_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Java class declaration via name field: '%s'\n", class_name);
-            add_node(results, "class_definition", class_name);
+            unsigned int line_num, col_num;
+            get_node_position(name_node, &line_num, &col_num);
+            add_node(results, "class_definition", class_name, line_num, col_num);
             free(class_name);
 
             traverse_tree(body_node, source_code, results, language_name);
@@ -1252,7 +1337,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             const char* interface_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Java interface declaration via name field: '%s'\n", interface_name);
-            add_node(results, "class_definition", interface_name);
+            unsigned int line_num, col_num;
+            get_node_position(name_node, &line_num, &col_num);
+            add_node(results, "class_definition", interface_name, line_num, col_num);
             free(interface_name);
 
             traverse_tree(body_node, source_code, results, language_name);
@@ -1270,7 +1357,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
               if (strcmp(ts_node_type(method_name_node), "identifier") == 0) {
                   const char* method_name = get_node_text(method_name_node, source_code);
                   debug_printf("DEBUG: Found Java method reference: '%s'\n", method_name);
-                  add_node(results, "call", method_name);
+                  unsigned int line_num, col_num;
+                  get_node_position(method_name_node, &line_num, &col_num);
+                  add_node(results, "call", method_name, line_num, col_num);
                   free(method_name);
               }
           }
@@ -1298,7 +1387,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             const char* method_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Java method invocation via name field: '%s'\n", method_name);
-            add_node(results, "call", method_name);
+            unsigned int line_num, col_num;
+            get_node_position(name_node, &line_num, &col_num);
+            add_node(results, "call", method_name, line_num, col_num);
             free(method_name);
 
             traverse_tree(arguments_node, source_code, results, language_name);
@@ -1320,14 +1411,18 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             if (!ts_node_is_null(object_node)) {
                 const char* object_text = get_node_text(object_node, source_code);
                 debug_printf("DEBUG: Found field access object: '%s'\n", object_text);
-                add_node(results, "identifier", object_text);
+                unsigned int line_num, col_num;
+                get_node_position(object_node, &line_num, &col_num);
+                add_node(results, "identifier", object_text, line_num, col_num);
                 free(object_text);
             }
 
             if (!ts_node_is_null(field_node)) {
                 const char* field_text = get_node_text(field_node, source_code);
                 debug_printf("DEBUG: Found field access field: '%s'\n", field_text);
-                add_node(results, "identifier", field_text);
+                unsigned int line_num, col_num;
+                get_node_position(field_node, &line_num, &col_num);
+                add_node(results, "identifier", field_text, line_num, col_num);
                 free(field_text);
             }
 
@@ -1345,7 +1440,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             TSNode name_node = ts_node_child_by_field_name(declarator_node, "name", 4);
             const char* var_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Java local variable declaration: '%s'\n", var_name);
-            add_node(results, "var_declaration", var_name);
+            unsigned int line_num, col_num;
+            get_node_position(name_node, &line_num, &col_num);
+            add_node(results, "var_declaration", var_name, line_num, col_num);
             free(var_name);
             if (!ts_node_is_null(ts_node_child_by_field_name(declarator_node, "value", 5))) {
                 debug_print_child(ts_node_child_by_field_name(declarator_node, "value", 5), source_code);
@@ -1363,7 +1460,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             TSNode name_node = ts_node_child_by_field_name(declarator_node, "name", 4);
             const char* var_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Java local variable declaration: '%s'\n", var_name);
-            add_node(results, "var_declaration", var_name);
+            unsigned int line_num, col_num;
+            get_node_position(name_node, &line_num, &col_num);
+            add_node(results, "var_declaration", var_name, line_num, col_num);
             free(var_name);
             if (!ts_node_is_null(ts_node_child_by_field_name(declarator_node, "value", 5))) {
                 traverse_tree(ts_node_child_by_field_name(declarator_node, "value", 5), source_code, results, language_name);
@@ -1379,7 +1478,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             treesitter_assert(!ts_node_is_null(type_node), "No type field found", node_text, __FILE__, __LINE__);
             const char* type_name = get_node_text(type_node, source_code);
             debug_printf("DEBUG: Found Java object creation expression: '%s'\n", type_name);
-            add_node(results, "object_creation", type_name);
+            unsigned int line_num, col_num;
+            get_node_position(type_node, &line_num, &col_num);
+            add_node(results, "object_creation", type_name, line_num, col_num);
             if (!ts_node_is_null(arguments_node)) {
                 traverse_tree(arguments_node, source_code, results, language_name);
             }
@@ -1398,7 +1499,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 const char* param_name = get_node_text(name_node, source_code);
                 debug_printf("DEBUG: Found Java catch parameter: '%s'\n", param_name);
                 debug_printf("DEBUG: About to add var_declaration for '%s'\n", param_name);
-                add_node(results, "var_declaration", param_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "var_declaration", param_name, line_num, col_num);
                 debug_printf("DEBUG: Added var_declaration for '%s'\n", param_name);
                 free(param_name);
                 return;
@@ -1412,7 +1515,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             const char* name = get_node_text(node, source_code);
             debug_printf("DEBUG: Found Java identifier: '%s'\n", name);
-            add_node(results, "identifier", name);
+            unsigned int line_num, col_num;
+            get_node_position(node, &line_num, &col_num);
+            add_node(results, "identifier", name, line_num, col_num);
             free(name);
             return;
         }
@@ -1471,7 +1576,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                                                     strcmp(element_name, "sql") == 0) {
 
                                                     // Add as a special node type for MyBatis functions
-                                                    add_node(results, "mybatis_function", attr_value);
+                                                    unsigned int line_num, col_num;
+                                                    get_node_position(node, &line_num, &col_num);
+                                                    add_node(results, "mybatis_function", attr_value, line_num, col_num);
                                                 }
                                                 free(element_name);
                                                 break;
@@ -1576,7 +1683,7 @@ static ParseResults* fallback_parse(const char* code, const char* language_name)
                     if (word) {
                         memcpy(word, code + start, len);
                         word[len] = '\0';
-                        add_node(results, "regex_node", word);
+                        add_node(results, "regex_node", word, -1, -1);  // Position unavailable in fallback parser
                         free(word);
                     }
                 }
@@ -1716,71 +1823,73 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
     for (size_t i = 0; i < ast_nodes->count; i++) {
         const char* node_type = ast_nodes->node_types[i];
         const char* node_text = ast_nodes->node_texts[i];
-        
+        unsigned int line_num = ast_nodes->line_numbers[i];
+        unsigned int col_num = ast_nodes->column_numbers[i];
+
         // Function definitions - always include with prefix
         if (strcmp(node_type, "function_definition") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[FUNCDEF]%s", node_text);
-            add_token(tokens, prefixed_token);
+            add_token(tokens, prefixed_token, line_num, col_num);
             continue;
         }
-        
+
         // Class definitions - always include with prefix
         if (strcmp(node_type, "class_definition") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[CLASS]%s", node_text);
-            add_token(tokens, prefixed_token);
+            add_token(tokens, prefixed_token, line_num, col_num);
             continue;
         }
-        
+
         // Function calls - include with prefix, but skip if it's a function/class we already defined
         if (strcmp(node_type, "call") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[CALL]%s", node_text);
-            add_token(tokens, prefixed_token);
+            add_token(tokens, prefixed_token, line_num, col_num);
             continue;
         }
 
-        
+
         if (strcmp(node_type, "regex_node") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "%s", node_text);
-            add_token(tokens, prefixed_token);
+            add_token(tokens, prefixed_token, line_num, col_num);
             continue;
         }
 
         if (strcmp(node_type, "identifier") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[IDENTIFIER]%s", node_text);
-            add_token(tokens, prefixed_token);
+            add_token(tokens, prefixed_token, line_num, col_num);
             continue;
         }
 
         if (strcmp(node_type, "package") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[PKG]%s", node_text);
-            add_token(tokens, prefixed_token);
+            add_token(tokens, prefixed_token, line_num, col_num);
             continue;
         }
 
         if (strcmp(node_type, "var_declaration") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[VARDECL]%s", node_text);
-            add_token(tokens, prefixed_token);
+            add_token(tokens, prefixed_token, line_num, col_num);
             continue;
         }
 
         if (strcmp(node_type, "func_declaration") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[FUNCDECL]%s", node_text);
-            add_token(tokens, prefixed_token);
+            add_token(tokens, prefixed_token, line_num, col_num);
             continue;
         }
 
         if (strcmp(node_type, "object_creation") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[OBJECTCREATION]%s", node_text);
-            add_token(tokens, prefixed_token);
+            add_token(tokens, prefixed_token, line_num, col_num);
             continue;
         }
 
@@ -1788,7 +1897,7 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
         if (strcmp(node_type, "mybatis_function") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[FUNCDEF]%s", node_text);
-            add_token(tokens, prefixed_token);
+            add_token(tokens, prefixed_token, line_num, col_num);
             continue;
         }
 
@@ -1797,7 +1906,6 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
             continue;
         }
     }
-    
 
     free_parse_results(ast_nodes);
     return tokens;
@@ -1863,10 +1971,14 @@ static PyObject* tokenize_for_bm25(PyObject* self, PyObject* args) {
     results = extract_bm25_tokens_treesitter(code, language_name);
     Py_END_ALLOW_THREADS
 
-    // Convert results to Python list (needs GIL)
+    // Convert results to Python list of tuples (token, line_num, col_num) (needs GIL)
     PyObject* py_results = PyList_New(results->count);
     for (size_t i = 0; i < results->count; i++) {
-        PyList_SetItem(py_results, i, PyUnicode_FromString(results->tokens[i]));
+        PyObject* tuple = PyTuple_New(3);
+        PyTuple_SetItem(tuple, 0, PyUnicode_FromString(results->tokens[i]));
+        PyTuple_SetItem(tuple, 1, PyLong_FromUnsignedLong(results->line_numbers[i]));
+        PyTuple_SetItem(tuple, 2, PyLong_FromUnsignedLong(results->column_numbers[i]));
+        PyList_SetItem(py_results, i, tuple);
     }
 
     // Cleanup

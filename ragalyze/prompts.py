@@ -201,6 +201,23 @@ FETCH_FUNC_IMPLEMENTATION_TEMPLATE = Prompt(
     )
 )
 
+# Prompt for fetching function definition with optional header and parameters
+FETCH_FUNCTION_DEFINITION_TEMPLATE = Prompt(
+    PROMPT_TEMPLATE.call(
+        task_description="Find the complete definition of function {{function_name}}",
+        context=r"""{% if header %}Function header: {{header}}
+{% endif %}{% if parameters %}Parameters: {{parameters}}
+{% endif %}""",
+        output_format=r"""
+{
+    "file_path": "[File path]",
+    "function_definition": "[Function definition]"
+}
+If you cannot find the definition, reply "None".
+""",
+    )
+)
+
 # Prompt for querying arguments inside a function call
 GET_FUNCTION_ARGUMENTS_TEMPLATE = Prompt(
     PROMPT_TEMPLATE.call(

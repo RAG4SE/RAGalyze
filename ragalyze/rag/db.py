@@ -20,9 +20,7 @@ from ragalyze.rag.transformer_registry import (
     create_bm25_transformer,
 )
 from ragalyze.core.types import DualVectorDocument
-from ragalyze.rag.dynamic_splitter_transformer import DynamicSplitterTransformer
 from ragalyze.configs import get_batch_embedder, configs
-from ragalyze.rag.bm25_transformer import BM25Transformer
 
 # The setting is from the observation that the maximum length of Solidity compiler's files is 919974
 MAX_EMBEDDING_LENGTH = 1000000
@@ -876,7 +874,7 @@ class DatabaseManager:
             transformer=create_splitter_transformer(), key="split"
         )
         self.db.register_transformer(
-            transformer=create_bm25_transformer(), key="bm25_index"
+            transformer=create_bm25_transformer(), key="bm25_indexes"
         )
         self.db.register_transformer(
             transformer=create_embedder_transformer(), key="embed"
@@ -886,6 +884,13 @@ class DatabaseManager:
                 create_splitter_transformer(), create_bm25_transformer()
             ),
             key="split_bm25",
+        )
+        self.db.register_transformer(
+            transformer=adal.Sequential(
+                create_bm25_transformer(),
+                create_splitter_transformer(),
+            ),
+            key="bm25_split",
         )
         self.db.register_transformer(
             transformer=adal.Sequential(
@@ -903,8 +908,8 @@ class DatabaseManager:
             self.db.transform(key="split_bm25_embed")
             transformed_documents = self.db.get_transformed_data(key="split_plus_bm25")
         else:
-            self.db.transform(key="split_bm25")
-            transformed_documents = self.db.get_transformed_data(key="split_bm25")
+            self.db.transform(key="bm25_split")
+            transformed_documents = self.db.get_transformed_data(key="bm25_split")
 
         self.db.save_state(filepath=self.cache_file_path)
         id2doc = {doc.id: doc for doc in transformed_documents}

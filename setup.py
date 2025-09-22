@@ -237,8 +237,7 @@ def get_tree_sitter_config():
     # Download language parsers if enabled
     sources = []
     if ENABLE_LANGUAGE_PARSERS:
-        # lang_dir = download_tree_sitter_languages()
-        lang_dir = "tree-sitter-languages"
+        lang_dir = download_tree_sitter_languages()
         
         # Find downloaded language parsers
         for lang in ['python', 'cpp', 'java', 'c', 'javascript', 'go', 'rust', 'xml']:
