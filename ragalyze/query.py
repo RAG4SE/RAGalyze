@@ -142,9 +142,12 @@ def save_query_results(
             f.write("BM25-retrieved docs\n")
             f.write("=" * 50 + "\n")
             for i, doc in enumerate(result["bm25_docs"], 1):
-                f.write(
-                    f"\n{i}. File: {doc.meta_data['file_path'] if isinstance(doc, Document) else doc.original_doc.meta_data['file_path']}\n"
+                file_path = (
+                    doc.meta_data.get('file_path', 'Unknown')
+                    if isinstance(doc, Document)
+                    else doc.original_doc.meta_data.get('file_path', 'Unknown')
                 )
+                f.write(f"\n{i}. File: {file_path}\n")
                 f.write(
                     f"Document ID: {doc.id if isinstance(doc, Document) else doc.original_doc.id}\n"
                 )
@@ -238,6 +241,12 @@ def build_context(
 
     assert direction in ["both", "previous", "next"], f"Invalid direction: {direction}"
 
+    def start_line_num(text):
+        return text.split('\n')[0].split(':', 1)[0].strip()
+
+    def end_line_num(text):
+        return text.split('\n')[-1].split(':', 1)[0].strip()
+
     new_doc = deepcopy(doc)
     cnt = 0
     this_doc = doc
@@ -246,7 +255,11 @@ def build_context(
     if direction == "both" or direction == "previous":
         while doc.meta_data["prev_doc_id"] is not None and cnt < count:
             prev_doc = id2doc[doc.meta_data["prev_doc_id"]]
-            new_doc.text = prev_doc.text + new_doc.text
+            if end_line_num(prev_doc.text) == start_line_num(new_doc.text):
+                new_doc.text = prev_doc.text + new_doc.text.split(':', 1)[1].strip()
+            else:
+                new_doc.text = prev_doc.text + new_doc.text
+            new_doc.meta_data["original_text"] = prev_doc.meta_data["original_text"] + new_doc.meta_data["original_text"]
             doc = prev_doc
             cnt += 1
         if doc.meta_data["prev_doc_id"] is None:
@@ -256,7 +269,11 @@ def build_context(
     if direction == "both" or direction == "next":
         while doc.meta_data["next_doc_id"] is not None and cnt < count:
             next_doc = id2doc[doc.meta_data["next_doc_id"]]
-            new_doc.text = new_doc.text + next_doc.text
+            if end_line_num(new_doc.text) == start_line_num(next_doc.text):
+                new_doc.text = new_doc.text + next_doc.text.split(':', 1)[1].strip()
+            else:
+                new_doc.text = new_doc.text + next_doc.text
+            new_doc.meta_data["original_text"] = new_doc.meta_data["original_text"] + next_doc.meta_data["original_text"]
             doc = next_doc
             cnt += 1
         if doc.meta_data["next_doc_id"] is None:

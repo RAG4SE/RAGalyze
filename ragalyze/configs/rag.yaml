@@ -20,7 +20,7 @@ rag:
       # We first use bm25 to retrieve top_k candidate documents
       # based on syntax similarity
       k1: 1.2
-      b: 0.75
+      b: 0 # Does not care for doc's length
       # The weight of bm25 score in the final score in `normal_add`
       # 0.5 means equal contribution from both BM25 and FAISS
       weight: 0.5

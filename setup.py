@@ -198,8 +198,7 @@ def download_tree_sitter_languages():
     # Download and extract language parsers
     for lang, url in languages.items():
         lang_archive = os.path.join(tree_sitter_dir, f"tree-sitter-{lang}.tar.gz")
-        lang_extract_dir = os.path.join(tree_sitter_dir, f"tree-sitter-{lang}")
-        
+        lang_extract_dir = os.path.join(tree_sitter_dir, f"tree-sitter-{lang}-{parser_versions[lang]}")
         if not os.path.exists(lang_extract_dir) and not os.path.exists(lang_archive):
             try:
                 print(f"Downloading tree-sitter {lang} parser...")
@@ -325,9 +324,9 @@ pcre2_config = get_pcre2_config()
 tree_sitter_config = get_tree_sitter_config() if ENABLE_TREESITTER else {'include_dirs': [], 'sources': []}
 
 # Tree-sitter extension with real tree-sitter integration
-treesitter_sources = ['ragalyze/rag/treesitter_parse.c']
+treesitter_sources = ['ragalyze/lib/treesitter_parse.c']
 
-treesitter_include_dirs = [np.get_include()]
+treesitter_include_dirs = [np.get_include(), 'ragalyze/lib']
 if 'include_dirs' in tree_sitter_config:
     treesitter_include_dirs.extend(tree_sitter_config['include_dirs'])
 if 'include_dirs' in pcre2_config:
@@ -365,13 +364,38 @@ treesitter_extension = Extension(
     define_macros=[("TS_DEBUG", "1")],  # 👈 开启 LOG
 )
 
+# Fast text splitter extension - platform-specific libraries
+import platform
+system = platform.system().lower()
+
+text_splitter_libraries = []
+text_splitter_extra_compile_args = ['-O3', '-Wall']
+
+if system == 'linux':
+    text_splitter_libraries = ['uuid']
+elif system == 'darwin':  # macOS
+    # macOS has built-in UUID support, no extra libraries needed
+    pass
+elif system == 'windows':
+    text_splitter_libraries = ['rpcrt4']
+    text_splitter_extra_compile_args.extend(['/O2'])
+
+# Fast chunk processor extension for parallel processing
+fast_chunk_processor_extension = Extension(
+    'ragalyze.lib.fast_chunk_processor',
+    sources=['ragalyze/lib/fast_chunk_processor.c'],
+    libraries=text_splitter_libraries,
+    extra_compile_args=text_splitter_extra_compile_args,
+    language='c',
+)
+
 # Setup configuration
 setup(
     name='RAGalyze-unified',
     version='1.0',
     description='Unified C extensions for RAGalyze with tree-sitter integration',
     # ext_modules=[bm25_c_extension, treesitter_extension],
-    ext_modules=[treesitter_extension],
+    ext_modules=[treesitter_extension, fast_chunk_processor_extension],
     cmdclass={},
     zip_safe=False,
     install_requires=['numpy'],

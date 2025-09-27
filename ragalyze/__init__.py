@@ -44,7 +44,7 @@ using RAG (Retrieval-Augmented Generation) technology.
 #     load_default_config,
 #     set_global_config_value,
 # )
-# from .agent import FetchCallerHeaderAgent, FetchCallerNameAgent, FetchCallerNameFromHeaderAgent
+# from .agent import FetchCallerHeaderPipeline, ExtractCallerNameAgent, FetchCallerNameFromHeaderQuery
 
 # __all__ = [
 #     "query_repository",
@@ -55,7 +55,7 @@ using RAG (Retrieval-Augmented Generation) technology.
 #     "load_default_config",
 #     "configs",
 #     "set_global_config_value",
-#     "FetchCallerHeaderAgent",
-#     "FetchCallerNameAgent",
-#     "FetchCallerNameFromHeaderAgent",
+#     "FetchCallerHeaderPipeline",
+#     "ExtractCallerNameAgent",
+#     "FetchCallerNameFromHeaderQuery",
 # ]

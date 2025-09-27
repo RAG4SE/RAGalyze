@@ -12,6 +12,7 @@ from adalflow.core.types import Document, List
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
 
+from ragalyze.configs.compose_hydra import set_global_config_value
 from ragalyze.rag.splitter import MyTextSplitter
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from ragalyze.rag.transformer_registry import (
@@ -816,10 +817,9 @@ class DB(LocalDB):
                     for doc in transformed_docs:
                         self.transformed_items[transformer_key].append(doc)
 
-
 class DatabaseManager:
     """
-    Manages the creation, loading, transformation, and persistence of LocalDB instances.
+    Manages the creation, loading, transformation, and persistence of LocalDB instances for a single repository.
     """
 
     def __init__(self):
@@ -860,15 +860,21 @@ class DatabaseManager:
         if os.path.exists(self.cache_file_path) and not configs()["rag"]["recreate_db"]:
             logger.info("Loading existing database...")
             self.db = DB.load_state(self.cache_file_path)
-            documents = self.db.get_transformed_data(
-                key=os.path.basename(self.cache_file_path)
-            )
+            if not self.query_driven:
+                documents = self.db.get_transformed_data(key="split_plus_bm25")
+            else:
+                documents = self.db.get_transformed_data(key="bm25_split")
             if documents:
                 logger.info(f"Loaded {len(documents)} documents from existing database")
-                return documents
+                id2doc = {doc.id: doc for doc in documents}
+                return documents, id2doc
             else:
                 logger.warning("No documents found in the existing database")
-                return []
+                return [], {}
+        # If recreate_db is True, another DatabaseManager for the same repo may not know that
+        # the database is already created.
+        # So we set it to False to avoid creating the database multiple times.
+        set_global_config_value("rag.recreate_db", False)
         self.db = DB()
         self.db.register_transformer(
             transformer=create_splitter_transformer(), key="split"

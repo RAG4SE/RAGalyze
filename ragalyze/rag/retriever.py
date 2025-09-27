@@ -18,7 +18,6 @@ from ragalyze.configs import get_embedder, configs
 from ragalyze.core.types import DualVectorDocument
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from ragalyze.core.utils import minmax_norm, zscore_norm
-from ragalyze.rag.treesitter_parse_interface import tokenize_for_bm25, set_debug_mode
 
 logger = get_tqdm_compatible_logger(__name__)
 
@@ -50,13 +49,19 @@ class BM25Retriever:
 
         corpus = [
             (
-                doc.original_doc.meta_data["bm25_indexes"]
+                doc.original_doc.meta_data.get("bm25_indexes", [])
                 if isinstance(doc, DualVectorDocument)
-                else doc.meta_data["bm25_indexes"]
+                else doc.meta_data.get("bm25_indexes", [])
             )
             for doc in documents
         ]
-        corpus = [[bm25_index.token for bm25_index in bm25_indexes] for bm25_indexes in corpus]
+        corpus = [
+            [
+                bm25_index.token if hasattr(bm25_index, 'token') else bm25_index[0]
+                for bm25_index in bm25_indexes
+            ]
+            for bm25_indexes in corpus
+        ]
 
         self.bm25 = BM25L(
             corpus,

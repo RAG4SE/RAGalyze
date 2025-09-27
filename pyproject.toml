@@ -64,4 +64,8 @@ where = ["."]
 
 [[tool.setuptools.ext-modules]]
 name = "ragalyze.rag.treesitter_parse"
-sources = ["ragalyze/rag/treesitter_parse.c"]
+sources = ["ragalyze/lib/treesitter_parse.c"]
+
+[[tool.setuptools.ext-modules]]
+name = "ragalyze.lib.fast_chunk_processor"
+sources = ["ragalyze/lib/fast_chunk_processor.c"]

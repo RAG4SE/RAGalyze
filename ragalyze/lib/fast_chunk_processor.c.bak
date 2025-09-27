@@ -1,0 +1,437 @@
+#include <Python.h>
+#include <string.h>
+#include <stdlib.h>
+#include "ragalyze_common.h"
+
+// Global debug flag
+static int debug_enabled = 0;
+
+// Debug printf function that only prints when debug mode is enabled
+static void debug_printf(const char* format, ...) {
+    if (debug_enabled) {
+        va_list args;
+        va_start(args, format);
+        vprintf(format, args);
+        va_end(args);
+    }
+}
+
+// Reference structures from text_splitter_fast.c
+typedef struct {
+    char* token;
+    int line;
+    int col;
+} BM25Index;
+
+typedef struct {
+    char* text;
+    size_t text_len;
+    char* id;
+    char* parent_doc_id;
+    int order;
+    float score;
+    int estimated_num_tokens;
+    BM25Index* bm25_indexes;
+    size_t bm25_count;
+} CDocument;
+
+// Parse Python document dictionary into CDocument structure
+static int parse_python_document(PyObject* doc_obj, CDocument* cdoc) {
+    memset(cdoc, 0, sizeof(CDocument));
+
+    if (!PyDict_Check(doc_obj)) {
+        debug_printf("parse_python_document: Input is not a dictionary\n");
+        return 0;
+    }
+
+    // Get text
+    PyObject* text_obj = PyDict_GetItemString(doc_obj, "text");
+    if (!text_obj || !PyUnicode_Check(text_obj)) {
+        debug_printf("parse_python_document: Invalid or missing text field\n");
+        return 0;
+    }
+    cdoc->text = ragalyze_strdup(PyUnicode_AsUTF8(text_obj));
+    RAGALYZE_ASSERT(cdoc->text != NULL, "Failed to duplicate text", NULL);
+    cdoc->text_len = strlen(cdoc->text);
+
+    // Get id
+    PyObject* id_obj = PyDict_GetItemString(doc_obj, "id");
+    if (id_obj && PyUnicode_Check(id_obj)) {
+        cdoc->id = ragalyze_strdup(PyUnicode_AsUTF8(id_obj));
+    }
+
+    // Get parent_doc_id
+    PyObject* parent_obj = PyDict_GetItemString(doc_obj, "parent_doc_id");
+    if (parent_obj && PyUnicode_Check(parent_obj)) {
+        cdoc->parent_doc_id = ragalyze_strdup(PyUnicode_AsUTF8(parent_obj));
+    }
+
+    // Get order
+    PyObject* order_obj = PyDict_GetItemString(doc_obj, "order");
+    if (order_obj && PyLong_Check(order_obj)) {
+        cdoc->order = PyLong_AsLong(order_obj);
+    } else {
+        cdoc->order = -1;
+    }
+
+    // Get metadata and BM25 indexes
+    PyObject* meta_obj = PyDict_GetItemString(doc_obj, "meta_data");
+    if (meta_obj && PyDict_Check(meta_obj)) {
+        PyObject* bm25_obj = PyDict_GetItemString(meta_obj, "bm25_indexes");
+        if (bm25_obj && PyList_Check(bm25_obj)) {
+            cdoc->bm25_count = PyList_Size(bm25_obj);
+            if (cdoc->bm25_count > 0) {
+                cdoc->bm25_indexes = RAGALYZE_MALLOC(cdoc->bm25_count * sizeof(BM25Index));
+                ASSERT_ALLOC(cdoc->bm25_indexes, NULL);
+
+                for (size_t i = 0; i < cdoc->bm25_count; i++) {
+                    PyObject* bm25_item = PyList_GetItem(bm25_obj, i);
+
+                    // Check if it's a BM25Index object with token and position attributes
+                    if (PyObject_HasAttrString(bm25_item, "token") && PyObject_HasAttrString(bm25_item, "position")) {
+                        // Get token attribute
+                        PyObject* token_obj = PyObject_GetAttrString(bm25_item, "token");
+                        if (token_obj && PyUnicode_Check(token_obj)) {
+                            cdoc->bm25_indexes[i].token = ragalyze_strdup(PyUnicode_AsUTF8(token_obj));
+                        } else {
+                            cdoc->bm25_indexes[i].token = NULL;
+                        }
+                        Py_XDECREF(token_obj);
+
+                        // Get position attribute (tuple of (line, col))
+                        PyObject* position_obj = PyObject_GetAttrString(bm25_item, "position");
+                        if (position_obj && PyTuple_Check(position_obj) && PyTuple_Size(position_obj) >= 2) {
+                            PyObject* line_obj = PyTuple_GetItem(position_obj, 0);
+                            PyObject* col_obj = PyTuple_GetItem(position_obj, 1);
+
+                            if (PyLong_Check(line_obj)) {
+                                cdoc->bm25_indexes[i].line = PyLong_AsLong(line_obj);
+                            } else {
+                                cdoc->bm25_indexes[i].line = 0;
+                            }
+                            if (PyLong_Check(col_obj)) {
+                                cdoc->bm25_indexes[i].col = PyLong_AsLong(col_obj);
+                            } else {
+                                cdoc->bm25_indexes[i].col = 0;
+                            }
+                        } else {
+                            cdoc->bm25_indexes[i].line = 0;
+                            cdoc->bm25_indexes[i].col = 0;
+                        }
+                        Py_XDECREF(position_obj);
+                    } else {
+                        // Fallback: try to parse as tuple (token, line, col)
+                        if (PyTuple_Check(bm25_item) && PyTuple_Size(bm25_item) >= 3) {
+                            PyObject* token_obj = PyTuple_GetItem(bm25_item, 0);
+                            PyObject* line_obj = PyTuple_GetItem(bm25_item, 1);
+                            PyObject* col_obj = PyTuple_GetItem(bm25_item, 2);
+
+                            if (PyUnicode_Check(token_obj)) {
+                                cdoc->bm25_indexes[i].token = ragalyze_strdup(PyUnicode_AsUTF8(token_obj));
+                            } else {
+                                cdoc->bm25_indexes[i].token = NULL;
+                            }
+                            if (PyLong_Check(line_obj)) {
+                                cdoc->bm25_indexes[i].line = PyLong_AsLong(line_obj);
+                            } else {
+                                cdoc->bm25_indexes[i].line = 0;
+                            }
+                            if (PyLong_Check(col_obj)) {
+                                cdoc->bm25_indexes[i].col = PyLong_AsLong(col_obj);
+                            } else {
+                                cdoc->bm25_indexes[i].col = 0;
+                            }
+                        } else {
+                            // Initialize with default values if object is invalid
+                            cdoc->bm25_indexes[i].token = NULL;
+                            cdoc->bm25_indexes[i].line = 0;
+                            cdoc->bm25_indexes[i].col = 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    debug_printf("parse_python_document: Successfully parsed document with %zu BM25 indexes\n", cdoc->bm25_count);
+    return 1;
+}
+
+
+// Create line-numbered text
+static char* create_line_numbered_text(const char* text, int start_line) {
+    if (!text) {
+        return NULL;
+    }
+
+    int line_count = 1;
+    int text_len = strlen(text);
+    for (int i = 0; i < text_len; i++) {
+        if (text[i] == '\n') line_count++;
+    }
+
+    int buffer_size = text_len + line_count * 20;
+    char* result = malloc(buffer_size);
+    if (!result) {
+        return NULL;
+    }
+
+    int current_line = start_line;
+    int result_pos = 0;
+    int line_start = 0;
+
+    for (int i = 0; i <= text_len; i++) {
+        if (i == text_len || text[i] == '\n') {
+            int prefix_len = snprintf(result + result_pos, buffer_size - result_pos, "%d: ", current_line);
+            result_pos += prefix_len;
+
+            int line_len = i - line_start;
+            if (line_len > 0) {
+                strncpy(result + result_pos, text + line_start, line_len);
+                result_pos += line_len;
+            }
+
+            if (i < text_len) {
+                result[result_pos++] = '\n';
+            }
+
+            current_line++;
+            line_start = i + 1;
+        }
+    }
+
+    result[result_pos] = '\0';
+    return result;
+}
+
+// Free CDocument memory
+static void free_cdocument(CDocument* cdoc) {
+    if (cdoc->text) free(cdoc->text);
+    if (cdoc->id) free(cdoc->id);
+    if (cdoc->parent_doc_id) free(cdoc->parent_doc_id);
+    if (cdoc->bm25_indexes) {
+        for (size_t i = 0; i < cdoc->bm25_count; i++) {
+            if (cdoc->bm25_indexes[i].token) {
+                free(cdoc->bm25_indexes[i].token);
+            }
+        }
+        free(cdoc->bm25_indexes);
+    }
+}
+
+
+// Main function: Process a single chunk with GIL release
+static PyObject* _process_chunk_impl(PyObject* self, PyObject* args) {
+    PyObject* doc_dict;
+    int chunk_start;
+    int chunk_len;
+    int chunk_idx;
+
+    if (!PyArg_ParseTuple(args, "Oiii", &doc_dict, &chunk_start, &chunk_len, &chunk_idx)) {
+        PyErr_SetString(PyExc_TypeError, "Invalid arguments: expected (dict, int, int, int)");
+        return NULL;
+    }
+
+    if (!PyDict_Check(doc_dict)) {
+        PyErr_SetString(PyExc_TypeError, "First argument must be a dictionary");
+        return NULL;
+    }
+
+    // Parse document
+    CDocument cdoc = {0};
+    if (!parse_python_document(doc_dict, &cdoc)) {
+        PyErr_SetString(PyExc_ValueError, "Failed to parse document");
+        return NULL;
+    }
+
+    if (!cdoc.text || chunk_start < 0 || chunk_len <= 0 || chunk_start + chunk_len > (int)cdoc.text_len) {
+        free_cdocument(&cdoc);
+        PyErr_SetString(PyExc_ValueError, "Invalid chunk parameters");
+        return NULL;
+    }
+
+    // Declare variables outside GIL block
+    char* chunk_text = NULL;
+    int start_line = 0;
+    char* line_numbered_text = NULL;
+    int chunk_end = 0;
+    int chunk_end_line = 0, chunk_end_col = 0;
+    size_t relevant_count = 0;
+
+    // Extract chunk text safely
+    chunk_text = safe_utf8_strncpy(cdoc.text + chunk_start, cdoc.text_len - chunk_start, chunk_len);
+    debug_printf("chunk_text:\n%s\n", chunk_text);
+    
+    ragalyze_assert(chunk_text != NULL, "chunk_text is NULL after safe_utf8_strncpy", NULL, __FILE__, __LINE__);
+
+    ragalyze_assert(chunk_text[0] != '\0', "chunk_text is empty after safe_utf8_strncpy", NULL, __FILE__, __LINE__);
+
+    // Calculate start line
+    start_line = count_newlines_up_to(cdoc.text, chunk_start);
+
+    // Create line-numbered text
+    line_numbered_text = create_line_numbered_text(chunk_text, start_line);
+
+    // Process BM25 indexes for this chunk
+    chunk_end = chunk_start + strlen(chunk_text);
+    get_line_column(cdoc.text, chunk_end, &chunk_end_line, &chunk_end_col);
+
+    relevant_count = 0;
+    for (size_t i = 0; i < cdoc.bm25_count; i++) {
+        int token_line = cdoc.bm25_indexes[i].line;
+        int token_col = cdoc.bm25_indexes[i].col;
+
+        if (token_line < chunk_end_line ||
+            (token_line == chunk_end_line && token_col <= chunk_end_col)) {
+            relevant_count++;
+        }
+    }
+
+    // Create result dictionary
+    PyObject* result_dict = PyDict_New();
+    // Set text (use line-numbered if available, otherwise raw chunk)
+    // Ensure UTF-8 safety by validating strings before passing to PyUnicode_FromString
+    const char* safe_text = line_numbered_text ? line_numbered_text : chunk_text;
+    debug_printf("safe_text:\n%s\n", safe_text);
+    PyDict_SetItemString(result_dict, "text", PyUnicode_FromString(safe_text));
+
+    // Add the actual bytes processed to help Python calculate next chunk start
+    PyDict_SetItemString(result_dict, "bytes_processed", PyLong_FromLong(strlen(chunk_text)));
+    // if (safe_text) {
+    //     // Check for potential UTF-8 issues by finding a safe boundary
+    //     int text_len = strlen(safe_text);
+    //     int safe_len = find_safe_utf8_boundary(safe_text, text_len, text_len);
+    //     if (safe_len < text_len) {
+    //         // Truncate at safe boundary to avoid invalid UTF-8
+    //         char* truncated = malloc(safe_len + 1);
+    //         if (truncated) {
+    //             strncpy(truncated, safe_text, safe_len);
+    //             truncated[safe_len] = '\0';
+    //             debug_printf("truncated: %s\n", truncated);
+    //             PyDict_SetItemString(result_dict, "text", PyUnicode_FromString(truncated));
+    //             free(truncated);
+    //         } else {
+    //             ragalyze_assert(0, "no truncated text", NULL, __FILE__, __LINE__);
+    //         }
+    //     } else {
+    //         PyDict_SetItemString(result_dict, "text", PyUnicode_FromString(safe_text));
+    //     }
+    // } else {
+    //     ragalyze_assert(0,  "no safe text", NULL, __FILE__, __LINE__);
+    // }
+
+    // Create metadata
+    PyObject* meta_dict = PyDict_New();
+    PyDict_SetItemString(meta_dict, "start_line", PyLong_FromLong(start_line));
+    // Ensure UTF-8 safety for original_text as well
+    // if (chunk_text) {
+    //     int chunk_len = strlen(chunk_text);
+    //     int safe_len = find_safe_utf8_boundary(chunk_text, chunk_len, chunk_len);
+    //     if (safe_len < chunk_len) {
+    //         char* truncated = malloc(safe_len + 1);
+    //         if (truncated) {
+    //             strncpy(truncated, chunk_text, safe_len);
+    //             truncated[safe_len] = '\0';
+    //             PyDict_SetItemString(meta_dict, "original_text", PyUnicode_FromString(truncated));
+    //             free(truncated);
+    //         } else {
+    //             ragalyze_assert(0, "no truncated text", NULL, __FILE__, __LINE__);
+    //         }
+    //     } else {
+    //         PyDict_SetItemString(meta_dict, "original_text", PyUnicode_FromString(chunk_text));
+    //     }
+    // } else {
+    //     ragalyze_assert(0,  "no chunk text", NULL, __FILE__, __LINE__);
+    // }
+
+    // Create metadata
+    // Add BM25 indexes to metadata
+    if (relevant_count > 0) {
+        PyObject* bm25_list = PyList_New(relevant_count);
+        size_t idx = 0;
+        for (size_t i = 0; i < cdoc.bm25_count; i++) {
+            int token_line = cdoc.bm25_indexes[i].line;
+            int token_col = cdoc.bm25_indexes[i].col;
+
+            if (token_line < chunk_end_line ||
+                (token_line == chunk_end_line && token_col <= chunk_end_col)) {
+                PyObject* bm25_tuple = PyTuple_New(3);
+                PyTuple_SetItem(bm25_tuple, 0, PyUnicode_FromString(cdoc.bm25_indexes[i].token));
+                PyTuple_SetItem(bm25_tuple, 1, PyLong_FromLong(token_line));
+                PyTuple_SetItem(bm25_tuple, 2, PyLong_FromLong(token_col));
+                PyList_SetItem(bm25_list, idx, bm25_tuple);
+                idx++;
+            }
+        }
+        PyDict_SetItemString(meta_dict, "bm25_indexes", bm25_list);
+        Py_DECREF(bm25_list);
+    }
+
+    PyDict_SetItemString(result_dict, "meta_data", meta_dict);
+    PyDict_SetItemString(result_dict, "order", PyLong_FromLong(chunk_idx));
+    PyDict_SetItemString(result_dict, "parent_doc_id",
+                        PyUnicode_FromString(cdoc.id ? cdoc.id : ""));
+    PyDict_SetItemString(result_dict, "vector", PyList_New(0)); // Empty vector
+
+    // Generate UUID for the new document
+    char* new_id = ragalyze_generate_uuid();
+    if (new_id) {
+        PyDict_SetItemString(result_dict, "id", PyUnicode_FromString(new_id));
+        free(new_id);
+    }
+
+    // Cleanup
+    Py_DECREF(meta_dict);
+    free(chunk_text);
+    if (line_numbered_text) free(line_numbered_text);
+    free_cdocument(&cdoc);
+
+    return result_dict;
+}
+
+static PyObject* process_chunk(PyObject* self, PyObject* args) {
+    PyObject* result_dict = NULL;
+    // Py_BEGIN_ALLOW_THREADS
+    result_dict = _process_chunk_impl(self, args);
+    // Py_END_ALLOW_THREADS
+    return result_dict;
+}
+
+// Method definition table
+// Function to enable/disable debug mode
+static PyObject* set_debug_mode(PyObject* self, PyObject* args) {
+    int enabled;
+    if (!PyArg_ParseTuple(args, "i", &enabled)) {
+        return NULL;
+    }
+    debug_enabled = enabled;
+    Py_RETURN_NONE;
+}
+
+// Function to get current debug mode
+static PyObject* get_debug_mode(PyObject* self, PyObject* args) {
+    return PyLong_FromLong(debug_enabled);
+}
+
+// Python module definition
+static PyMethodDef FastChunkProcessorMethods[] = {
+    {"process_chunk", process_chunk, METH_VARARGS,
+     "Process a single text chunk with GIL release for parallel processing"},
+    {"set_debug_mode", set_debug_mode, METH_VARARGS,
+     "Enable or disable debug mode"},
+    {"get_debug_mode", get_debug_mode, METH_VARARGS,
+     "Get current debug mode"},
+    {NULL, NULL, 0, NULL}
+};
+
+static struct PyModuleDef fastchunkprocessormodule = {
+    PyModuleDef_HEAD_INIT,
+    "fast_chunk_processor",
+    "Fast chunk processing with GIL release for parallel execution",
+    -1,
+    FastChunkProcessorMethods
+};
+
+PyMODINIT_FUNC PyInit_fast_chunk_processor(void) {
+    return PyModule_Create(&fastchunkprocessormodule);
+}

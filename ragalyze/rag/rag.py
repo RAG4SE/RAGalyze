@@ -1,6 +1,7 @@
-from dataclasses import dataclass
+from copy import deepcopy
 from typing import List, Dict
-from uuid import uuid4
+from pathlib import Path
+from datetime import datetime
 
 import adalflow as adal
 from adalflow.core.types import RetrieverOutput
@@ -74,12 +75,10 @@ class GeneratorWrapper:
         model = generator_config["model"]
         model_client_class = generator_config["model_client"]
         model_client = model_client_class()
-        model_kwargs = generator_config["model_kwargs"]
+        model_kwargs = deepcopy(generator_config["model_kwargs"])
         model_kwargs["model"] = model
-
         if generator_config["json_output"]:
             model_kwargs["response_format"] = {"type": "json_object"}
-
         # Format instructions for natural language output (no structured parsing)
         format_instructions = """
 Please provide a comprehensive answer to the user's question based on the provided context.
@@ -123,11 +122,25 @@ IMPORTANT FORMATTING RULES:
         }
         self.prompt = self.generator.get_prompt(**prompt_kwargs)
 
-        return self.generator(prompt_kwargs=prompt_kwargs)
+        response = self.generator(prompt_kwargs=prompt_kwargs)
+        self.response_str = response.data.strip()
+        return response
 
     def estimated_token_count(self):
         return self.generator.estimated_token_count
-
+    
+    def save_result(self):
+        """Save the result of the generator to a file"""
+        current_dir = Path(__file__).resolve().parent
+        reply_dir = current_dir.parent.parent / "reply"
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S.%f")[:-3]
+        output_dir = reply_dir / timestamp
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with open(output_dir / "prompt.txt", "w") as f:
+            f.write(self.prompt)
+        with open(output_dir / "response.txt", "w") as f:
+            f.write(self.response_str)
+        logger.info(f"Prompt and response saved to {output_dir}")
 
 class RAG(adal.Component):
     """RAG with one repo.

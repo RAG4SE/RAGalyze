@@ -6,10 +6,10 @@
 #include "pcre2.h"
 // Use local tree-sitter headers
 #include "tree_sitter/api.h"
+#include "ragalyze_common.h"
 
 // Global debug flag
 static int debug_enabled = 0;
-static char* current_file_path = NULL;
 
 // Debug printf function that only prints when debug mode is enabled
 static void debug_printf(const char* format, ...) {
@@ -26,57 +26,24 @@ static char* concatenate_string(const char* str1, const char* str2) {
         printf("DEBUG: concatenate_string called with NULL pointer\n");
         return NULL;
     }
-    
+
     debug_printf("DEBUG: Concatenating '%s' and '%s'\n", str1, str2);
-    
-    size_t len1 = strlen(str1);
-    size_t len2 = strlen(str2);
-    size_t total_len = len1 + len2;
-    
-    char* result = malloc(total_len + 1);
-    if (!result) {
-        printf("DEBUG: Memory allocation failed for concatenated string\n");
-        return NULL;
-    }
-    
-    memcpy(result, str1, len1);
-    memcpy(result + len1, str2, len2);
-    result[total_len] = '\0';
-    
-    return result;
+
+    return ragalyze_strconcat(str1, str2);
 }
 
 
-// Enhanced assert function with cleanup and debugging
-static void treesitter_assert(int condition, const char* message, void* cleanup_ptr, const char* file, int line) {
-    if (!condition) {
-        message = concatenate_string(message, current_file_path);
-        printf("ASSERTION FAILED at %s:%d: %s\n", file, line, message);
-        if (cleanup_ptr) {
-            free(cleanup_ptr);
-        }
-        exit(1);
-    }
-}
-
-// Macro for easier usage with automatic file/line info
+// Use assert function from common header
 #define TREESITTER_ASSERT(condition, message, cleanup_ptr) \
-    treesitter_assert(condition, message, cleanup_ptr, __FILE__, __LINE__)
+    RAGALYZE_ASSERT(condition, message, cleanup_ptr)
 
 // Macro for asserting pointer allocation
 #define ASSERT_ALLOC(ptr, cleanup_ptr) \
-    TREESITTER_ASSERT((ptr) != NULL, "Memory allocation failed", cleanup_ptr)
+    ASSERT_ALLOC(ptr, cleanup_ptr)
 
 // Function to check if a string contains only whitespace
 static int is_whitespace(const char* str) {
-    if (!str) return 1;
-    while (*str) {
-        if (!isspace((unsigned char)*str)) {
-            return 0;
-        }
-        str++;
-    }
-    return 1;
+    return ragalyze_is_whitespace(str);
 }
 
 static void debug_print_child(TSNode node, const char* source_code) {
@@ -115,7 +82,7 @@ static TSNode ts_node_child_by_type_name(TSNode node, const char* type_name) {
     }
     TSNode empty_node = {0};
     return empty_node;
-    // treesitter_assert(0, concatenate_string("No child node found with type name: ", type_name), NULL, __FILE__, __LINE__);
+    // ragalyze_assert(0, concatenate_string("No child node found with type name: ", type_name), NULL, __FILE__, __LINE__);
 }
 
 // Sometimes the declarator sub-field is null, so we need to fallback to the function_declarator type
@@ -125,7 +92,7 @@ static TSNode ts_node_child_by_type_name(TSNode node, const char* type_name) {
 // Child 1: type='identifier', text='_handle'
 static TSNode fallback_sub_declarator_node_for_cpp(TSNode node) {
     
-    treesitter_assert(!ts_node_is_null(node), "No node found", NULL, __FILE__, __LINE__);
+    ragalyze_assert(!ts_node_is_null(node), "No node found", NULL, __FILE__, __LINE__);
 
     if (!ts_node_is_null(ts_node_child_by_field_name(node, "declarator", 10))) {
         return ts_node_child_by_field_name(node, "declarator", 10);
@@ -350,13 +317,13 @@ static void traverse_declaration_cpp(TSNode name_declarator, const char* source_
     // Handle init_declarator (e.g., int i = 1;)
     if (strcmp(decl_type, "init_declarator") == 0) {
         TSNode sub_declarator = fallback_sub_declarator_node_for_cpp(name_declarator);
-        treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
+        ragalyze_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
         const char* declarator_name = get_node_text(sub_declarator, source_code);
         free(declarator_name);
         traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
 
         TSNode value_node = ts_node_child_by_field_name(name_declarator, "value", 5);
-        treesitter_assert(!ts_node_is_null(value_node), "No value field found", NULL, __FILE__, __LINE__);
+        ragalyze_assert(!ts_node_is_null(value_node), "No value field found", NULL, __FILE__, __LINE__);
         traverse_tree(value_node, source_code, results, language_name);
     }
     else if (strcmp(decl_type, "identifier") == 0 || strcmp(decl_type, "field_identifier") == 0 || strcmp(decl_type, "operator_name") == 0) {
@@ -381,7 +348,7 @@ static void traverse_declaration_cpp(TSNode name_declarator, const char* source_
         }
 
         TSNode sub_declarator = fallback_sub_declarator_node_for_cpp(name_declarator);
-        treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
+        ragalyze_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
 
         const char* declarator_name = get_node_text(sub_declarator, source_code);
         debug_printf("DEBUG: Found function declaration: '%s'\n", declarator_name);
@@ -391,7 +358,7 @@ static void traverse_declaration_cpp(TSNode name_declarator, const char* source_
     else if (strcmp(decl_type, "array_declarator") == 0) {
         // Array declaration (e.g., int arr[100];)
         TSNode sub_declarator = fallback_sub_declarator_node_for_cpp(name_declarator);
-        treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
+        ragalyze_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
         traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
     }
     else if (strcmp(decl_type, "pointer_declarator") == 0 ||
@@ -424,7 +391,7 @@ static void traverse_declaration_cpp(TSNode name_declarator, const char* source_
     else if (strcmp(decl_type, "field_declaration") == 0) {
         // Field declaration (e.g., int i;)
         TSNode sub_declarator = fallback_sub_declarator_node_for_cpp(name_declarator);
-        treesitter_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
+        ragalyze_assert(!ts_node_is_null(sub_declarator), "No declarator field found", NULL, __FILE__, __LINE__);
         traverse_declaration_cpp(sub_declarator, source_code, results, language_name, is_function_declarator);
     }
     else if (strcmp(decl_type, "structured_binding_declarator") == 0) {
@@ -446,7 +413,7 @@ static void traverse_declaration_cpp(TSNode name_declarator, const char* source_
     }
     else {
         return;
-        // treesitter_assert(0, concatenate_string("Invalid declarator type: ", decl_type), NULL, __FILE__, __LINE__);
+        // ragalyze_assert(0, concatenate_string("Invalid declarator type: ", decl_type), NULL, __FILE__, __LINE__);
     }
 }
 
@@ -489,9 +456,9 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             TSNode parameters_node = ts_node_child_by_field_name(node, "parameters", 10);
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
 
-            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
-            treesitter_assert(!ts_node_is_null(parameters_node), "No parameters field found", node_text, __FILE__, __LINE__);
-            treesitter_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(parameters_node), "No parameters field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
 
             const char* func_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Python function definition via name field: '%s'\n", func_name);
@@ -514,8 +481,8 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             debug_printf("DEBUG: Superclasses field node is_null: %d\n", ts_node_is_null(superclasses_field_node));
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
 
-            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
-            treesitter_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
 
             const char* class_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Python class definition via name field: '%s'\n", class_name);
@@ -562,15 +529,15 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             TSNode function_node = ts_node_child_by_field_name(node, "function", 8);
             TSNode arguments_node = ts_node_child_by_field_name(node, "arguments", 9);
 
-            treesitter_assert(!ts_node_is_null(function_node), "No function field found", node_text, __FILE__, __LINE__);
-            treesitter_assert(!ts_node_is_null(arguments_node), "No arguments field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(function_node), "No function field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(arguments_node), "No arguments field found", node_text, __FILE__, __LINE__);
 
             debug_printf("DEBUG: Function node type: '%s'\n", ts_node_type(function_node));
             debug_print_child(function_node, source_code);
 
             if (strcmp(ts_node_type(function_node), "attribute") == 0) {
                 TSNode object_node = ts_node_child_by_field_name(function_node, "object", 6);
-                treesitter_assert(!ts_node_is_null(object_node), "No object field found", node_text, __FILE__, __LINE__);
+                ragalyze_assert(!ts_node_is_null(object_node), "No object field found", node_text, __FILE__, __LINE__);
 
                 // Handle super() method calls
                 const char* object_type = ts_node_type(object_node);
@@ -581,11 +548,11 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     traverse_tree(object_node, source_code, results, language_name);
                     // Extract the method name from the attribute
                     function_node = ts_node_child_by_field_name(function_node, "attribute", 9);
-                    treesitter_assert(!ts_node_is_null(function_node), "No field field found", node_text, __FILE__, __LINE__);
+                    ragalyze_assert(!ts_node_is_null(function_node), "No field field found", node_text, __FILE__, __LINE__);
                 } else {
                     traverse_tree(object_node, source_code, results, language_name);
                     function_node = ts_node_child_by_field_name(function_node, "attribute", 9);
-                    treesitter_assert(!ts_node_is_null(function_node), "No field field found", node_text, __FILE__, __LINE__);
+                    ragalyze_assert(!ts_node_is_null(function_node), "No field field found", node_text, __FILE__, __LINE__);
                 }
                 free(object_text);
             }
@@ -831,7 +798,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             debug_print_child(node, source_code);
 
             TSNode declarator_node = ts_node_child_by_field_name(node, "declarator", 10);
-            treesitter_assert(!ts_node_is_null(declarator_node), "No declarator field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(declarator_node), "No declarator field found", node_text, __FILE__, __LINE__);
             debug_printf("DEBUG: Function declarator node's child nodes:\n");
             debug_print_child(declarator_node, source_code);
 
@@ -856,32 +823,32 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     if (ts_node_is_null(function_declarator)) {
                         break;
                     }
-                    // treesitter_assert(!ts_node_is_null(function_declarator), "No nested declarator found", node_text, __FILE__, __LINE__);
+                    // ragalyze_assert(!ts_node_is_null(function_declarator), "No nested declarator found", node_text, __FILE__, __LINE__);
                 }
                 // else {
-                //     treesitter_assert(0, concatenate_string("Invalid function declarator type: ", decl_type), node_text, __FILE__, __LINE__);
+                //     ragalyze_assert(0, concatenate_string("Invalid function declarator type: ", decl_type), node_text, __FILE__, __LINE__);
                 // }
             }
             
             if (!ts_node_is_null(function_declarator)) {
                 TSNode parameters_node = ts_node_child_by_field_name(function_declarator, "parameters", 10);
-                treesitter_assert(!ts_node_is_null(parameters_node), "No parameters field found", node_text, __FILE__, __LINE__);
+                ragalyze_assert(!ts_node_is_null(parameters_node), "No parameters field found", node_text, __FILE__, __LINE__);
                 traverse_tree(parameters_node, source_code, results, language_name);
     
                 // Get the actual function name (recursively if needed)
                 TSNode name_node = ts_node_child_by_field_name(function_declarator, "declarator", 10);
-                treesitter_assert(!ts_node_is_null(name_node), "No declarator field found in function_declarator", node_text, __FILE__, __LINE__);
+                ragalyze_assert(!ts_node_is_null(name_node), "No declarator field found in function_declarator", node_text, __FILE__, __LINE__);
     
                 // Handle cases where the name is nested in pointer/reference declarators
                 while (strcmp(ts_node_type(name_node), "pointer_declarator") == 0 ||
                        strcmp(ts_node_type(name_node), "reference_declarator") == 0) {
                     name_node = ts_node_child_by_field_name(name_node, "declarator", 10);
-                    treesitter_assert(!ts_node_is_null(name_node), "No nested declarator found for name", node_text, __FILE__, __LINE__);
+                    ragalyze_assert(!ts_node_is_null(name_node), "No nested declarator found for name", node_text, __FILE__, __LINE__);
                 }
     
                 if (strcmp(ts_node_type(name_node), "qualified_identifier") == 0) {
                     TSNode short_name_node = ts_node_child_by_field_name(name_node, "name", 4);
-                    treesitter_assert(!ts_node_is_null(short_name_node), "No name field found", node_text, __FILE__, __LINE__);
+                    ragalyze_assert(!ts_node_is_null(short_name_node), "No name field found", node_text, __FILE__, __LINE__);
                     const char* short_func_name = get_node_text(short_name_node, source_code);
                     debug_printf("DEBUG: Found Python function definition via name field: '%s'\n", short_func_name);
                     unsigned int line_num, col_num;
@@ -899,7 +866,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 else if (strcmp(ts_node_type(name_node), "template_function") == 0) {
                     // For template functions, extract just the base function name without template parameters
                     TSNode base_name_node = ts_node_child_by_field_name(name_node, "name", 4);
-                    treesitter_assert(!ts_node_is_null(base_name_node), "No name field found in template_function", node_text, __FILE__, __LINE__);
+                    ragalyze_assert(!ts_node_is_null(base_name_node), "No name field found in template_function", node_text, __FILE__, __LINE__);
                     const char* base_func_name = get_node_text(base_name_node, source_code);
                     debug_printf("DEBUG: Found template function definition via base name field: '%s'\n", base_func_name);
                     unsigned int line_num, col_num;
@@ -945,7 +912,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             debug_print_child(node, source_code);
 
             TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
-            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
 
             const char* class_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found class/struct definition via name field: '%s'\n", class_name);
@@ -1034,13 +1001,13 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             debug_print_child(node, source_code);
 
             TSNode function_node = ts_node_child_by_field_name(node, "function", 8);
-            treesitter_assert(!ts_node_is_null(function_node), "No function field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(function_node), "No function field found", node_text, __FILE__, __LINE__);
             TSNode name_node;
             if (strcmp(ts_node_type(function_node), "field_expression") == 0) {
                 name_node = ts_node_child_by_field_name(function_node, "field", 5);
-                treesitter_assert(!ts_node_is_null(name_node), "No field field found", node_text, __FILE__, __LINE__);
+                ragalyze_assert(!ts_node_is_null(name_node), "No field field found", node_text, __FILE__, __LINE__);
                 TSNode arguments_node = ts_node_child_by_field_name(function_node, "argument", 8);
-                treesitter_assert(!ts_node_is_null(arguments_node), "No argument field found", node_text, __FILE__, __LINE__);
+                ragalyze_assert(!ts_node_is_null(arguments_node), "No argument field found", node_text, __FILE__, __LINE__);
                 traverse_tree(arguments_node, source_code, results, language_name);
             }
             else if (strcmp(ts_node_type(function_node), "identifier") == 0) {
@@ -1054,11 +1021,11 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 add_node(results, "call", qualified_func_name, line_num, col_num);
                 free(qualified_func_name);
                 name_node = ts_node_child_by_field_name(function_node, "name", 4);
-                treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+                ragalyze_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
             }
             else {
                 return;
-                // treesitter_assert(0, concatenate_string("Invalid function type: ", node_text), node_text, __FILE__, __LINE__);
+                // ragalyze_assert(0, concatenate_string("Invalid function type: ", node_text), node_text, __FILE__, __LINE__);
             }
             const char* func_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found call expression via function field: '%s'\n", func_name);
@@ -1068,7 +1035,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             free(func_name);
 
             TSNode arguments_node = ts_node_child_by_field_name(node, "arguments", 9);
-            treesitter_assert(!ts_node_is_null(arguments_node), "No argument field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(arguments_node), "No argument field found", node_text, __FILE__, __LINE__);
             traverse_tree(arguments_node, source_code, results, language_name);
             return;
         }
@@ -1155,7 +1122,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             debug_print_child(node, source_code);
 
             TSNode declarator_node = ts_node_child_by_field_name(node, "declarator", 10);
-            treesitter_assert(!ts_node_is_null(declarator_node), "No declarator field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(declarator_node), "No declarator field found", node_text, __FILE__, __LINE__);
 
             // Use the recursive function to process the declarator
             traverse_declaration_cpp(declarator_node, source_code, results, language_name, false);
@@ -1234,7 +1201,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             debug_print_child(node, source_code);
             TSNode type_node = ts_node_child_by_field_name(node, "type", 4);
             TSNode arguments_node = ts_node_child_by_field_name(node, "arguments", 9);
-            treesitter_assert(!ts_node_is_null(type_node), "No type field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(type_node), "No type field found", node_text, __FILE__, __LINE__);
             const char* type_name = get_node_text(type_node, source_code);
             debug_printf("DEBUG: Found C++ new expression's type: '%s'\n", type_name);
             unsigned int line_num, col_num;
@@ -1259,8 +1226,8 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             // so we need to check if the body is null later
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
 
-            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
-            treesitter_assert(!ts_node_is_null(parameters_node), "No parameters field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(parameters_node), "No parameters field found", node_text, __FILE__, __LINE__);
 
             const char* method_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Java method declaration via name field: '%s'\n", method_name);
@@ -1312,8 +1279,8 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
 
-            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
-            treesitter_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
 
             const char* class_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Java class declaration via name field: '%s'\n", class_name);
@@ -1332,8 +1299,8 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
 
-            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
-            treesitter_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(body_node), "No body field found", node_text, __FILE__, __LINE__);
 
             const char* interface_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Java interface declaration via name field: '%s'\n", interface_name);
@@ -1382,8 +1349,8 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             TSNode arguments_node = ts_node_child_by_field_name(node, "arguments", 9);
             TSNode object_node = ts_node_child_by_field_name(node, "object", 6);
 
-            treesitter_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
-            treesitter_assert(!ts_node_is_null(arguments_node), "No arguments field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(name_node), "No name field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(arguments_node), "No arguments field found", node_text, __FILE__, __LINE__);
 
             const char* method_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Java method invocation via name field: '%s'\n", method_name);
@@ -1475,7 +1442,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             debug_print_child(node, source_code);
             TSNode type_node = ts_node_child_by_field_name(node, "type", 4);
             TSNode arguments_node = ts_node_child_by_field_name(node, "arguments", 9);
-            treesitter_assert(!ts_node_is_null(type_node), "No type field found", node_text, __FILE__, __LINE__);
+            ragalyze_assert(!ts_node_is_null(type_node), "No type field found", node_text, __FILE__, __LINE__);
             const char* type_name = get_node_text(type_node, source_code);
             debug_printf("DEBUG: Found Java object creation expression: '%s'\n", type_name);
             unsigned int line_num, col_num;
@@ -1606,7 +1573,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
     }
 
     else {
-        treesitter_assert(0, concatenate_string("Unsupported language: ", language_name), node_text, __FILE__, __LINE__);
+        ragalyze_assert(0, concatenate_string("Unsupported language: ", language_name), node_text, __FILE__, __LINE__);
         free(node_text);
         return;
     }
@@ -1956,8 +1923,6 @@ static PyObject* tokenize_for_bm25(PyObject* self, PyObject* args) {
     if (!PyArg_ParseTuple(args, "s|zz", &code, &language_name, &file_path)) {
         return NULL;
     }
-
-    current_file_path = file_path;
 
     if (!language_name) {
         printf("ERROR: Language name is required for BM25 tokenization\n");

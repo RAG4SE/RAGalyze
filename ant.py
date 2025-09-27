@@ -17,7 +17,7 @@ set_global_config_value("generator.model", "qwen3-next-80b-a3b-instruct")
 set_global_config_value("rag.retriever.bm25.top_k", 25)
 
 
-agent = FetchCallerHeaderAgent(debug=True)
+agent = FetchCallerHeaderPipeline(debug=True)
 
 print(
     agent(

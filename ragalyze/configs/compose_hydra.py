@@ -62,7 +62,6 @@ def set_global_config_value(key: str, value):
     load_rag_config(global_configs)
 
 
-
 def configs():
     if global_configs is None:
         raise ValueError(

@@ -848,6 +848,20 @@ bool TerminationFinder::containsNonContinuingFunctionCall(Expression const& _exp
             ]
         ),
     ),
+    (
+        "cpp",
+        """
+void MovableChecker::operator()(Identifier const& _identifier)
+{
+    SideEffectsCollector sc;
+	sc(_identifier);
+	m_variableReferences.emplace(_identifier.name);
+}
+        """,
+        sorted(
+            ['[CALL]emplace', '[CALL]sc', '[FUNCDEF]MovableChecker::operator()', '[FUNCDEF]operator()', '[IDENTIFIER]_identifier', '[IDENTIFIER]_identifier', '[IDENTIFIER]m_variableReferences', '[VARDECL]_identifier', '[VARDECL]sc']
+        ),
+    ),
     # java
     (
         "java",

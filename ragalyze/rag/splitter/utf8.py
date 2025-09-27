@@ -45,3 +45,35 @@ def find_safe_utf8_boundary(data: bytes, position: int) -> int:
                 continue
     
     return 0
+
+if __name__ == "__main__":
+    test_data = """
+BOOST_AUTO_TEST_CASE(immediate_dominator_2)
+{
+        //    ┌────►A──────┐
+        //    │     │      ▼
+        //    │ B◄──┘   ┌──D──┐
+        //    │ │       │     │
+        //    │ ▼       ▼     ▼
+        //    └─C◄───┐  E     F
+        //      │    │  │     │
+        //      └───►G◄─┴─────┘"""
+    test_data = test_data.encode('utf-8')
+    
+    test_data_truncated = """
+BOOST_AUTO_TEST_CASE(immediate_dominator_2)
+{
+        //    ┌────►A──────┐
+        //    │     │      ▼
+        //    │ B◄──┘   ┌──D──┐
+        //    │ │       │     │
+        //    │ ▼       ▼     ▼
+        //    └─C◄───┐  E     F
+        //      │    │  │     │
+        //      └───►G◄─┴──"""
+    test_data_truncated = test_data_truncated.encode('utf-8')
+    
+    print(
+        len(test_data_truncated)
+    )
+    print(test_data[:find_safe_utf8_boundary(test_data, 404)].decode('utf-8'))
