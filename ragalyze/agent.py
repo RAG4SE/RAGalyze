@@ -759,7 +759,7 @@ You are given a complete class definition:
 {{class_definition}}
 
 {% if target_name %}
-Your task is to locate the definition of `{{target_name}}`.
+Your task is to locate the definition of function named `{{target_name}}`.
 {% else %}
 Your task is to locate ALL function definitions in the class.
 {% endif %}
@@ -792,6 +792,10 @@ If no functions are found, return an empty array.
     def __init__(self, debug: bool = False):
         self.debug = debug
 
+    """
+    A known bug: if kind is the same as a function name in the class_definition, then it may only return the function definition with that name.
+    For instance, there are more than one **const** functions, one of which is named "const_method". If the kind is "const_method", then it may only return the "const_method" function.
+    """
     def __call__(self, class_definition: str, target_name: Optional[str] = None, kind: Optional[str] = None) -> Union[Optional[str], List[Dict[str, Any]]]:
         with call_debug_scope(
             self.__class__.__name__,
@@ -1977,3 +1981,245 @@ If no member variables are found, return an empty array for "member_variables".
 
         # Otherwise return all variables
         return valid_variables
+
+
+class ChainedCallAnalyzerPipeline:
+    """Analyzes chained call expressions to determine the final return type."""
+
+    def __init__(self, debug: bool = False):
+        """
+        Initialize the pipeline with optional debug logging.
+
+        Args:
+            debug: Enable debug logging for troubleshooting
+        """
+        self.debug = debug
+        self.is_class_instance_query = IsClassInstanceQuery(debug=debug)
+        self.fetch_class_pipeline = FetchClassPipeline(debug=debug)
+        self.extract_member_query = ExtractMemberDefinitionFromClassQuery(debug=debug)
+        self.fetch_return_type_query = FetchReturnTypeQuery(debug=debug)
+        self.fetch_member_var_query = FetchMemberVarQuery(debug=debug)
+
+    def __call__(self, expression: str, context: str) -> str:
+        """
+        Analyze a chained call expression and return the final class name.
+
+        Args:
+            expression: The chained call expression to analyze (e.g., "a.b.c()")
+            context: The source code context containing the expression
+
+        Returns:
+            The class name of the innermost function call's return type
+        """
+        with call_debug_scope(self.__class__.__name__, self.debug, expression=expression):
+            try:
+                # Parse the chained expression into components
+                components = self._parse_chained_expression(expression)
+                if not components:
+                    logger.warning(f"Could not parse chained expression: {expression}")
+                    return None
+
+                # Get the initial class name from the outermost instance
+                initial_instance = components[0]["name"]
+                is_class_instance, class_name = self.is_class_instance_query(
+                    context=context, callee_name=initial_instance, call_expr=expression
+                )
+
+                if not is_class_instance:
+                    logger.warning(f"Initial instance '{initial_instance}' is not a class instance")
+                    return None
+
+                # Iteratively resolve each component in the chain
+                current_class_name = class_name
+                for component in components[1:-1]:  # Skip the initial instance, and ignore the last one
+                    current_class_name = self._resolve_component(
+                        component, current_class_name, context
+                    )
+                    if not current_class_name:
+                        logger.warning(f"Could not resolve component: {component}")
+                        return None
+                    
+                    current_class_name = current_class_name.strip()
+                    
+                    in_while = True
+                    while in_while:
+                        if current_class_name.startswith("const "):
+                            current_class_name = current_class_name[6:]
+                        elif current_class_name.startswith("static "):
+                            current_class_name = current_class_name[7:]
+                        elif current_class_name.startswith("constexpr "):
+                            current_class_name = current_class_name[10:]
+                        elif current_class_name.startswith("volatile "):
+                            current_class_name = current_class_name[9:]
+                        elif current_class_name.endswith("&"):
+                            current_class_name = current_class_name[:-1]
+                        elif current_class_name.endswith("*"):
+                            current_class_name = current_class_name[:-1]
+                        else:
+                            in_while = False
+
+                current_class_name = current_class_name.strip()
+                return current_class_name
+
+            except Exception as exc:
+                logger.error(f"Error analyzing chained expression '{expression}': {exc}")
+                if self.debug:
+                    raise
+                return None
+
+    def _parse_chained_expression(self, expression: str) -> List[Dict[str, Any]]:
+        """
+        Parse a chained call expression into individual components.
+
+        Args:
+            expression: The chained call expression to parse
+
+        Returns:
+            List of components with name, type, and operator information
+        """
+        if not expression or not expression.strip():
+            return []
+
+        components = []
+        # Remove whitespace for easier parsing
+        expr = expression.strip()
+
+        # Split on access operators while preserving parentheses
+        current_pos = 0
+        i = 0
+
+        while i < len(expr):
+            if expr[i] in ['.', '-']:
+                # Check if it's -> operator
+                if expr[i] == '-' and i + 1 < len(expr) and expr[i + 1] == '>':
+                    operator = '->'
+                    i += 2
+                else:
+                    operator = '.'
+                    i += 1
+
+                # Extract the component name
+                name_start = i
+                while i < len(expr) and expr[i] not in ['.', '-', '(', ')', '[', ']', ',', ' ', '\t', '\n']:
+                    i += 1
+
+                name = expr[name_start:i]
+
+                # Check if it's a function call
+                is_function_call = False
+                if i < len(expr) and expr[i] == '(':
+                    is_function_call = True
+                    # Skip matching parentheses
+                    paren_count = 1
+                    i += 1
+                    while i < len(expr) and paren_count > 0:
+                        if expr[i] == '(':
+                            paren_count += 1
+                        elif expr[i] == ')':
+                            paren_count -= 1
+                        i += 1
+
+                components.append({
+                    "name": name,
+                    "type": "function_call" if is_function_call else "member_access",
+                    "operator": operator
+                })
+            else:
+                i += 1
+
+        # Add the initial instance if we found components
+        if components:
+            # Extract the initial instance name
+            initial_part = expr.split(components[0]["operator"])[0].strip()
+            components.insert(0, {
+                "name": initial_part,
+                "type": "instance",
+                "operator": None
+            })
+
+        return components
+
+    def _resolve_component(self, component: Dict[str, Any], current_class_name: str, context: str) -> Optional[str]:
+        """
+        Resolve a single component in the chain to get its return type.
+
+        Args:
+            component: The component to resolve
+            current_class_name: The current class name
+            context: The source code context
+
+        Returns:
+            The class name of the return type, or None if resolution fails
+        """
+        try:
+            if component["type"] == "function_call":
+                return self._resolve_function_call(component, current_class_name)
+            elif component["type"] == "member_access":
+                return self._resolve_member_access(component, current_class_name)
+            else:
+                logger.warning(f"Unknown component type: {component['type']}")
+                return None
+        except Exception as exc:
+            logger.error(f"Error resolving component {component}: {exc}")
+            return None
+
+    def _resolve_function_call(self, component: Dict[str, Any], current_class_name: str) -> Optional[str]:
+        """
+        Resolve a function call component to get its return type.
+
+        Args:
+            component: The function call component
+            current_class_name: The current class name
+
+        Returns:
+            The class name of the return type, or None if resolution fails
+        """
+        # Get the class definition
+        class_definition = self.fetch_class_pipeline(current_class_name)
+        if not class_definition:
+            logger.warning(f"Could not find class definition for: {current_class_name}")
+            return None
+
+        # Extract the member function definition
+        member_definition = self.extract_member_query(
+            class_definition=class_definition,
+            target_name=component["name"]
+        )
+
+        if not member_definition:
+            logger.warning(f"Could not find member function: {component['name']} in class {current_class_name}")
+            return None
+
+        # Get the return type
+        return_type = self.fetch_return_type_query(member_definition)
+        return return_type
+
+    def _resolve_member_access(self, component: Dict[str, Any], current_class_name: str) -> Optional[str]:
+        """
+        Resolve a member access component to get its type.
+
+        Args:
+            component: The member access component
+            current_class_name: The current class name
+
+        Returns:
+            The class name of the member type, or None if resolution fails
+        """
+        # Get the class definition
+        class_definition = self.fetch_class_pipeline(current_class_name)
+        if not class_definition:
+            logger.warning(f"Could not find class definition for: {current_class_name}")
+            return None
+
+        # Extract the member variable information
+        member_var = self.fetch_member_var_query(
+            class_definition=class_definition,
+            target_name=component["name"]
+        )
+
+        if not member_var:
+            logger.warning(f"Could not find member variable: {component['name']} in class {current_class_name}")
+            return None
+
+        # Return the type of the member variable
+        return member_var.get("type")

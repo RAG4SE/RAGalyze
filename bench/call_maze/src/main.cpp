@@ -1,32 +1,9 @@
-from ragalyze import *
-from ragalyze.configs import *
-from ragalyze.agent import *
-from ragalyze.rag import retriever
+#include <cmath>
+#include <iostream>
+#include <vector>
 
-# set_global_config_value("repo_path", "/Users/mac/repo/RAGalyzeBench/solidity/")
-set_global_config_value("repo_path", "./bench/call_maze")
-set_global_config_value("rag.recreate_db", True)
-# set_global_config_value(
-#     "repo.file_filters.extra_excluded_patterns",
-#     ["*deps/*", "*test*/*", "workspace/*", "*/tags"],
-# )
-# set_global_config_value("generator.provider", "kimi")
-# set_global_config_value("generator.model", "kimi-k2-0905-preview")
-set_global_config_value("generator.provider", "dashscope")
-# set_global_config_value("generator.model", "qwen3-coder-plus")
-# set_global_config_value("generator.model", "qwen3-30b-a3b-instruct-2507")
-set_global_config_value("generator.model", "qwen3-next-80b-a3b-instruct")
+#include "call_maze.hpp"
 
-set_global_config_value("generator.provider", "deepseek")
-set_global_config_value("generator.model", "deepseek-chat")
-
-# set_global_config_value("generator.provider", "modelscope")
-# set_global_config_value("generator.model", "Qwen/Qwen3-Next-80B-A3B-Instruct")
-
-
-r = ChainedCallAnalyzerPipeline(debug=True)
-expr = 'engine.pipeline().stage("primary").tune(1.4).limit(60.0);'
-context = """
 int main() {
     using namespace callmaze;
 
@@ -73,6 +50,4 @@ int main() {
 
     return 0;
 }
-"""
 
-print(r(expr, context))
