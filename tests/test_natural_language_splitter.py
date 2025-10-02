@@ -6,8 +6,12 @@ Merged from test_overlap_debug.py, test_overlap_detection.py, and test_smart_tex
 """
 
 import sys
+import os
 
-from rag.splitter import NaturalLanguageSplitter
+# Add the project root to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from ragalyze.rag.splitter import NaturalLanguageSplitter
 
 def test_overlap_debug():
     """Debug the overlap detection in detail."""

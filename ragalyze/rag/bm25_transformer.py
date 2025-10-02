@@ -163,7 +163,6 @@ class BM25Transformer(Component):
                 logger.info(
                     f"time taken for bm25 single threading: {end_time - start_time}"
                 )
-
             return documents
 
         except Exception as e:

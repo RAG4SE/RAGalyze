@@ -1,7 +1,9 @@
 generator:
   
   provider: dashscope
-  model: qwen3-coder-plus
+  model: qwen3-next-80b-a3b-instruct
+
+
   api_key: ""
   base_url: ""
   model_kwargs:

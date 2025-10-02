@@ -78,6 +78,7 @@ PROVIDER_NAME_TO_CLASS = {
     "openai": OpenAIClient,
     "kimi": KimiClient,
     "modelscope": ModelScopeClient,
+    "deepseek": DeepSeekClient,
 }
 
 # Define provider to embedder class name mappings

@@ -3,9 +3,12 @@ from re import M
 
 
 try:
-    import ragalyze.rag.treesitter_parse as treesitter_parse
+    import ragalyze.lib.treesitter_parse as treesitter_parse
 except ImportError:
-    import treesitter_parse
+    try:
+        import ragalyze.rag.treesitter_parse as treesitter_parse
+    except ImportError:
+        import treesitter_parse
 """
 Tree-sitter AST Parser
 

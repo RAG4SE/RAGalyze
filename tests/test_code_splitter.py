@@ -1,8 +1,14 @@
 """Tests for CodeSplitter with tree-sitter support including markdown."""
 
+import sys
+import os
 import pytest
+
+# Add the project root to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from adalflow.core.types import Document
-from rag.splitter.code_splitter import CodeSplitter, TREE_SITTER_AVAILABLE
+from ragalyze.rag.splitter.code_splitter import CodeSplitter, TREE_SITTER_AVAILABLE
 
 # Sample code content for different languages
 PYTHON_CODE = '''

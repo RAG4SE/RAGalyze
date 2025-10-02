@@ -9,6 +9,7 @@ from typing import Dict, Type, Callable, Any, Optional
 from abc import ABC, abstractmethod
 
 import adalflow as adal
+from adalflow.core.db import EntityMapping
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from ragalyze.rag.embedding_transformer import (
     ToEmbeddings,
@@ -22,6 +23,27 @@ from ragalyze.configs import get_batch_embedder, configs
 from ragalyze.rag.dynamic_splitter_transformer import DynamicSplitterTransformer
 from ragalyze.rag.splitter import MyTextSplitter
 from ragalyze.rag.bm25_transformer import BM25Transformer
+
+# Register MyTextSplitter with EntityMapping to enable proper deserialization
+EntityMapping.register('MyTextSplitter', MyTextSplitter)
+EntityMapping.register('BM25Transformer', BM25Transformer)
+
+# Register all custom transformer classes for proper deserialization
+from ragalyze.rag.dynamic_splitter_transformer import DynamicSplitterTransformer
+from ragalyze.rag.embedding_transformer import (
+    ToEmbeddings,
+    DashScopeToEmbeddings,
+    HuggingfaceToEmbeddings,
+    OpenAIToEmbeddings,
+    DualVectorToEmbeddings,
+)
+
+EntityMapping.register('DynamicSplitterTransformer', DynamicSplitterTransformer)
+EntityMapping.register('ToEmbeddings', ToEmbeddings)
+EntityMapping.register('DashScopeToEmbeddings', DashScopeToEmbeddings)
+EntityMapping.register('HuggingfaceToEmbeddings', HuggingfaceToEmbeddings)
+EntityMapping.register('OpenAIToEmbeddings', OpenAIToEmbeddings)
+EntityMapping.register('DualVectorToEmbeddings', DualVectorToEmbeddings)
 
 logger = get_tqdm_compatible_logger(__name__)
 
