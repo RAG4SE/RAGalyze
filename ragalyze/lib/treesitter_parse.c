@@ -73,6 +73,51 @@ static TSNode ts_node_child_by_type_name(TSNode node, const char* type_name) {
     // ragalyze_assert(0, concatenate_string("No child node found with type name: ", type_name), NULL, __FILE__, __LINE__);
 }
 
+// Structure to hold multiple nodes
+typedef struct {
+    TSNode* nodes;
+    uint32_t count;
+    uint32_t capacity;
+} NodeArray;
+
+// Function to create a new NodeArray
+static NodeArray* create_node_array() {
+    NodeArray* array = malloc(sizeof(NodeArray));
+    array->capacity = 10;
+    array->count = 0;
+    array->nodes = malloc(array->capacity * sizeof(TSNode));
+    return array;
+}
+
+// Function to add a node to NodeArray
+static void add_node_to_array(NodeArray* array, TSNode node) {
+    if (array->count >= array->capacity) {
+        array->capacity *= 2;
+        array->nodes = realloc(array->nodes, array->capacity * sizeof(TSNode));
+    }
+    array->nodes[array->count++] = node;
+}
+
+// Function to free NodeArray
+static void free_node_array(NodeArray* array) {
+    free(array->nodes);
+    free(array);
+}
+
+// Function to get all children nodes by type name
+static NodeArray* ts_node_children_by_type_name(TSNode node, const char* type_name) {
+    NodeArray* result = create_node_array();
+
+    for (uint32_t i = 0; i < ts_node_child_count(node); i++) {
+        TSNode child = ts_node_child(node, i);
+        if (strcmp(ts_node_type(child), type_name) == 0) {
+            add_node_to_array(result, child);
+        }
+    }
+
+    return result;
+}
+
 // Sometimes the declarator sub-field is null, so we need to fallback to the function_declarator type
 // For instance,
 // DEBUG: Processing declaration type: 'reference_declarator'
@@ -104,6 +149,7 @@ const TSLanguage* tree_sitter_c(void);
 const TSLanguage* tree_sitter_java(void);
 const TSLanguage* tree_sitter_javascript(void);
 const TSLanguage* tree_sitter_xml(void);
+const TSLanguage* tree_sitter_solidity(void);
 
 // Helper to get language parser
 static const TSLanguage* get_language(const char* language_name) {
@@ -132,6 +178,9 @@ static const TSLanguage* get_language(const char* language_name) {
     } else if (strcmp(language_name, "xml") == 0) {
         debug_printf("Using XML parser\n");
         return tree_sitter_xml();
+    } else if (strcmp(language_name, "solidity") == 0) {
+        debug_printf("Using Solidity parser\n");
+        return tree_sitter_solidity();
     }
 
     return NULL;
@@ -522,7 +571,75 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             add_node(results, "function_definition", func_name, line_num, col_num);
             free(func_name);
 
-            traverse_tree(parameters_node, source_code, results, language_name);
+            debug_printf("DEBUG: Parameters node child nodes:\n");
+            debug_print_child(parameters_node, source_code);
+            NodeArray* parameter_nodes = ts_node_children_by_type_name(parameters_node, "identifier");
+            debug_printf("DEBUG: Parameter nodes count: %d\n", parameter_nodes->count);
+            for (uint32_t i = 0; i < parameter_nodes->count; i++) {
+                TSNode param_node = parameter_nodes->nodes[i];
+                char* param_name = get_node_text(param_node, source_code);
+                debug_printf("DEBUG: Found parameter: '%s'\n", param_name);
+                unsigned int line_num, col_num;
+                get_node_position(param_node, &line_num, &col_num);
+                add_node(results, "var_declaration", param_name, line_num, col_num);
+                free(param_name);
+            }
+            NodeArray* list_splat_pattern_nodes = ts_node_children_by_type_name(parameters_node, "list_splat_pattern");
+            debug_printf("DEBUG: List splat pattern nodes count: %d\n", list_splat_pattern_nodes->count);
+            for (uint32_t i = 0; i < list_splat_pattern_nodes->count; i++) {
+                TSNode list_splat_pattern_node = list_splat_pattern_nodes->nodes[i];
+                debug_printf("DEBUG: List splat pattern node child nodes:\n");
+                debug_print_child(list_splat_pattern_node, source_code);
+                TSNode identifier_node = ts_node_child_by_type_name(list_splat_pattern_node, "identifier");
+                char* list_splat_pattern_name = get_node_text(identifier_node, source_code);
+                unsigned int line_num, col_num;
+                get_node_position(list_splat_pattern_node, &line_num, &col_num);
+                add_node(results, "var_declaration", list_splat_pattern_name, line_num, col_num);
+                free(list_splat_pattern_name);
+            }
+
+            NodeArray* dictionary_splat_pattern_nodes = ts_node_children_by_type_name(parameters_node, "dictionary_splat_pattern");
+            debug_printf("DEBUG: Dictionary splat pattern nodes count: %d\n", dictionary_splat_pattern_nodes->count);
+            for (uint32_t i = 0; i < dictionary_splat_pattern_nodes->count; i++) {
+                TSNode dictionary_splat_pattern_node = dictionary_splat_pattern_nodes->nodes[i];
+                debug_printf("DEBUG: Dictionary splat pattern node child nodes:\n");
+                debug_print_child(dictionary_splat_pattern_node, source_code);
+                TSNode identifier_node = ts_node_child_by_type_name(dictionary_splat_pattern_node, "identifier");
+                char* dictionary_splat_pattern_name = get_node_text(identifier_node, source_code);
+                unsigned int line_num, col_num;
+                get_node_position(dictionary_splat_pattern_node, &line_num, &col_num);
+                add_node(results, "var_declaration", dictionary_splat_pattern_name, line_num, col_num);
+                free(dictionary_splat_pattern_name);
+            }
+
+            NodeArray* default_value_nodes = ts_node_children_by_type_name(parameters_node, "default_parameter");
+            debug_printf("DEBUG: Default value nodes count: %d\n", default_value_nodes->count);
+            for (uint32_t i = 0; i < default_value_nodes->count; i++) {
+                TSNode default_value_node = default_value_nodes->nodes[i];
+                debug_printf("DEBUG: Default value node child nodes:\n");
+                debug_print_child(default_value_node, source_code);
+                TSNode identifier_node = ts_node_child_by_type_name(default_value_node, "identifier");
+                char* default_value_name = get_node_text(identifier_node, source_code);
+                unsigned int line_num, col_num;
+                get_node_position(default_value_node, &line_num, &col_num);
+                add_node(results, "var_declaration", default_value_name, line_num, col_num);
+                free(default_value_name);
+            }
+
+            NodeArray* typed_parameter_nodes = ts_node_children_by_type_name(parameters_node, "typed_parameter");
+            debug_printf("DEBUG: Typed parameter nodes count: %d\n", typed_parameter_nodes->count);
+            for (uint32_t i = 0; i < typed_parameter_nodes->count; i++) {
+                TSNode typed_parameter_node = typed_parameter_nodes->nodes[i];
+                debug_printf("DEBUG: Typed parameter node child nodes:\n");
+                debug_print_child(typed_parameter_node, source_code);
+                TSNode identifier_node = ts_node_child_by_type_name(typed_parameter_node, "identifier");
+                char* typed_parameter_name = get_node_text(identifier_node, source_code);
+                unsigned int line_num, col_num;
+                get_node_position(typed_parameter_node, &line_num, &col_num);
+                add_node(results, "var_declaration", typed_parameter_name, line_num, col_num);
+                free(typed_parameter_name);
+            }
+
             traverse_tree(body_node, source_code, results, language_name);
             return;
         }
@@ -614,7 +731,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             char* func_name = get_node_text(function_node, source_code);
 
-            // ======================= AGENT START =======================
             // Check if this call expression is part of a raise statement (like "raise ValueError(...)")
             // If so, skip it as exception constructors shouldn't be treated as function calls
             TSNode parent = ts_node_parent(node);
@@ -639,7 +755,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     return;
                 }
             }
-            // ======================= AGENT END =======================
 
             debug_printf("DEBUG: Found Python call expression via function field: '%s'\n", func_name);
             unsigned int line_num, col_num;
@@ -730,7 +845,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             free(name);
             return;
         }
-        // ======================= AGENT START =======================
         else if (strcmp(node_type, "formal_parameter") == 0) {
             debug_printf("DEBUG: Processing Python formal_parameter node!\n");
             debug_printf("DEBUG: Formal parameter child nodes:\n");
@@ -809,18 +923,48 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     add_node(results, "package", module_name, line_num, col_num);
                     free(module_name);
                 }
+                else if (strcmp(child_type, "aliased_import") == 0) {
+                    debug_printf("DEBUG: Found aliased_import child\n");
+                    debug_print_child(child, source_code);
+                    // Handle aliased imports like "import os as ops"
+                    child = ts_node_child_by_field_name(child, "alias", 5);
+                    char* module_name = get_node_text(child, source_code);
+                    debug_printf("DEBUG: Found aliased module name in import: '%s'\n", module_name);
+                    unsigned int line_num, col_num;
+                    get_node_position(child, &line_num, &col_num);
+                    add_node(results, "package", module_name, line_num, col_num);
+                    free(module_name);
+                }
             }
             return;
         }
         else if (strcmp(node_type, "import_from_statement") == 0) {
-            debug_printf("DEBUG: Skipping import_from_statement\n");
+            debug_printf("DEBUG: Processing import_from_statement\n");
+            debug_print_child(node, source_code);
+            TSNode module_node = ts_node_child_by_field_name(node, "module_name", 11);
+            if (!ts_node_is_null(module_node)) {
+                char* module_name = get_node_text(module_node, source_code);
+                debug_printf("DEBUG: Found module name in import_from: '%s'\n", module_name);
+                unsigned int line_num, col_num;
+                get_node_position(module_node, &line_num, &col_num);
+                add_node(results, "module", module_name, line_num, col_num);
+                free(module_name);
+            }
+            TSNode pkg_node = ts_node_child_by_field_name(node, "name", 4);
+            if (!ts_node_is_null(pkg_node)) {
+                char* pkg_name = get_node_text(pkg_node, source_code);
+                debug_printf("DEBUG: Found package name in import_from: '%s'\n", pkg_name);
+                unsigned int line_num, col_num;
+                get_node_position(pkg_node, &line_num, &col_num);
+                add_node(results, "package", pkg_name, line_num, col_num);
+                free(pkg_name);
+            }
             return;
         }
         // Handle list comprehension target correctly
         else if (strcmp(node_type, "assignment") == 0) {
             debug_printf("DEBUG: Processing Python assignment\n");
             debug_print_child(node, source_code);
-
             // For list comprehensions like "list comprehension = [...]",
             // we want to extract "list_comprehension" not "list" and "comprehension"
             TSNode left_node = ts_node_child_by_field_name(node, "left", 4);
@@ -831,7 +975,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     debug_printf("DEBUG: Found assignment target: '%s'\n", var_name);
                     unsigned int line_num, col_num;
                     get_node_position(left_node, &line_num, &col_num);
-                    add_node(results, "identifier", var_name, line_num, col_num);
+                    add_node(results, "var_declaration", var_name, line_num, col_num);
                     free(var_name);
                 } else {
                     traverse_tree(left_node, source_code, results, language_name);
@@ -844,7 +988,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             }
             return;
         }
-        // ======================= AGENT END =======================
     }
 
     else if (strcmp(language_name, "cpp") == 0 || strcmp(language_name, "c") == 0) {
@@ -938,7 +1081,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     free(func_name);
                 }
             }
-            // // ======================= AGENT START =======================
             // // Check for field initializer list (common in constructors) and skip it
             // uint32_t child_count = ts_node_child_count(node);
             // debug_printf("DEBUG: Function definition has %d children\n", child_count);
@@ -953,7 +1095,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             //         continue;
             //     }
             // }
-            // // ======================= AGENT END =======================
 
             // Process function body normally (if it exists)
             TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
@@ -1117,6 +1258,10 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                     debug_printf("DEBUG: Found field_identifier at position 1, processing...\n");
                     traverse_declaration_cpp(child, source_code, results, language_name, false);
                 }
+                else {
+                    debug_printf("DEBUG: field_declaration's non-declarator child type: '%s'\n", child_type);
+                    traverse_tree(child, source_code, results, language_name);
+                }
             }
 
             return;
@@ -1234,7 +1379,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             }
             return;
         }
-        // ======================= AGENT START =======================
         else if (strcmp(node_type, "lambda_expression") == 0) {
             debug_printf("DEBUG: Lambda expression child nodes:\n");
             debug_print_child(node, source_code);
@@ -1250,7 +1394,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             }
             return;
         }
-        // ======================= AGENT END =======================
         else if (strcmp(node_type, "new_expression") == 0) {
             debug_printf("DEBUG: New expression's child nodes:\n");
             debug_print_child(node, source_code);
@@ -1287,7 +1430,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             char* method_name = get_node_text(name_node, source_code);
             debug_printf("DEBUG: Found Java method declaration via name field: '%s'\n", method_name);
 
-            // ======================= AGENT START =======================
             // Check if this is a declaration (no body) or definition (has body)
             unsigned int line_num, col_num;
             get_node_position(name_node, &line_num, &col_num);
@@ -1296,7 +1438,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             } else {
                 add_node(results, "function_definition", method_name, line_num, col_num);
             }
-            // ======================= AGENT END =======================
             free(method_name);
 
             traverse_tree(parameters_node, source_code, results, language_name);
@@ -1305,7 +1446,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             }
             return;
         }
-        // ======================= AGENT START =======================
         else if (strcmp(node_type, "formal_parameter") == 0) {
             debug_printf("DEBUG: Processing formal_parameter node!\n");
             debug_printf("DEBUG: Formal parameter child nodes:\n");
@@ -1326,7 +1466,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 debug_printf("DEBUG: No name field found in formal_parameter\n");
             }
         }
-        // ======================= AGENT END =======================
         else if (strcmp(node_type, "class_declaration") == 0) {
             debug_printf("DEBUG: Class declaration child nodes:\n");
             debug_print_child(node, source_code);
@@ -1367,7 +1506,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             traverse_tree(body_node, source_code, results, language_name);
             return;
         }
-        // ======================= AGENT START =======================
       else if (strcmp(node_type, "method_reference") == 0) {
           debug_printf("DEBUG: Method reference child nodes:\n");
           debug_print_child(node, source_code);
@@ -1395,7 +1533,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
           }
           return;
       }
-      // ======================= AGENT END =======================
       else if (strcmp(node_type, "method_invocation") == 0) {
             debug_printf("DEBUG: Method invocation child nodes:\n");
             debug_print_child(node, source_code);
@@ -1420,7 +1557,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             }
             return;
         }
-        // ======================= AGENT START =======================
         else if (strcmp(node_type, "field_access") == 0) {
             debug_printf("DEBUG: Field access child nodes:\n");
             debug_print_child(node, source_code);
@@ -1450,7 +1586,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
 
             return;
         }
-        // ======================= AGENT END =======================
         else if (strcmp(node_type, "field_declaration") == 0) {
             debug_printf("DEBUG: Field declaration child nodes:\n");
             debug_print_child(node, source_code);
@@ -1509,7 +1644,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             free(type_name);
             return;
         }
-        // ======================= AGENT START =======================
         else if (strcmp(node_type, "catch_formal_parameter") == 0) {
             debug_printf("DEBUG: Processing catch_formal_parameter node!\n");
             debug_printf("DEBUG: Catch formal parameter child nodes:\n");
@@ -1531,7 +1665,6 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 debug_printf("DEBUG: No name field found in catch_formal_parameter\n");
             }
         }
-        // ======================= AGENT END =======================
         else if (strcmp(node_type, "identifier") == 0) {
             debug_printf("DEBUG: Identifier\n");
 
@@ -1625,6 +1758,302 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             traverse_tree(child, source_code, results, language_name);
         }
         return;
+    }
+    else if (strcmp(language_name, "solidity") == 0) {
+        if (strcmp(node_type, "function_definition") == 0 || strcmp(node_type, "modifier_definition") == 0) {
+            debug_printf("DEBUG: Solidity function definition child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
+            NodeArray*  modifier_invocation_node = ts_node_children_by_type_name(node, "modifier_invocation");
+            debug_printf("DEBUG: Found %u modifier invocation nodes in Solidity function definition\n", modifier_invocation_node->count);
+            for (uint32_t i = 0; i < modifier_invocation_node->count; i++) {
+                TSNode modifier_invocation = modifier_invocation_node->nodes[i];
+                debug_printf("DEBUG: Processing modifier invocation %u\n", i);
+                debug_print_child(modifier_invocation, source_code);
+                TSNode modifier_invocation_name_node = ts_node_child_by_type_name(modifier_invocation, "identifier");
+                if (!ts_node_is_null(modifier_invocation_name_node)) {
+                    char* modifier_name = get_node_text(modifier_invocation_name_node, source_code);
+                    debug_printf("DEBUG: Found Solidity modifier: '%s'\n", modifier_name);
+                    unsigned int line_num, col_num;
+                    get_node_position(modifier_invocation_name_node, &line_num, &col_num);
+                    add_node(results, "call", modifier_name, line_num, col_num);
+                    free(modifier_name);
+                }
+            }
+
+            if (!ts_node_is_null(name_node)) {
+                char* func_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found Solidity function definition: '%s'\n", func_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "function_definition", func_name, line_num, col_num);
+                free(func_name);
+            }
+
+            // Use ts_node_children_by_type_name to get all parameter nodes
+            NodeArray* parameter_nodes = ts_node_children_by_type_name(node, "parameter");
+            debug_printf("DEBUG: Found %u parameter nodes in Solidity function definition\n", parameter_nodes->count);
+
+            for (uint32_t i = 0; i < parameter_nodes->count; i++) {
+                TSNode param_node = parameter_nodes->nodes[i];
+                debug_printf("DEBUG: Processing parameter %u\n", i);
+                debug_print_child(param_node, source_code);
+
+                // Get the parameter name
+                TSNode param_name_node = ts_node_child_by_field_name(param_node, "name", 4);
+                if (!ts_node_is_null(param_name_node)) {
+                    char* param_name = get_node_text(param_name_node, source_code);
+                    debug_printf("DEBUG: Found Solidity parameter: '%s'\n", param_name);
+                    unsigned int line_num, col_num;
+                    get_node_position(param_name_node, &line_num, &col_num);
+                    add_node(results, "var_declaration", param_name, line_num, col_num);
+                    free(param_name);
+                }
+            }
+
+            free_node_array(parameter_nodes);
+
+            if (!ts_node_is_null(body_node)) {
+                traverse_tree(body_node, source_code, results, language_name);
+            }
+            return;
+        }
+
+        else if (strcmp(node_type, "using_directive") == 0) {
+            //! WARNING: currently we ignore using directives.
+            return;
+        }
+
+        else if (strcmp(node_type, "interface_declaration") == 0) {
+            debug_printf("DEBUG: Solidity contract definition child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_type_name(node, "identifier");
+            TSNode body_node = ts_node_child_by_type_name(node, "contract_body");
+
+            if (!ts_node_is_null(name_node)) {
+                char* contract_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found Solidity contract definition: '%s'\n", contract_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "class_definition", contract_name, line_num, col_num);
+                free(contract_name);
+            }
+
+            if (!ts_node_is_null(body_node)) {
+                traverse_tree(body_node, source_code, results, language_name);
+            }
+            return;
+        }
+        else if (strcmp(node_type, "contract_declaration") == 0 ) {
+            debug_printf("DEBUG: Solidity contract definition child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
+
+            if (!ts_node_is_null(name_node)) {
+                char* contract_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found Solidity contract definition: '%s'\n", contract_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "class_definition", contract_name, line_num, col_num);
+                free(contract_name);
+            }
+
+            if (!ts_node_is_null(body_node)) {
+                traverse_tree(body_node, source_code, results, language_name);
+            }
+            return;
+        }
+        else if (strcmp(node_type, "library_declaration") == 0) {
+            debug_printf("DEBUG: Solidity contract definition child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            TSNode body_node = ts_node_child_by_field_name(node, "body", 4);
+
+            if (!ts_node_is_null(name_node)) {
+                char* contract_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found Solidity contract definition: '%s'\n", contract_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "class_definition", contract_name, line_num, col_num);
+                free(contract_name);
+            }
+
+            if (!ts_node_is_null(body_node)) {
+                traverse_tree(body_node, source_code, results, language_name);
+            }
+            return;
+        }
+        else if (strcmp(node_type, "struct_declaration") == 0) {
+            TSNode name_node = ts_node_child_by_type_name(node, "identifier");
+            if (!ts_node_is_null(name_node)) {
+                char* struct_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found Solidity struct definition: '%s'\n", struct_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "class_definition", struct_name, line_num, col_num);
+                free(struct_name);
+            }
+            TSNode body_node = ts_node_child_by_type_name(node, "struct_body");
+            if (!ts_node_is_null(body_node)) {
+                NodeArray* struct_member_nodes = ts_node_children_by_type_name(body_node, "struct_member");
+                if (struct_member_nodes != NULL && struct_member_nodes->count > 0) {
+                    for (uint32_t i = 0; i < struct_member_nodes->count; i++) {
+                        TSNode struct_member_node = struct_member_nodes->nodes[i];
+                        debug_printf("DEBUG: Processing struct_member %u\n", i);
+                        debug_print_child(struct_member_node, source_code);
+                        TSNode name_node = ts_node_child_by_type_name(struct_member_node, "identifier");
+                        if (!ts_node_is_null(name_node)) {
+                            char* struct_member_name = get_node_text(name_node, source_code);
+                            debug_printf("DEBUG: Found Solidity struct member: '%s'\n", struct_member_name);
+                            unsigned int line_num, col_num;
+                            get_node_position(name_node, &line_num, &col_num);
+                            add_node(results, "var_declaration", struct_member_name, line_num, col_num);
+                            free(struct_member_name);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        else if (strcmp(node_type, "event_definition") == 0) {
+            //!WARNING: event is not processed in the current version
+            return;
+            debug_printf("DEBUG: Solidity event definition child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_type_name(node, "identifier");
+            if (!ts_node_is_null(name_node)) {
+                char* event_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found Solidity event definition: '%s'\n", event_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "event_definition", event_name, line_num, col_num);
+                free(event_name);
+            }
+            NodeArray* parameters = ts_node_children_by_type_name(node, "event_parameter");
+            if (parameters != NULL && parameters->count > 0) {
+                debug_printf("DEBUG: Found %d event_parameter nodes in Solidity event definition\n", parameters->count);
+                for (uint32_t i = 0; i < parameters->count; i++) {
+                    TSNode parameter_node = parameters->nodes[i];
+                    debug_printf("DEBUG: Processing event_parameter %u\n", i);
+                    debug_print_child(parameter_node, source_code);
+                    TSNode parameter_name_node = ts_node_child_by_type_name(parameter_node, "identifier");
+                    if (!ts_node_is_null(parameter_name_node)) {
+                        char* parameter_name = get_node_text(parameter_name_node, source_code);
+                        debug_printf("DEBUG: Found Solidity event parameter: '%s'\n", parameter_name);
+                        unsigned int line_num, col_num;
+                        get_node_position(parameter_name_node, &line_num, &col_num);
+                        add_node(results, "var_declaration", parameter_name, line_num, col_num);
+                        free(parameter_name);
+                    }
+                }
+            }
+            if (parameters != NULL) {
+                free_node_array(parameters);
+            }
+            return;
+        }
+        else if (strcmp(node_type, "emit_statement") == 0) {
+            //!WARNING: emit_statement is not processed in the current version
+            return;
+        }
+        else if (strcmp(node_type, "call_expression") == 0 || strcmp(node_type, "modifier_invocation") == 0) {
+            debug_printf("DEBUG: Solidity function call child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode function_node = ts_node_child_by_field_name(node, "function", 8);
+
+            if (!ts_node_is_null(function_node)) {
+                char* func_name = get_node_text(function_node, source_code);
+                debug_printf("DEBUG: Found Solidity function call: '%s'\n", func_name);
+                unsigned int line_num, col_num;
+                get_node_position(function_node, &line_num, &col_num);
+                add_node(results, "call", func_name, line_num, col_num);
+                debug_print_child(function_node, source_code);
+                TSNode member_expression_node = ts_node_child_by_type_name(function_node, "member_expression");
+                if (!ts_node_is_null(member_expression_node)) {
+                    char* member_name = get_node_text(member_expression_node, source_code);
+                    debug_printf("DEBUG: Found Solidity member expression: '%s'\n", member_name);
+                    debug_print_child(member_expression_node, source_code);
+                    // TSNode object_node = ts_node_child_by_field_name(member_expression_node, "object", 6);
+                    // if (!ts_node_is_null(object_node)) {
+                    //     char* object_name = get_node_text(object_node, source_code);
+                    //     debug_printf("DEBUG: Found Solidity object: '%s'\n", object_name);
+                    //     debug_print_child(object_node, source_code);
+                    //     // traverse_tree(object_node, source_code, results, language_name);
+                    //     free(object_name);
+                    // }
+                    // TSNode property_node = ts_node_child_by_field_name(member_expression_node, "property", 8);
+                    // if (!ts_node_is_null(property_node)) {
+                    //     char* property_name = get_node_text(property_node, source_code);
+                    //     debug_printf("DEBUG: Found Solidity property: '%s'\n", property_name);
+                    //     debug_print_child(property_node, source_code);
+                    //     free(property_name);
+                    // }
+                    free(member_name);
+                }
+                free(func_name);
+            }
+
+            NodeArray* argument_nodes = ts_node_children_by_type_name(node, "call_argument");
+            if (argument_nodes != NULL && argument_nodes->count > 0) {
+                debug_printf("DEBUG: Found %d call_argument nodes in Solidity call\n", argument_nodes->count);
+                for (uint32_t i = 0; i < argument_nodes->count; i++) {
+                    traverse_tree(argument_nodes->nodes[i], source_code, results, language_name);
+                }
+            }
+            if (argument_nodes != NULL) {
+                free_node_array(argument_nodes);
+            }
+            return;
+        }
+        else if (strcmp(node_type, "identifier") == 0) {
+            debug_printf("DEBUG: Solidity identifier\n");
+
+            char* name = get_node_text(node, source_code);
+            debug_printf("DEBUG: Found Solidity identifier: '%s'\n", name);
+            unsigned int line_num, col_num;
+            get_node_position(node, &line_num, &col_num);
+            add_node(results, "identifier", name, line_num, col_num);
+            free(name);
+            return;
+        }
+        else if (strcmp(node_type, "variable_declaration") == 0) {
+            debug_printf("DEBUG: Solidity variable declaration child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            if (!ts_node_is_null(name_node)) {
+                char* var_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found Solidity variable declaration: '%s'\n", var_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "var_declaration", var_name, line_num, col_num);
+                free(var_name);
+            }
+            return;
+        }
+        else if (strcmp(node_type, "state_variable_declaration") == 0) {
+            debug_printf("DEBUG: Solidity state variable declaration child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+            if (!ts_node_is_null(name_node)) {
+                char* var_name = get_node_text(name_node, source_code);
+                debug_printf("DEBUG: Found Solidity state variable declaration: '%s'\n", var_name);
+                unsigned int line_num, col_num;
+                get_node_position(name_node, &line_num, &col_num);
+                add_node(results, "var_declaration", var_name, line_num, col_num);
+                free(var_name);
+            }
+            return;
+        }
     }
 
     else {
@@ -1836,6 +2265,13 @@ static TokenResults* extract_bm25_tokens_treesitter(const char* code, const char
         if (strcmp(node_type, "package") == 0) {
             char prefixed_token[256];
             snprintf(prefixed_token, sizeof(prefixed_token), "[PKG]%s", node_text);
+            add_token(tokens, prefixed_token, line_num, col_num);
+            continue;
+        }
+
+        if (strcmp(node_type, "module") == 0) {
+            char prefixed_token[256];
+            snprintf(prefixed_token, sizeof(prefixed_token), "[MODULE]%s", node_text);
             add_token(tokens, prefixed_token, line_num, col_num);
             continue;
         }

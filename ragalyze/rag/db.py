@@ -13,7 +13,6 @@ from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
 
 from ragalyze.configs.compose_hydra import set_global_config_value
-from ragalyze.rag.splitter import MyTextSplitter
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from ragalyze.rag.transformer_registry import (
     create_embedder_transformer,
@@ -774,6 +773,7 @@ def _read_all_documents_sync(path: str, max_workers: int = 8):
     logger.info(f"Found {len(documents)} files to be processed")
     return documents
 
+
 class DB(LocalDB):
     """
     Database class that inherits from LocalDB.
@@ -784,6 +784,7 @@ class DB(LocalDB):
         item: Any,
         index: Optional[int] = None,
         apply_transformer: bool = True,
+        only_update_transformed_data: bool = False,
         transformer_key: Optional[str] = None,
     ):
         """Add a single item by index or append to the end. Optionally apply the transformer.
@@ -802,14 +803,13 @@ class DB(LocalDB):
         if transformer_key is None:
             super().add(item, index, apply_transformer)
         else:
-
-            if index is not None:
-                self.items.insert(index, item)
-            else:
-                self.items.append(item)
-
+            if not only_update_transformed_data:
+                if index is not None:
+                    self.items.insert(index, item)
+                else:
+                    self.items.append(item)
             if apply_transformer:
-                transformed_docs = self.transformer_setups[transformer_key](item)
+                transformed_docs = self.transformer_setups[transformer_key]([item])
                 if index is not None:
                     for doc in transformed_docs:
                         self.transformed_items[transformer_key].insert(index, doc)
@@ -817,19 +817,46 @@ class DB(LocalDB):
                     for doc in transformed_docs:
                         self.transformed_items[transformer_key].append(doc)
 
+    def batch_add(
+        self,
+        items: List[Any],
+        apply_transformer: bool = True,
+        only_update_transformed_data: bool = False,
+        transformer_key: Optional[str] = None,
+    ):
+        """Add multiple items by index or append to the end. Optionally apply the transformer.
+
+        Args:
+            items (List[Any]): The items to add.
+            index (int, optional): The index to add the items at. Defaults to None.
+            When None, the items are appended to the end.
+            apply_transformer (bool, optional): Whether to apply the transformer to the items. Defaults to True.
+            transformer_key (str, optional): The key of the transformer to apply. Defaults to None.
+        """
+        if transformer_key is None:
+            for item in items:
+                super().add(item, None, apply_transformer)
+        else:
+            if not only_update_transformed_data:
+                self.items.extend(items)
+            if apply_transformer:
+                transformed_docs = self.transformer_setups[transformer_key](items)
+                self.transformed_items[transformer_key].extend(transformed_docs)
+
+
 class DatabaseManager:
     """
     Manages the creation, loading, transformation, and persistence of LocalDB instances for a single repository.
     """
 
-    def __init__(self):
+    def __init__(self, embed: bool = False):
+        self.embed = embed
         self.db = None
-
         rag_config = configs()["rag"]
         self.use_dual_vector = rag_config["embedder"]["sketch_filling"]
-        self.query_driven = rag_config["retriever"]["query_driven"]
         self.dynamic_splitter = rag_config["dynamic_splitter"]["enabled"]
         self.repo_path = configs()["repo_path"]
+        self.query_driven = rag_config["retriever"]["query_driven"]
         self.cache_file_path = self._prepare_cache_file_path()
 
     def _prepare_cache_file_path(self):
@@ -837,14 +864,15 @@ class DatabaseManager:
         file_name = os.path.abspath(os.path.expanduser(self.repo_path.rstrip("/")))
         if self.use_dual_vector:
             file_name += "-dual-vector"
-        if self.query_driven:
-            file_name += "-query-driven"
         if self.dynamic_splitter:
             file_name += "-dynamic-splitter"
+        if self.query_driven:
+            file_name += "-query-driven"
         file_name = file_name.replace("/", "#")
         embedding_provider = configs()["rag"]["embedder"]["provider"]
         embedding_model = configs()["rag"]["embedder"]["model"]
-        file_name += f"-{embedding_provider}-{embedding_model}".replace("/", "#")
+        if self.embed:
+            file_name += f"-{embedding_provider}-{embedding_model}".replace("/", "#")
         file_path = os.path.join(
             get_adalflow_default_root_path(), "ragalyze_cache", file_name + ".pkl"
         )
@@ -860,13 +888,21 @@ class DatabaseManager:
         if os.path.exists(self.cache_file_path) and not configs()["rag"]["recreate_db"]:
             logger.info("Loading existing database...")
             self.db = DB.load_state(self.cache_file_path)
-            if not self.query_driven:
-                documents = self.db.get_transformed_data(key="split_plus_bm25")
+            if self.embed:
+                if not self.query_driven:
+                    documents = self.db.get_transformed_data(key="split_embed")
+                else:
+                    documents = self.db.get_transformed_data(key="split")
             else:
-                documents = self.db.get_transformed_data(key="bm25_split")
+                documents = self.db.get_transformed_data(key="astbm25_split")
             if documents:
                 logger.info(f"Loaded {len(documents)} documents from existing database")
-                id2doc = {doc.id: doc for doc in documents}
+                id2doc = {
+                    doc.id if isinstance(doc, Document) else doc.original_doc.id: (
+                        doc if isinstance(doc, Document) else doc.original_doc
+                    )
+                    for doc in documents
+                }
                 return documents, id2doc
             else:
                 logger.warning("No documents found in the existing database")
@@ -880,7 +916,7 @@ class DatabaseManager:
             transformer=create_splitter_transformer(), key="split"
         )
         self.db.register_transformer(
-            transformer=create_bm25_transformer(), key="bm25_indexes"
+            transformer=create_bm25_transformer(), key="astbm25"
         )
         self.db.register_transformer(
             transformer=create_embedder_transformer(), key="embed"
@@ -889,36 +925,44 @@ class DatabaseManager:
             transformer=adal.Sequential(
                 create_splitter_transformer(), create_bm25_transformer()
             ),
-            key="split_bm25",
+            key="split_astbm25",
         )
         self.db.register_transformer(
             transformer=adal.Sequential(
                 create_bm25_transformer(),
                 create_splitter_transformer(),
             ),
-            key="bm25_split",
+            key="astbm25_split",
         )
         self.db.register_transformer(
             transformer=adal.Sequential(
                 create_splitter_transformer(),
-                create_bm25_transformer(),
                 create_embedder_transformer(),
             ),
-            key="split_bm25_embed",
+            key="split_embed",
         )
         documents = read_all_documents(
             self.repo_path,
         )
         self.db.load(documents)
-        if not self.query_driven:
-            self.db.transform(key="split_bm25_embed")
-            transformed_documents = self.db.get_transformed_data(key="split_plus_bm25")
+        if self.embed:
+            if not self.query_driven:
+                self.db.transform(key="split_embed")
+                transformed_documents = self.db.get_transformed_data(key="split_embed")
+            else:
+                self.db.transform(key="split")
+                transformed_documents = self.db.get_transformed_data(key="split")
         else:
-            self.db.transform(key="bm25_split")
-            transformed_documents = self.db.get_transformed_data(key="bm25_split")
+            self.db.transform(key="astbm25_split")
+            transformed_documents = self.db.get_transformed_data(key="astbm25_split")
 
         self.db.save_state(filepath=self.cache_file_path)
-        id2doc = {doc.id: doc for doc in transformed_documents}
+        id2doc = {
+            doc.id if isinstance(doc, Document) else doc.original_doc.id: (
+                doc if isinstance(doc, Document) else doc.original_doc
+            )
+            for doc in transformed_documents
+        }
         return transformed_documents, id2doc
 
     def update_database_with_documents(
@@ -941,9 +985,8 @@ class DatabaseManager:
         # Only add documents that are not already in the database
         existing_item_ids = set(
             item.id if isinstance(item, Document) else item.original_doc.id
-            for item in self.db.items
+            for item in self.db.get_transformed_data(key="embed")
         )
-
         new_documents = [
             doc
             for doc in documents
@@ -954,15 +997,13 @@ class DatabaseManager:
                 and doc.original_doc.id not in existing_item_ids
             )
         ]
-
         document_ids = set(
             doc.id if isinstance(doc, Document) else doc.original_doc.id
             for doc in documents
         )
-
         cached_embedded_documents = [
             doc
-            for doc in self.db.transformed_items["split_bm25_embed"]
+            for doc in self.db.transformed_items["embed"]
             if (hasattr(doc, "id") and doc.id in document_ids)
             or (
                 hasattr(doc, "original_doc")
@@ -970,9 +1011,9 @@ class DatabaseManager:
                 and doc.original_doc.id in document_ids
             )
         ]
-
-        for doc in new_documents:
-            self.db.add(doc, transformer_key="split_bm25_embed")
+        self.db.batch_add(
+            new_documents, transformer_key="embed", only_update_transformed_data=True
+        )
 
         logger.info(
             f"Updated database with {len(new_documents)} new documents and {len(cached_embedded_documents)} cached documents"
@@ -982,4 +1023,4 @@ class DatabaseManager:
         if self.cache_file_path:
             self.db.save_state(filepath=self.cache_file_path)
             logger.info(f"Database updated and saved to {self.cache_file_path}")
-        return self.db.get_transformed_data(key="split_bm25_embed")
+        return self.db.get_transformed_data(key="embed")

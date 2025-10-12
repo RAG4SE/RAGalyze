@@ -20,6 +20,7 @@ logger = get_tqdm_compatible_logger(__name__)
 @dataclass
 class BM25Index:
     """Class to store BM25 tokens with their positions."""
+
     token: str
     position: Tuple[int, int]  # (line_number, column_number)
 
@@ -28,7 +29,7 @@ class BM25Index:
         self.position = position
 
 
-class BM25Transformer(Component):
+class ASTBM25Transformer(Component):
     """Transformer class for building BM25 indexes for documents."""
 
     def __init__(
@@ -48,7 +49,10 @@ class BM25Transformer(Component):
         bm25_indexes = tokenize_for_bm25(code, language, file_path)
         tokens = [index[0] for index in bm25_indexes]
         positions = [(index[1], index[2]) for index in bm25_indexes]
-        return [BM25Index(token=token, position=pos) for token, pos in zip(tokens, positions)]
+        return [
+            BM25Index(token=token, position=pos)
+            for token, pos in zip(tokens, positions)
+        ]
 
     def call(
         self, documents: List[Union[Document, DualVectorDocument]]
@@ -108,7 +112,9 @@ class BM25Transformer(Component):
                                 index = future_to_index[future]
                                 try:
                                     bm25_index = future.result()
-                                    documents[index].meta_data["bm25_indexes"] = bm25_index
+                                    documents[index].meta_data[
+                                        "bm25_indexes"
+                                    ] = bm25_index
                                     pbar.update(1)
                                 except Exception as e:
                                     logger.error(
