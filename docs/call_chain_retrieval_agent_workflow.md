@@ -27,7 +27,7 @@ graph TD
     subgraph "Helper Methods"
         AA[_safe_fetch_definitions] --> AAA{Call context available?}
         AAA -->|Yes| BBB[FetchFunctionDefinitionFromCallAgent]
-        AAA -->|No| CCC[FetchFunctionDefinitionFromNameAgent]
+        AAA -->|No| CCC[FetchFunctionDefinitionFromNamePipeline]
         BBB --> DDD{Definitions found?}
         CCC --> DDD
         DDD -->|Yes| EEE[Cache and return definitions]
@@ -42,7 +42,7 @@ graph TD
     subgraph "Agents Used"
         U[ExtractCallerNameAgent]
         V[FetchFunctionDefinitionFromCallAgent]
-        W[FetchFunctionDefinitionFromNameAgent]
+        W[FetchFunctionDefinitionFromNamePipeline]
         X[MacroAnalysisAgent]
         Y[LocalFunctionAnalysisAgent]
     end

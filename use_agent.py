@@ -2,9 +2,13 @@ from ragalyze import *
 from ragalyze.configs import *
 from ragalyze.agent import *
 from ragalyze.rag import retriever
+from pathlib import Path
 
 # set_global_config_value("repo_path", "/Users/mac/repo/RAGalyzeBench/solidity/")
-set_global_config_value("repo_path", "./bench/call_maze")
+set_global_config_value("repo_path", "./bench/call_maze_cpp")
+set_global_config_value("repo_path", "./bench/solidity_vulnerable_contracts")
+set_global_config_value("repo_path", "./bench/call_fetch_cpp")
+# set_global_config_value("repo_path", "./bench/same_function_name_in_a_file")
 set_global_config_value("rag.recreate_db", True)
 # set_global_config_value(
 #     "repo.file_filters.extra_excluded_patterns",
@@ -17,62 +21,61 @@ set_global_config_value("generator.provider", "dashscope")
 # set_global_config_value("generator.model", "qwen3-30b-a3b-instruct-2507")
 set_global_config_value("generator.model", "qwen3-next-80b-a3b-instruct")
 
-set_global_config_value("generator.provider", "deepseek")
-set_global_config_value("generator.model", "deepseek-chat")
-
-# set_global_config_value("generator.provider", "modelscope")
-# set_global_config_value("generator.model", "Qwen/Qwen3-Next-80B-A3B-Instruct")
+# set_global_config_value("generator.provider", "deepseek")
+# set_global_config_value("generator.model", "deepseek-chat")
 
 
-r = ChainedCallAnalyzerPipeline(debug=True)
-expr = 'engine.pipeline().stage("primary").tune(1.4).limit(60.0);'
-context = """
-int main() {
-    using namespace callmaze;
+# r = FetchFunctionDefinitionFromNamePipeline(debug=True)
+# result = r("f", file_path="test.py", line_number=5)
+# print(result)
 
-    Engine engine;
+# r = FetchFunctionDefinitionFromNamePipeline(debug=True)
+# result = r("f", file_path="test2.py", line_number=1)
+# print(result)
+# result = r("f", file_path="test2.py", line_number=103)
+# print(result)
+# result = r("f", file_path="test2.py", line_number=152)
+# print(result)
 
-    engine.pipeline().stage("primary").tune(1.4).limit(60.0);
-    engine.pipeline().stage("secondary").tune(0.65).limit(40.0);
+function_body = """
+function launchReentrancyAttack(address token, uint256 amount) external onlyOwner {
+    require(!attackInProgress, "Attack already in progress");
 
-    auto descriptor = engine.accessor()->compound.describe();
-    std::cout << descriptor << '\n';
+    attackInProgress = true;
+    attackCount++;
+    emit AttackStarted("Reentrancy Attack");
 
-    auto prepared = chain_value(
-        tap(std::vector<double>{1.0, 4.0, 9.0, 16.0}, [](auto& vec) {
-            vec.push_back(25.0);
-            std::rotate(vec.begin(), vec.begin() + 1, vec.end());
-        }),
-        [](std::vector<double> vec) {
-            std::transform(vec.begin(), vec.end(), vec.begin(), [](double value) {
-                return std::sqrt(value);
-            });
-            return vec;
-        },
-        [](std::vector<double> vec) {
-            vec.erase(vec.begin());
-            return vec;
-        });
+    // First, deposit tokens to the protocol
+    targetToken.approve(address(targetProtocol), amount);
 
-    engine.analyzer().enable().setThreshold(0.5);
-    engine.calibrate([](double value) { return value * 1.1; });
+    // Call withdraw to trigger reentrancy
+    targetProtocol.withdraw(token, amount);
 
-    auto value = engine.process(prepared);
-
-    auto report = engine.accessor()->compound.sample(value);
-    std::cout << report.summary() << '\n';
-
-    auto tuningScore = engine.pipeline().stage("secondary").options().bias(0.2).smoothing(0.95).finalize();
-    std::cout << "Secondary tuning score: " << tuningScore << '\n';
-
-    auto log = engine.dashboard().logView.print();
-    std::cout << log;
-
-    auto summary = engine.dashboard().latestReport.tag("tuning", std::to_string(tuningScore)).summary();
-    std::cout << summary << '\n';
-
-    return 0;
+    attackInProgress = false;
+    emit AttackCompleted("Reentrancy Attack", stolenAmount);
 }
 """
 
-print(r(expr, context))
+# r = FetchCalleeInfoPipeline(debug=True)
+# expr = "targetToken.approve(address(targetProtocol), amount);"
+# file_path = "AttackContract.sol"
+# line_number = 50
+# result = r(expr, file_path, line_number)
+# print(result)
+
+# r = FetchFunctionDefinitionFromNamePipeline(debug=True)
+# print(r("VulnerableDeFiProtocol"))
+
+# r = FetchCalleeInfoPipeline(debug=True)
+# expr = "VulnerableDeFiProtocol(_protocol);"
+# file_path = "AttackContract.sol"
+# line_number = 34
+# result = r(expr, file_path, line_number)
+# print(result)
+
+r = FetchCalleeInfoPipeline(debug=True)
+expr = "cptr->func().func();"
+file_path = "test.cpp"
+line_number = 29
+result = r(expr, file_path, line_number)
+print(result)

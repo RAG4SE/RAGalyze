@@ -82,6 +82,7 @@ class MyTextSplitter(TextSplitter):
                     vector=chunk_dict.get('vector', []),
                     id=chunk_dict.get('id')
                 )
+                chunk_doc.meta_data["end_line"] = chunk_doc.meta_data["start_line"] + len(chunk_dict['text'].splitlines()) - 1
                 
                 # Link documents together
                 if prev_doc:
@@ -119,8 +120,8 @@ class MyTextSplitter(TextSplitter):
             not isinstance(doc, Document) for doc in documents
         ):
             logger.error("Input should be a list of Documents.")
-            raise TypeError("Input should be a list of Documents.")
-
+            raise
+        
         # Use fast C implementation if available, otherwise fall back to Python
         try:
             split_docs = self._call_c_impl(documents)

@@ -22,11 +22,11 @@ from ragalyze.rag.code_understanding import CodeUnderstandingGenerator
 from ragalyze.configs import get_batch_embedder, configs
 from ragalyze.rag.dynamic_splitter_transformer import DynamicSplitterTransformer
 from ragalyze.rag.splitter import MyTextSplitter
-from ragalyze.rag.bm25_transformer import BM25Transformer
+from ragalyze.rag.bm25_transformer import ASTBM25Transformer
 
 # Register MyTextSplitter with EntityMapping to enable proper deserialization
-EntityMapping.register('MyTextSplitter', MyTextSplitter)
-EntityMapping.register('BM25Transformer', BM25Transformer)
+EntityMapping.register("MyTextSplitter", MyTextSplitter)
+EntityMapping.register("ASTBM25Transformer", ASTBM25Transformer)
 
 # Register all custom transformer classes for proper deserialization
 from ragalyze.rag.dynamic_splitter_transformer import DynamicSplitterTransformer
@@ -38,12 +38,40 @@ from ragalyze.rag.embedding_transformer import (
     DualVectorToEmbeddings,
 )
 
-EntityMapping.register('DynamicSplitterTransformer', DynamicSplitterTransformer)
-EntityMapping.register('ToEmbeddings', ToEmbeddings)
-EntityMapping.register('DashScopeToEmbeddings', DashScopeToEmbeddings)
-EntityMapping.register('HuggingfaceToEmbeddings', HuggingfaceToEmbeddings)
-EntityMapping.register('OpenAIToEmbeddings', OpenAIToEmbeddings)
-EntityMapping.register('DualVectorToEmbeddings', DualVectorToEmbeddings)
+# Register embedder classes for proper deserialization
+from ragalyze.clients.dashscope_client import DashScopeEmbedder, DashScopeBatchEmbedder
+from ragalyze.clients.openai_client import OpenAIEmbedder, OpenAIBatchEmbedder
+from ragalyze.clients.huggingface_embedder_client import HuggingfaceEmbedder, HuggingfaceBatchEmbedder
+from ragalyze.clients.modelscope_client import ModelScopeEmbedder, ModelScopeBatchEmbedder
+from ragalyze.clients.local_server_client import LocalServerEmbedder, LocalServerBatchEmbedder
+from ragalyze.clients.lingxi_client import LingxiEmbedder, LingxiBatchEmbedder
+
+# Register generator classes for proper deserialization
+from ragalyze.rag.code_understanding import CodeUnderstandingGenerator
+
+EntityMapping.register("DynamicSplitterTransformer", DynamicSplitterTransformer)
+EntityMapping.register("ToEmbeddings", ToEmbeddings)
+EntityMapping.register("DashScopeToEmbeddings", DashScopeToEmbeddings)
+EntityMapping.register("HuggingfaceToEmbeddings", HuggingfaceToEmbeddings)
+EntityMapping.register("OpenAIToEmbeddings", OpenAIToEmbeddings)
+EntityMapping.register("DualVectorToEmbeddings", DualVectorToEmbeddings)
+
+# Register all embedder classes for proper deserialization
+EntityMapping.register("DashScopeEmbedder", DashScopeEmbedder)
+EntityMapping.register("DashScopeBatchEmbedder", DashScopeBatchEmbedder)
+EntityMapping.register("OpenAIEmbedder", OpenAIEmbedder)
+EntityMapping.register("OpenAIBatchEmbedder", OpenAIBatchEmbedder)
+EntityMapping.register("HuggingfaceEmbedder", HuggingfaceEmbedder)
+EntityMapping.register("HuggingfaceBatchEmbedder", HuggingfaceBatchEmbedder)
+EntityMapping.register("ModelScopeEmbedder", ModelScopeEmbedder)
+EntityMapping.register("ModelScopeBatchEmbedder", ModelScopeBatchEmbedder)
+EntityMapping.register("LocalServerEmbedder", LocalServerEmbedder)
+EntityMapping.register("LocalServerBatchEmbedder", LocalServerBatchEmbedder)
+EntityMapping.register("LingxiEmbedder", LingxiEmbedder)
+EntityMapping.register("LingxiBatchEmbedder", LingxiBatchEmbedder)
+
+# Register generator classes
+EntityMapping.register("CodeUnderstandingGenerator", CodeUnderstandingGenerator)
 
 logger = get_tqdm_compatible_logger(__name__)
 
@@ -141,6 +169,7 @@ class OpenAIEmbedderFactory(EmbedderTransformerFactory):
         embedder_class_name = embedder.__class__.__name__
         return embedder_class_name in ["OpenAIBatchEmbedder", "OpenAIEmbedder"]
 
+
 class LocalServerEmbedderFactory(EmbedderTransformerFactory):
     """Factory for OpenAI transformers"""
 
@@ -155,7 +184,10 @@ class LocalServerEmbedderFactory(EmbedderTransformerFactory):
         if kwargs.get("use_dual_vector", False):
             return False
         embedder_class_name = embedder.__class__.__name__
-        return embedder_class_name in ["LocalServerBatchEmbedder", "LocalServerEmbedder"]
+        return embedder_class_name in [
+            "LocalServerBatchEmbedder",
+            "LocalServerEmbedder",
+        ]
 
 
 class EmbedderTransformerRegistry:
@@ -249,6 +281,7 @@ def create_embedder_transformer() -> ToEmbeddings:
         code_understanding_generator=code_understanding_generator,
     )
 
+
 def create_splitter_transformer():
     if configs()["rag"]["dynamic_splitter"]["enabled"]:
         # Use dynamic splitter that automatically selects appropriate splitter
@@ -267,4 +300,4 @@ def create_splitter_transformer():
 
 
 def create_bm25_transformer():
-    return BM25Transformer()
+    return ASTBM25Transformer()

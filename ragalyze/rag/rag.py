@@ -142,11 +142,16 @@ IMPORTANT FORMATTING RULES:
             f.write(self.response_str)
         logger.info(f"Prompt and response saved to {output_dir}")
 
+DOCUMENTS = []
+CODEPATH2BEGINDOCID = {}
+ID2DOC = {}
+
+#TODO: could be optimized by decoupling the generator wrapper from the RAG class
 class RAG(adal.Component):
     """RAG with one repo.
     If you want to load a new repos, call prepare_retriever() first."""
 
-    def __init__(self):
+    def __init__(self, embed: bool = False):
         """
         Initialize the RAG component.
         """
@@ -154,11 +159,13 @@ class RAG(adal.Component):
 
         # Use provided generator wrapper or create a new one
         self.generator = GeneratorWrapper()
-
         self.retriever = None
-        self.db_manager = DatabaseManager()
-        self.documents = []
+        self.db_manager = DatabaseManager(embed=embed)
+        self.documents = DOCUMENTS
         self.retrieved_docs = []
+        self.codePath2beginDocid = CODEPATH2BEGINDOCID
+        self.id2doc = ID2DOC
+        self.embed = embed
 
     def _validate_and_filter_embeddings(
         self, documents: List[Document | DualVectorDocument]
@@ -348,20 +355,41 @@ class RAG(adal.Component):
                     valid_documents.append(doc)
             return valid_documents
 
-    def _prepare_retriever(self):
+    def get_docs(self):
         """
-        Prepare the retriever for a repository.
+        Get the documents from the database manager.
         """
+        if self.documents:
+            assert self.id2doc, "id2doc should be non-empty when documents are non-empty"
+            assert len(self.documents) == len(self.id2doc), "documents and id2doc should have the same length"
+            assert self.codePath2beginDocid, "codePath2beginDocid should be non-empty when documents are non-empty"
+            return
+        
         logger.info(f"🔍 Build up database...")
         # self.documents is a list of Document or DualVectorDocument
         self.documents, self.id2doc = self.db_manager.prepare_db()
+        self.codePath2beginDocid = {}
+        documents = self.documents if isinstance(self.documents[0], Document) else [doc.original_doc for doc in self.documents]
+        for doc in documents:
+            if doc.meta_data["file_path"] not in self.codePath2beginDocid:
+                if self.codePath2beginDocid.get(doc.meta_data["file_path"]) is None:
+                    while self.id2doc[doc.id].meta_data["prev_doc_id"] is not None:
+                        doc = self.id2doc[self.id2doc[doc.id].meta_data["prev_doc_id"]]
+                    self.codePath2beginDocid[doc.meta_data["file_path"]] = doc.id
+                    
         logger.info(f"✅ Loaded {len(self.documents)} documents for retrieval")
-        if not configs()["rag"]["retriever"]["query_driven"]:
+        if not configs()["rag"]["retriever"]["query_driven"] and self.embed:
             # Validate and filter embeddings to ensure consistent sizes
             self.documents = self._validate_and_filter_embeddings(self.documents)
             logger.info(f"🎉Validated and filtered {len(self.documents)} documents")
         if not self.documents:
             raise ValueError("No valid documents found. Cannot create retriever.")
+
+    def _prepare_retriever(self):
+        """
+        Prepare the retriever for a repository.
+        """
+        self.get_docs()
 
         if configs()["rag"]["retriever"]["query_driven"]:
             # Use QueryDrivenRetriever which employs on-demand embedding
@@ -390,7 +418,7 @@ class RAG(adal.Component):
             return self.retrieved_docs
         except Exception as e:
             logger.error(f"Error in RAG call: {str(e)}")
-            raise
+            return [RetrieverOutput(doc_indices=[])]
 
     def query(self, input_str: str, contexts: List = None):
         reply = self.generator(input_str=input_str, contexts=contexts).data.strip()

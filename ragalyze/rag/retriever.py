@@ -7,6 +7,7 @@ from typing import List, Optional, Union, Callable
 from rank_bm25 import BM25L
 from collections import defaultdict
 from copy import deepcopy
+import re
 
 from adalflow.core.types import RetrieverOutput, Document, RetrieverOutputType
 from adalflow.components.retriever.faiss_retriever import (
@@ -46,28 +47,74 @@ class BM25Retriever:
         self.top_k = configs()["rag"]["retriever"]["bm25"]["top_k"]
         self.use_multithreading = use_multithreading
         self.max_workers = max_workers
+        self.bm25 = None
+        self._initialize_bm25(documents)
 
-        corpus = [
-            (
-                doc.original_doc.meta_data.get("bm25_indexes", [])
-                if isinstance(doc, DualVectorDocument)
-                else doc.meta_data.get("bm25_indexes", [])
+    def _initialize_bm25(self, documents: List[Union[Document, DualVectorDocument]]):
+        """Initialize BM25 index with document texts."""
+        if len(documents) == 0:
+            logger.warning("No documents provided for BM25 indexing")
+            return
+        try:
+            has_bm25_index = False
+            if any(
+                (
+                    doc.original_doc.meta_data.get("bm25_indexes", [])
+                    if isinstance(doc, DualVectorDocument)
+                    else doc.meta_data.get("bm25_indexes", [])
+                )
+                for doc in documents
+            ):
+                has_bm25_index = True
+            if not has_bm25_index:
+                corpus = []
+                for doc in documents:
+                    if isinstance(doc, DualVectorDocument):
+                        # For dual vector documents, only tokenize the code
+                        text = doc.original_doc.text  # + "\n" + doc.understanding_text
+                    else:
+                        text = doc.text
+
+                    # Tokenize text for BM25 (simple whitespace + punctuation splitting)
+                    tokens = self._tokenize_text(text)
+                    corpus.append(tokens)
+            else:
+                corpus = [
+                    (
+                        doc.original_doc.meta_data.get("bm25_indexes", [])
+                        if isinstance(doc, DualVectorDocument)
+                        else doc.meta_data.get("bm25_indexes", [])
+                    )
+                    for doc in documents
+                ]
+                corpus = [
+                    [
+                        (
+                            bm25_index.token
+                            if hasattr(bm25_index, "token")
+                            else bm25_index[0]
+                        )
+                        for bm25_index in bm25_indexes
+                    ]
+                    for bm25_indexes in corpus
+                ]
+            logger.info(f"BM25 index created with {len(corpus)} documents")
+            self.bm25 = BM25L(
+                corpus,
+                k1=configs()["rag"]["retriever"]["bm25"]["k1"],
+                b=configs()["rag"]["retriever"]["bm25"]["b"],
             )
-            for doc in documents
-        ]
-        corpus = [
-            [
-                bm25_index.token if hasattr(bm25_index, 'token') else bm25_index[0]
-                for bm25_index in bm25_indexes
-            ]
-            for bm25_indexes in corpus
-        ]
 
-        self.bm25 = BM25L(
-            corpus,
-            k1=configs()["rag"]["retriever"]["bm25"]["k1"],
-            b=configs()["rag"]["retriever"]["bm25"]["b"],
-        )
+        except Exception as e:
+            logger.error(f"Failed to initialize BM25: {e}")
+            self.bm25 = None
+
+    def _tokenize_text(self, text: str) -> List[str]:
+        """Simple tokenization for BM25 indexing."""
+        # Convert to lowercase and split on whitespace and punctuation
+        # Split on whitespace and common punctuation, keep alphanumeric tokens
+        tokens = re.findall(r"\b\w+\b", text)
+        return tokens
 
     def get_scores(self, query: str) -> List[float]:
         """Get BM25 scores for all documents given a query."""
@@ -77,7 +124,7 @@ class BM25Retriever:
 
         try:
             # Tokenize query
-            query_tokens = query.split()
+            query_tokens = query.split("[TOKEN_SPLIT]")
             logger.info(f"query tokens: {query_tokens}")
             # Get BM25 scores for all documents
             scores = self.bm25.get_scores(query_tokens)
@@ -376,6 +423,8 @@ class HybridRetriever:
         rag_config = configs()["rag"]
         self.use_dual_vector = rag_config["embedder"]["sketch_filling"]
         self.fusion = configs()["rag"]["retriever"]["fusion"]
+        self.bm25_weight = rag_config["retriever"]["bm25"]["weight"]
+        self.top_k = rag_config["retriever"]["bm25"]["top_k"]
         assert self.fusion in [
             "rrf",
             "normal_add",
@@ -596,9 +645,7 @@ class QueryDrivenRetriever(HybridRetriever):
 
         # Step 1: BM25 filtering to get candidates
         logger.info("Step 1: BM25 filtering")
-        bm25_retriever = self._initialize_bm25_retriever(
-            self.documents
-        )
+        bm25_retriever = self._initialize_bm25_retriever(self.documents)
         query_related_doc_indices, query_related_doc_scores = (
             bm25_retriever.filter_and_score(bm25_keywords)
         )

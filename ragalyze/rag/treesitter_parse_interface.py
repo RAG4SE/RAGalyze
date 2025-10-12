@@ -36,9 +36,9 @@ test_codes_bm25_funcs = [
         sorted(
             [
                 "[FUNCDEF]add",
+                "[VARDECL]a",
+                "[VARDECL]b",
                 "[IDENTIFIER]a",
-                "[IDENTIFIER]a",
-                "[IDENTIFIER]b",
                 "[IDENTIFIER]b",
             ]
         ),
@@ -46,7 +46,7 @@ test_codes_bm25_funcs = [
     (
         "python",
         "def call_add(): x = add(1, 2) return x",
-        sorted(["[CALL]add", "[FUNCDEF]call_add", "[IDENTIFIER]x", "[IDENTIFIER]x"]),
+        sorted(["[CALL]add", "[FUNCDEF]call_add", "[VARDECL]x", "[IDENTIFIER]x"]),
     ),
     (
         "python",
@@ -54,9 +54,9 @@ test_codes_bm25_funcs = [
         sorted(
             [
                 "[FUNCDEF]mul",
+                "[VARDECL]a",
+                "[VARDECL]b",
                 "[IDENTIFIER]a",
-                "[IDENTIFIER]a",
-                "[IDENTIFIER]b",
                 "[IDENTIFIER]b",
             ]
         ),
@@ -67,9 +67,9 @@ test_codes_bm25_funcs = [
         sorted(
             [
                 "[FUNCDEF]sub",
+                "[VARDECL]a",
+                "[VARDECL]b",
                 "[IDENTIFIER]a",
-                "[IDENTIFIER]a",
-                "[IDENTIFIER]b",
                 "[IDENTIFIER]b",
             ]
         ),
@@ -80,9 +80,9 @@ test_codes_bm25_funcs = [
         sorted(
             [
                 "[FUNCDEF]div",
+                "[VARDECL]a",
+                "[VARDECL]b",
                 "[IDENTIFIER]a",
-                "[IDENTIFIER]a",
-                "[IDENTIFIER]b",
                 "[IDENTIFIER]b",
             ]
         ),
@@ -102,7 +102,7 @@ test_codes_bm25_funcs = [
                 "[FUNCDEF]main",
                 "[IDENTIFIER]a",
                 "[IDENTIFIER]b",
-                "[IDENTIFIER]s",
+                "[VARDECL]s",
                 "[IDENTIFIER]s",
             ]
         ),
@@ -144,7 +144,7 @@ test_codes_bm25_funcs = [
                 "[CLASS]TestClass",
                 "[FUNCDEF]method",
                 "[IDENTIFIER]attr",
-                "[IDENTIFIER]self",
+                "[VARDECL]self",
                 "[IDENTIFIER]self",
             ]
         ),
@@ -155,7 +155,7 @@ test_codes_bm25_funcs = [
         sorted(
             [
                 "[FUNCDEF]fibonacci",
-                "[IDENTIFIER]n",
+                "[VARDECL]n",
                 "[IDENTIFIER]n",
                 "[IDENTIFIER]n",
                 "[IDENTIFIER]n",
@@ -173,12 +173,12 @@ test_codes_bm25_funcs = [
                 "[CLASS]DataProcessor",
                 "[FUNCDEF]__init__",
                 "[FUNCDEF]process",
+                "[VARDECL]data",
                 "[IDENTIFIER]data",
                 "[IDENTIFIER]data",
                 "[IDENTIFIER]data",
-                "[IDENTIFIER]data",
-                "[IDENTIFIER]self",
-                "[IDENTIFIER]self",
+                "[VARDECL]self",
+                "[VARDECL]self",
                 "[IDENTIFIER]self",
                 "[IDENTIFIER]self",
                 "[IDENTIFIER]x",
@@ -196,7 +196,7 @@ test_codes_bm25_funcs = [
                 "[CALL]print",
                 "[PKG]math",
                 "[IDENTIFIER]math",
-                "[IDENTIFIER]result",
+                "[VARDECL]result",
                 "[IDENTIFIER]result",
             ]
         ),
@@ -210,21 +210,21 @@ test_codes_bm25_funcs = [
                 "[FUNCDEF]decorator",
                 "[FUNCDEF]wrapper",
                 "[IDENTIFIER]args",
-                "[IDENTIFIER]args",
-                "[IDENTIFIER]func",
-                "[IDENTIFIER]kwargs",
+                "[VARDECL]args",
+                "[VARDECL]func",
+                "[VARDECL]kwargs",
                 "[IDENTIFIER]kwargs",
                 "[IDENTIFIER]wrapper",
             ]
         ),
     ),  # Decorator pattern
-    # ('python', 'a = 1', sorted(['[IDENTIFIER]a'])),
+    ("python", "a = 1", sorted(["[VARDECL]a"])),
     # Additional Python test cases for comprehensive coverage
-    ("python", "x = 1", sorted(["[IDENTIFIER]x"])),  # Simple variable assignment
+    ("python", "x = 1", sorted(["[VARDECL]x"])),  # Simple variable assignment
     (
         "python",
         "y = x + 2",
-        sorted(["[IDENTIFIER]x", "[IDENTIFIER]y"]),
+        sorted(["[IDENTIFIER]x", "[VARDECL]y"]),
     ),  # Variable assignment with expression
     (
         "python",
@@ -253,13 +253,18 @@ test_codes_bm25_funcs = [
             [
                 "[CALL]open",
                 "[CALL]read",
-                "[IDENTIFIER]content",
+                "[VARDECL]content",
                 "[IDENTIFIER]f",
                 "[IDENTIFIER]f",
             ]
         ),
     ),  # With statement
-    ("python", "from datetime import datetime", sorted([])),  # From import
+    (
+        "python",
+        "from datetime import datetime",
+        sorted(["[MODULE]datetime", "[PKG]datetime"]),
+    ),  # From import
+    ("python", "import tensorflow as torch", sorted(["[PKG]torch"])),  # From import
     ("python", "import os, sys", sorted(["[PKG]os", "[PKG]sys"])),  # Multiple import
     (
         "python",
@@ -269,7 +274,7 @@ test_codes_bm25_funcs = [
                 "[CALL]range",
                 "[IDENTIFIER]i",
                 "[IDENTIFIER]i",
-                "[IDENTIFIER]list_comprehension",
+                "[VARDECL]list_comprehension",
             ]
         ),
     ),  # List comprehension
@@ -279,7 +284,7 @@ test_codes_bm25_funcs = [
         sorted(
             [
                 "[CALL]zip",
-                "[IDENTIFIER]dict_comp",
+                "[VARDECL]dict_comp",
                 "[IDENTIFIER]k",
                 "[IDENTIFIER]k",
                 "[IDENTIFIER]keys",
@@ -292,9 +297,7 @@ test_codes_bm25_funcs = [
     (
         "python",
         "generator = (x for x in range(10))",
-        sorted(
-            ["[CALL]range", "[IDENTIFIER]generator", "[IDENTIFIER]x", "[IDENTIFIER]x"]
-        ),
+        sorted(["[CALL]range", "[VARDECL]generator", "[IDENTIFIER]x", "[IDENTIFIER]x"]),
     ),  # Generator expression
     (
         "python",
@@ -311,7 +314,7 @@ test_codes_bm25_funcs = [
                 "[CLASS]ChildClass",
                 "[FUNCDEF]method",
                 "[IDENTIFIER]ParentClass",
-                "[IDENTIFIER]self",
+                "[VARDECL]self",
             ]
         ),
     ),  # Inheritance with super()
@@ -324,7 +327,7 @@ test_codes_bm25_funcs = [
                 "[CLASS]Example",
                 "[FUNCDEF]name",
                 "[IDENTIFIER]_name",
-                "[IDENTIFIER]self",
+                "[VARDECL]self",
                 "[IDENTIFIER]self",
             ]
         ),
@@ -335,9 +338,9 @@ test_codes_bm25_funcs = [
         sorted(
             [
                 "[CALL]sum",
+                "[VARDECL]numbers",
                 "[IDENTIFIER]numbers",
-                "[IDENTIFIER]numbers",
-                "[IDENTIFIER]total",
+                "[VARDECL]total",
             ]
         ),
     ),  # List and built-in function
@@ -347,11 +350,11 @@ test_codes_bm25_funcs = [
         sorted(
             [
                 "[FUNCDEF]default_args",
+                "[VARDECL]a",
                 "[IDENTIFIER]a",
-                "[IDENTIFIER]a",
+                "[VARDECL]b",
                 "[IDENTIFIER]b",
-                "[IDENTIFIER]b",
-                "[IDENTIFIER]c",
+                "[VARDECL]c",
                 "[IDENTIFIER]c",
             ]
         ),
@@ -359,14 +362,14 @@ test_codes_bm25_funcs = [
     (
         "python",
         "def type_hints(x: int, y: str) -> bool: return True",
-        sorted(["[FUNCDEF]type_hints", "[IDENTIFIER]x", "[IDENTIFIER]y"]),
+        sorted(["[FUNCDEF]type_hints", "[VARDECL]x", "[VARDECL]y"]),
     ),  # Function with type hints
     (
         "python",
         "lambda_example = lambda x, y: x + y",
         sorted(
             [
-                "[IDENTIFIER]lambda_example",
+                "[VARDECL]lambda_example",
                 "[IDENTIFIER]x",
                 "[IDENTIFIER]x",
                 "[IDENTIFIER]y",
@@ -380,7 +383,7 @@ test_codes_bm25_funcs = [
         sorted(
             [
                 "[FUNCDEF]use_global",
-                "[IDENTIFIER]global_var",
+                "[VARDECL]global_var",
                 "[IDENTIFIER]global_var",
                 "[IDENTIFIER]global_var",
             ]
@@ -489,15 +492,15 @@ test_codes_bm25_funcs = [
     (
         "cpp",
         """
-541: void CodeTransform::operator()(Break const& _break)
-542: {
-543: 	yulAssert(!m_context->forLoopStack.empty(), "Invalid break-statement. Requires surrounding for-loop in code generation.");
-544: 	m_assembly.setSourceLocation(originLocationOf(_break));
-545:
-546: 	Context::JumpInfo const& jump = m_context->forLoopStack.top().done;
-547: 	m_assembly.appendJumpTo(jump.label, appendPopUntil(jump.targetStackHeight));
-548: }
-     """,
+    541: void CodeTransform::operator()(Break const& _break)
+    542: {
+    543: 	yulAssert(!m_context->forLoopStack.empty(), "Invalid break-statement. Requires surrounding for-loop in code generation.");
+    544: 	m_assembly.setSourceLocation(originLocationOf(_break));
+    545:
+    546: 	Context::JumpInfo const& jump = m_context->forLoopStack.top().done;
+    547: 	m_assembly.appendJumpTo(jump.label, appendPopUntil(jump.targetStackHeight));
+    548: }
+         """,
         sorted(
             [
                 "[CALL]appendJumpTo",
@@ -566,10 +569,10 @@ test_codes_bm25_funcs = [
     (
         "cpp",
         """\
-int const& EVMDialect::builtin(BuiltinHandle const& _handle) const
-{
-}
-        """,
+    int const& EVMDialect::builtin(BuiltinHandle const& _handle) const
+    {
+    }
+            """,
         sorted(
             ["[FUNCDEF]EVMDialect::builtin", "[FUNCDEF]builtin", "[VARDECL]_handle"]
         ),
@@ -828,8 +831,8 @@ int const& EVMDialect::builtin(BuiltinHandle const& _handle) const
     (
         "cpp",
         """
-bool TerminationFinder::containsNonContinuingFunctionCall(Expression const& _expr)
-     """,
+    bool TerminationFinder::containsNonContinuingFunctionCall(Expression const& _expr)
+         """,
         sorted(
             [
                 "[FUNCDECL]TerminationFinder::containsNonContinuingFunctionCall",
@@ -841,8 +844,8 @@ bool TerminationFinder::containsNonContinuingFunctionCall(Expression const& _exp
     (
         "cpp",
         """
-bool TerminationFinder::containsNonContinuingFunctionCall(Expression const& _expr) {
-     """,
+    bool TerminationFinder::containsNonContinuingFunctionCall(Expression const& _expr) {
+         """,
         sorted(
             [
                 "[FUNCDEF]TerminationFinder::containsNonContinuingFunctionCall",
@@ -854,15 +857,94 @@ bool TerminationFinder::containsNonContinuingFunctionCall(Expression const& _exp
     (
         "cpp",
         """
-void MovableChecker::operator()(Identifier const& _identifier)
-{
-    SideEffectsCollector sc;
-	sc(_identifier);
-	m_variableReferences.emplace(_identifier.name);
-}
-        """,
+    void MovableChecker::operator()(Identifier const& _identifier)
+    {
+        SideEffectsCollector sc;
+    	sc(_identifier);
+    	m_variableReferences.emplace(_identifier.name);
+    }
+            """,
         sorted(
-            ['[CALL]emplace', '[CALL]sc', '[FUNCDEF]MovableChecker::operator()', '[FUNCDEF]operator()', '[IDENTIFIER]_identifier', '[IDENTIFIER]_identifier', '[IDENTIFIER]m_variableReferences', '[VARDECL]_identifier', '[VARDECL]sc']
+            [
+                "[CALL]emplace",
+                "[CALL]sc",
+                "[FUNCDEF]MovableChecker::operator()",
+                "[FUNCDEF]operator()",
+                "[IDENTIFIER]_identifier",
+                "[IDENTIFIER]_identifier",
+                "[IDENTIFIER]m_variableReferences",
+                "[VARDECL]_identifier",
+                "[VARDECL]sc",
+            ]
+        ),
+    ),
+    (
+        "cpp",
+        """
+    struct LogView {
+        Logger* logger = nullptr;
+        std::string print() const { return logger ? logger->str() : std::string{}; }
+    };
+            """,
+        sorted(
+            [
+                "[CALL]str",
+                "[CLASS]LogView",
+                "[FUNCDEF]print",
+                "[IDENTIFIER]logger",
+                "[IDENTIFIER]logger",
+                "[VARDECL]logger",
+            ]
+        ),
+    ),
+    (
+        "cpp",
+        """
+    struct EngineDashboard {
+        struct LogView {
+            Logger* logger = nullptr;
+            std::string print() const { return logger ? logger->str() : std::string{}; }
+        };
+        StageReport latestReport{"bootstrap", 0.0};
+        LogView logView;
+    };
+            """,
+        sorted(
+            [
+                "[CALL]str",
+                "[CLASS]EngineDashboard",
+                "[CLASS]LogView",
+                "[FUNCDEF]print",
+                "[IDENTIFIER]logger",
+                "[IDENTIFIER]logger",
+                "[VARDECL]latestReport",
+                "[VARDECL]logView",
+                "[VARDECL]logger",
+            ]
+        ),
+    ),
+    (
+        "cpp",
+        """
+    class PipelineCompound {
+    public:
+        explicit PipelineCompound(Pipeline* owner) : owner_(owner) {}
+        std::string describe() const;
+        StageReport sample(double input) const;
+    private:
+        Pipeline* owner_;
+    };
+          """,
+        sorted(
+            [
+                "[CLASS]PipelineCompound",
+                "[FUNCDECL]describe",
+                "[FUNCDECL]sample",
+                "[FUNCDEF]PipelineCompound",
+                "[VARDECL]input",
+                "[VARDECL]owner",
+                "[VARDECL]owner_",
+            ]
         ),
     ),
     # java
@@ -1057,14 +1139,14 @@ void MovableChecker::operator()(Identifier const& _identifier)
     (
         "java",
         """
-void encoding1() {
-	try (SqlSession sqlSession = sqlSessionFactory.openSession()) {
-		EncodingMapper mapper = sqlSession.getMapper(EncodingMapper.class);
-		String answer = mapper.select1();
-		assertEquals("Mara\u00f1\u00f3n", answer);
-	}
-}
-     """,
+    void encoding1() {
+    	try (SqlSession sqlSession = sqlSessionFactory.openSession()) {
+    		EncodingMapper mapper = sqlSession.getMapper(EncodingMapper.class);
+    		String answer = mapper.select1();
+    		assertEquals("Mara\u00f1\u00f3n", answer);
+    	}
+    }
+         """,
         sorted(
             [
                 "[CALL]assertEquals",
@@ -1182,60 +1264,421 @@ void encoding1() {
     (
         "xml",
         """
-<?xml version="1.0" encoding="UTF-8"?>
-<!--
-
-       Copyright 2009-2022 the original author or authors.
-
-       Licensed under the Apache License, Version 2.0 (the "License");
-       you may not use this file except in compliance with the License.
-       You may obtain a copy of the License at
-
-          https://www.apache.org/licenses/LICENSE-2.0
-
-       Unless required by applicable law or agreed to in writing, software
-       distributed under the License is distributed on an "AS IS" BASIS,
-       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-       See the License for the specific language governing permissions and
-       limitations under the License.
-
--->
-<!DOCTYPE mapper
-    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
-    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
-
-<mapper namespace="org.apache.ibatis.submitted.encoding.EncodingMapper">
-  <select id="select1" resultType="string">
-    select lastName from names
-  </select>
-
-  <select id="select2" resultType="string">
-    select 'Marañón' from names
-  </select>
-</mapper>
-
-     """,
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!--
+           Copyright 2009-2022 the original author or authors.
+           Licensed under the Apache License, Version 2.0 (the "License");
+           you may not use this file except in compliance with the License.
+           You may obtain a copy of the License at
+              https://www.apache.org/licenses/LICENSE-2.0
+           Unless required by applicable law or agreed to in writing, software
+           distributed under the License is distributed on an "AS IS" BASIS,
+           WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+           See the License for the specific language governing permissions and
+           limitations under the License.
+    -->
+    <!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+    <mapper namespace="org.apache.ibatis.submitted.encoding.EncodingMapper">
+      <select id="select1" resultType="string">
+        select lastName from names
+      </select>
+      <select id="select2" resultType="string">
+        select 'Marañón' from names
+      </select>
+    </mapper>
+         """,
         sorted(["[FUNCDEF]select1", "[FUNCDEF]select2"]),
     ),
-    # # 测试JavaScript关键字不会被误识别为函数调用
-    # ('javascript', "function test() { if (true) { return; } }", sorted(["[FUNCDEF]test"])),
-    # 测试更复杂的函数调用
-    # 测试不同语言的函数调用
-    #     ('javascript', "obj.property.method();", sorted(["[CALL]method"])),  # JavaScript/Python style
-    #     ('javascript', "document.getElementById('test').addEventListener('click', handler);", sorted(["[CALL]getElementById", "[CALL]addEventListener"])),  # Complex JS call
-    #     # 测试类方法调用
-    #     # Tiny OCaml example
-    #     ('ocaml', 'let add a b = a + b', sorted(['a', 'a', 'add', 'b', 'b', 'let'])),
-    #     # XML test case - testing tag parsing
-    #     # ('xml', '<function name="test"><call>execute</call></function>', sorted(['call', 'execute', 'function', 'name', 'test'])),
-    #     ('xml', """
-    # <mapper namespace="org.apache.ibatis.submitted.multidb.MultiDbMapper">
-    #     <select id="select1" resultType="string" parameterType="int">
-    #         select
-    #         name from common where id=#{value}
-    #     </select>
-    # </mapper>
-    #      """, sorted([])),
+    # solidity
+    (
+        "solidity",
+        "contract SimpleStorage { uint256 private data; function set(uint256 x, int128 y) public { data = x; } function get() public view returns (uint256) { return data; } }",
+        sorted(
+            [
+                "[CLASS]SimpleStorage",
+                "[FUNCDEF]set",
+                "[FUNCDEF]get",
+                "[VARDECL]data",
+                "[IDENTIFIER]data",
+                "[IDENTIFIER]data",
+                "[VARDECL]x",
+                "[VARDECL]y",
+                "[IDENTIFIER]x",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract Token { mapping(address => uint256) public balances; function transfer(address to, uint256 amount) public returns (bool) { require(balances[msg.sender] >= amount); balances[msg.sender] -= amount; balances[to] += amount; return true; } }",
+        sorted(
+            [
+                "[CLASS]Token",
+                "[FUNCDEF]transfer",
+                "[CALL]require",
+                "[IDENTIFIER]balances",
+                "[IDENTIFIER]balances",
+                "[IDENTIFIER]balances",
+                "[IDENTIFIER]msg",
+                "[IDENTIFIER]msg",
+                "[IDENTIFIER]sender",
+                "[IDENTIFIER]sender",
+                "[IDENTIFIER]to",
+                "[IDENTIFIER]amount",
+                "[IDENTIFIER]amount",
+                "[IDENTIFIER]amount",
+                "[VARDECL]to",
+                "[VARDECL]amount",
+                "[VARDECL]balances",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract Auction { address public highestBidder; uint256 public highestBid; function bid() public payable { require(msg.value > highestBid); if (highestBidder != address(0)) { payable(highestBidder).transfer(highestBid); } highestBidder = msg.sender; highestBid = msg.value; } }",
+        sorted(
+            [
+                "[CLASS]Auction",
+                "[VARDECL]highestBidder",
+                "[VARDECL]highestBid",
+                "[FUNCDEF]bid",
+                "[CALL]require",
+                "[IDENTIFIER]msg",
+                "[IDENTIFIER]value",
+                "[IDENTIFIER]highestBid",
+                "[IDENTIFIER]highestBidder",
+                "[CALL]payable(highestBidder).transfer",
+                "[IDENTIFIER]highestBid",
+                "[IDENTIFIER]highestBidder",
+                "[IDENTIFIER]msg",
+                "[IDENTIFIER]sender",
+                "[IDENTIFIER]highestBid",
+                "[IDENTIFIER]msg",
+                "[IDENTIFIER]value",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "library SafeMath { function add(uint256 a, uint256 b) internal pure returns (uint256) { uint256 c = a + b; require(c >= a); return c; } function sub(uint256 a, uint256 b) internal pure returns (uint256) { require(b <= a); return a - b; } }",
+        sorted(
+            [
+                "[CLASS]SafeMath",
+                "[FUNCDEF]add",
+                "[VARDECL]a",
+                "[VARDECL]b",
+                "[VARDECL]c",
+                "[IDENTIFIER]a",
+                "[IDENTIFIER]b",
+                "[CALL]require",
+                "[IDENTIFIER]c",
+                "[IDENTIFIER]a",
+                "[IDENTIFIER]c",
+                "[FUNCDEF]sub",
+                "[VARDECL]a",
+                "[VARDECL]b",
+                "[CALL]require",
+                "[IDENTIFIER]b",
+                "[IDENTIFIER]a",
+                "[IDENTIFIER]a",
+                "[IDENTIFIER]b",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract Owned { address public owner; constructor() { owner = msg.sender; } modifier onlyOwner() { require(msg.sender == owner); _; } function transferOwnership(address newOwner) public onlyOwner { require(newOwner != address(0)); owner = newOwner; } }",
+        sorted(
+            [
+                "[CLASS]Owned",
+                "[VARDECL]owner",
+                "[IDENTIFIER]owner",
+                "[IDENTIFIER]msg",
+                "[IDENTIFIER]sender",
+                "[FUNCDEF]onlyOwner",
+                "[CALL]require",
+                "[IDENTIFIER]msg",
+                "[IDENTIFIER]sender",
+                "[IDENTIFIER]owner",
+                "[FUNCDEF]transferOwnership",
+                "[VARDECL]newOwner",
+                "[CALL]onlyOwner",
+                "[CALL]require",
+                "[IDENTIFIER]newOwner",
+                "[IDENTIFIER]owner",
+                "[IDENTIFIER]newOwner",
+                "[IDENTIFIER]_",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "interface IERC20 { function totalSupply() external view returns (uint256); function balanceOf(address account) external view returns (uint256); function transfer(address recipient, uint256 amount) external returns (bool); }",
+        sorted(
+            [
+                "[CLASS]IERC20",
+                "[FUNCDEF]totalSupply",
+                "[FUNCDEF]balanceOf",
+                "[VARDECL]account",
+                "[FUNCDEF]transfer",
+                "[VARDECL]recipient",
+                "[VARDECL]amount",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract Factory { function createContract() public returns (address) { SimpleStorage newContract = new SimpleStorage(); return address(newContract); } }",
+        sorted(
+            [
+                "[CLASS]Factory",
+                "[FUNCDEF]createContract",
+                "[CALL]new SimpleStorage",
+                "[IDENTIFIER]newContract",
+                "[VARDECL]newContract",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract Events { event ValueChanged(address indexed who, uint256 newValue); function setValue(uint256 newValue) public { emit ValueChanged(msg.sender, newValue); } }",
+        sorted(
+            [
+                "[CLASS]Events",
+                "[FUNCDEF]setValue",
+                "[VARDECL]newValue",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract Structs { struct User { string name; uint256 age; } User[] public users; function addUser(string memory name, uint256 age) public { users.push(User(name, age)); } }",
+        sorted(
+            [
+                "[CLASS]Structs",
+                "[CLASS]User",
+                "[VARDECL]name",
+                "[VARDECL]age",
+                "[VARDECL]users",
+                "[FUNCDEF]addUser",
+                "[VARDECL]name",
+                "[VARDECL]age",
+                "[CALL]users.push",
+                "[CALL]User",
+                "[IDENTIFIER]name",
+                "[IDENTIFIER]age",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract Inheritance is Owned { function someFunction() public onlyOwner { /* implementation */ } }",
+        sorted(["[CLASS]Inheritance", "[FUNCDEF]someFunction", "[CALL]onlyOwner"]),
+    ),
+    (
+        "solidity",
+        "contract Arrays { uint256[] private numbers; function addNumber(uint256 num) public { numbers.push(num); } function getNumber(uint256 index) public view returns (uint256) { return numbers[index]; } }",
+        sorted(
+            [
+                "[CLASS]Arrays",
+                "[VARDECL]numbers",
+                "[FUNCDEF]addNumber",
+                "[VARDECL]num",
+                "[CALL]numbers.push",
+                "[IDENTIFIER]num",
+                "[FUNCDEF]getNumber",
+                "[VARDECL]index",
+                "[IDENTIFIER]numbers",
+                "[IDENTIFIER]index",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        'contract ErrorHandler { function divide(uint256 a, uint256 b) public pure returns (uint256) { require(b != 0, "Division by zero"); return a / b; } }',
+        sorted(
+            [
+                "[CLASS]ErrorHandler",
+                "[FUNCDEF]divide",
+                "[CALL]require",
+                "[IDENTIFIER]b",
+                "[IDENTIFIER]a",
+                "[IDENTIFIER]b",
+                "[VARDECL]a",
+                "[VARDECL]b",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract Mapping { mapping(address => mapping(uint256 => bool)) public nestedMapping; function setNested(address addr, uint256 key, bool value) public { nestedMapping[addr][key] = value; } }",
+        sorted(
+            [
+                "[CLASS]Mapping",
+                "[FUNCDEF]setNested",
+                "[IDENTIFIER]nestedMapping",
+                "[IDENTIFIER]addr",
+                "[IDENTIFIER]key",
+                "[IDENTIFIER]value",
+                "[VARDECL]addr",
+                "[VARDECL]key",
+                "[VARDECL]value",
+                "[VARDECL]nestedMapping",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract Constants { uint256 public constant MAX_SUPPLY = 1000000; address public immutable OWNER; constructor() { OWNER = msg.sender; } }",
+        sorted(
+            [
+                "[CLASS]Constants",
+                "[VARDECL]MAX_SUPPLY",
+                "[VARDECL]OWNER",
+                "[IDENTIFIER]OWNER",
+                "[IDENTIFIER]msg",
+                "[IDENTIFIER]sender",
+            ]
+        ),
+    ),
+    #!WARNING: currently receive and fallback are not considered as functions. We need a LLM pipeline to check them inside a contract
+    (
+        "solidity",
+        "contract Fallback { receive() external payable { fallback(); } fallback() external payable { /* handle unknown calls */ } }",
+        sorted(
+            [
+                "[CLASS]Fallback",
+                "[CALL]fallback",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract LibraryExample { using SafeMath for uint256; function calculate(uint256 a, uint256 b) public pure returns (uint256) { return a.add(b); } }",
+        sorted(
+            [
+                "[CLASS]LibraryExample",
+                "[FUNCDEF]calculate",
+                "[CALL]a.add",
+                "[IDENTIFIER]b",
+                "[VARDECL]a",
+                "[VARDECL]b",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract MultiSig { address[] public owners; function isOwner(address addr) public view returns (bool) { for (uint256 i = 0; i < owners.length; i++) { if (owners[i] == addr) { return true; } } return false; } }",
+        sorted(
+            [
+                "[CLASS]MultiSig",
+                "[VARDECL]owners",
+                "[FUNCDEF]isOwner",
+                "[VARDECL]addr",
+                "[VARDECL]i",
+                "[IDENTIFIER]i",
+                "[IDENTIFIER]owners",
+                "[IDENTIFIER]length",
+                "[IDENTIFIER]i",
+                "[IDENTIFIER]owners",
+                "[IDENTIFIER]i",
+                "[IDENTIFIER]addr",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract Payable { function deposit() public payable { balance += msg.value; } function withdraw(uint256 amount) public { require(balance >= amount); payable(msg.sender).transfer(amount); balance -= amount; } uint256 public balance; }",
+        sorted(
+            [
+                "[CLASS]Payable",
+                "[FUNCDEF]deposit",
+                "[FUNCDEF]balance",
+                "[IDENTIFIER]msg",
+                "[IDENTIFIER]value",
+                "[FUNCDEF]withdraw",
+                "[VARDECL]amount",
+                "[FUNCDEF]require",
+                "[IDENTIFIER]balance",
+                "[IDENTIFIER]amount",
+                "[IDENTIFIER]msg",
+                "[IDENTIFIER]sender",
+                "[CALL]payable(msg.sender).transfer",
+                "[IDENTIFIER]amount",
+                "[IDENTIFIER]balance",
+                "[IDENTIFIER]amount",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract Abstract { function abstractFunction() external virtual; } contract Concrete is Abstract { function abstractFunction() external override { /* implementation */ } }",
+        sorted(
+            [
+                "[CLASS]Abstract",
+                "[CLASS]Concrete",
+                "[FUNCDECL]abstractFunction",
+                "[FUNCDEF]abstractFunction",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract GasOptimization { function sum(uint256[] memory arr) public pure returns (uint256 total) { for (uint256 i = 0; i < arr.length; i++) { total += arr[i]; } } }",
+        sorted(
+            [
+                "[CLASS]GasOptimization",
+                "[FUNCDEF]sum",
+                "[IDENTIFIER]total",
+                "[IDENTIFIER]arr",
+                "[IDENTIFIER]i",
+                "[IDENTIFIER]arr",
+                "[IDENTIFIER]i",
+                "[IDENTIFIER]i",
+                "[IDENTIFIER]total",
+                "[IDENTIFIER]arr",
+                "[VARDECL]arr",
+                "[VARDECL]i",
+                "[VARDECL]total",
+                "[IDENTIFIER]length",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract StringManipulation { function concatenate(string memory a, string memory b) public pure returns (string memory) { return string(abi.encodePacked(a, b)); } }",
+        sorted(
+            [
+                "[CLASS]StringManipulation",
+                "[FUNCDEF]concatenate",
+                "[CALL]string",
+                "[CALL]abi.encodePacked",
+                "[IDENTIFIER]a",
+                "[IDENTIFIER]b",
+                "[VARDECL]a",
+                "[VARDECL]b",
+                "[IDENTIFIER]string",
+                "[IDENTIFIER]abi.encodePacked",
+            ]
+        ),
+    ),
+    (
+        "solidity",
+        "contract HashExample { function getHash(string memory input) public pure returns (bytes32) { return keccak256(abi.encodePacked(input)); } }",
+        sorted(
+            [
+                "[CLASS]HashExample",
+                "[FUNCDEF]getHash",
+                "[CALL]keccak256",
+                "[CALL]abi.encodePacked",
+                "[IDENTIFIER]input",
+                "[VARDECL]input",
+                "[IDENTIFIER]keccak256",
+                "[IDENTIFIER]abi.encodePacked",
+            ]
+        ),
+    ),
 ]
 
 
@@ -1303,9 +1746,38 @@ def main():
         tokens = tokenize_for_bm25(code, lang, "")
         tokens = [token[0] for token in tokens]
         tokens = sorted(tokens)
-        assert (
-            tokens == expected_tokens
-        ), f"Expected: {expected_tokens}, but got: {tokens}"
+        if tokens != expected_tokens:
+            print(f"\n❌ MISMATCH FOUND:")
+            print(f"   Expected ({len(expected_tokens)} tokens): {expected_tokens}")
+            print(f"   Got      ({len(tokens)} tokens): {tokens}")
+
+            # Find specific mismatches
+            expected_set = set(expected_tokens)
+            got_set = set(tokens)
+
+            missing = expected_set - got_set
+            extra = got_set - expected_set
+
+            if missing:
+                print(f"   Missing tokens: {sorted(missing)}")
+            if extra:
+                print(f"   Extra tokens: {sorted(extra)}")
+
+            # Find position-wise differences
+            max_len = max(len(expected_tokens), len(tokens))
+            print(f"   Position-by-position comparison:")
+            for i in range(max_len):
+                exp_token = (
+                    expected_tokens[i] if i < len(expected_tokens) else "[MISSING]"
+                )
+                got_token = tokens[i] if i < len(tokens) else "[MISSING]"
+                if exp_token != got_token:
+                    print(
+                        f"     Position {i+1}: Expected '{exp_token}', Got '{got_token}'"
+                    )
+
+            assert False, f"Token mismatch detected. See details above."
+        print(f"✅ Test {i + 1} PASSED")
         print(f"BM25 tokens: {tokens}")
 
     print("All tests passed!!!!!")

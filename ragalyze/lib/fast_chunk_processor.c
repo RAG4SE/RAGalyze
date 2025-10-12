@@ -243,7 +243,7 @@ typedef struct {
     char* text;                    // Line-numbered chunk text
     char* original_text;           // Original chunk text (without line numbers)
     int bytes_processed;
-    int start_line;
+    int start_line; // 0-based
     int chunk_idx;
     size_t relevant_count;
     // BM25 data - store as raw C data, convert to Python objects later

@@ -2,6 +2,7 @@
 This file implements the embedding transformer for the RAG system.
 Given a Document instance, it will return a Document instance with the embedding vector filled in.
 """
+
 from typing import List, Literal
 from copy import deepcopy
 from tqdm import tqdm
@@ -44,7 +45,7 @@ class ToEmbeddings(DataComponent):
         logger.info(
             f"Starting to process embeddings for {len(embedder_input)} documents"
         )
-        
+
         # Batch process embeddings
         outputs: List[EmbedderOutput] = self.embedder(input=embedder_input)
 
@@ -148,14 +149,12 @@ class DualVectorToEmbeddings(ToEmbeddings):
         assert len(code_vectors) == len(
             documents
         ), "The number of code vectors should be the same as the number of documents"
-
         understanding_texts = asyncio.run(
             self.code_generator.batch_call(
                 [doc.text for doc in documents],
                 [doc.meta_data.get("file_path") for doc in documents],
             )
         )
-
         summary_vectors = super().call(
             [Document(text=text) for text in understanding_texts]
         )

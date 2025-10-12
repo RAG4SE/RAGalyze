@@ -127,5 +127,6 @@ repo:
       - ".hpp"
       - ".xml"
       - ".java"
+      - ".sol"
     doc_extensions:
       - ".txt"

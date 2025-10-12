@@ -21,3 +21,4 @@ tree-sitter-lib/
 *.backup
 pcre2-lib/
 prompt_str.txt
+a.out

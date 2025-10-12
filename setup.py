@@ -173,7 +173,8 @@ parser_versions = {
     'javascript': '0.25.0',
     'go': '0.25.0',
     'rust': '0.24.0',
-    'xml': '0.7.0'
+    'xml': '0.7.0',
+    'solidity': '1.2.13'
 }
 
 def download_tree_sitter_languages():
@@ -192,7 +193,8 @@ def download_tree_sitter_languages():
         'javascript': f'https://github.com/tree-sitter/tree-sitter-javascript/archive/v{parser_versions["javascript"]}.tar.gz',
         'go': f'https://github.com/tree-sitter/tree-sitter-go/archive/v{parser_versions["go"]}.tar.gz',
         'rust': f'https://github.com/tree-sitter/tree-sitter-rust/archive/v{parser_versions["rust"]}.tar.gz',
-        'xml': f'https://github.com/tree-sitter-grammars/tree-sitter-xml/archive/refs/tags/v{parser_versions["xml"]}.tar.gz'
+        'xml': f'https://github.com/tree-sitter-grammars/tree-sitter-xml/archive/refs/tags/v{parser_versions["xml"]}.tar.gz',
+        'solidity': f'https://github.com/JoranHonig/tree-sitter-solidity/archive/v{parser_versions["solidity"]}.tar.gz'
     }
     
     # Download and extract language parsers
@@ -239,7 +241,7 @@ def get_tree_sitter_config():
         lang_dir = download_tree_sitter_languages()
         
         # Find downloaded language parsers
-        for lang in ['python', 'cpp', 'java', 'c', 'javascript', 'go', 'rust', 'xml']:
+        for lang in ['python', 'cpp', 'java', 'c', 'javascript', 'go', 'rust', 'xml', 'solidity']:
             # Try both versioned and unversioned directory names
             possible_dirs = [
                 os.path.join(lang_dir, f"tree-sitter-{lang}-{get_version_for_lang(lang)}"),
