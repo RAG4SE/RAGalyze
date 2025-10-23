@@ -1,5 +1,4 @@
 from copy import deepcopy
-import re
 
 from adalflow.core.types import Document
 from adalflow.components.data_process.text_splitter import (
@@ -96,7 +95,6 @@ class MyTextSplitter(TextSplitter):
 
                 prev_doc = chunk_doc
                 split_docs.append(chunk_doc)
-
         return split_docs
 
     def call(self, documents: DocumentSplitterInputType) -> DocumentSplitterOutputType:

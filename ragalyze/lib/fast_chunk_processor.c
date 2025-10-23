@@ -193,6 +193,7 @@ static int parse_python_document(PyObject* doc_obj, CDocument* cdoc) {
 
 
 // Create line-numbered text
+// The format is line_number: <original_line_with_preserved_indentation>
 static char* create_line_numbered_text(const char* text, int start_line) {
     if (!text) {
         return NULL;
@@ -216,11 +217,13 @@ static char* create_line_numbered_text(const char* text, int start_line) {
 
     for (int i = 0; i <= text_len; i++) {
         if (i == text_len || text[i] == '\n') {
-            int prefix_len = snprintf(result + result_pos, buffer_size - result_pos, "%d: ", current_line);
-            result_pos += prefix_len;
-
             int line_len = i - line_start;
             if (line_len > 0) {
+                // Add line number prefix
+                int prefix_len = snprintf(result + result_pos, buffer_size - result_pos, "%d: ", current_line);
+                result_pos += prefix_len;
+
+                // Copy the entire line including original indentation and content
                 strncpy(result + result_pos, text + line_start, line_len);
                 result_pos += line_len;
             }
@@ -246,6 +249,7 @@ typedef struct {
     int start_line; // 0-based
     int chunk_idx;
     size_t relevant_count;
+    int position_restoration_spaces; // Number of spaces added to restore column positions
     // BM25 data - store as raw C data, convert to Python objects later
     struct {
         char* token;
@@ -295,6 +299,7 @@ static PyObject* convert_chunk_result(chunk_result_t* result, PyObject* doc_meta
     PyDict_SetItemString(meta_dict, "start_line", PyLong_FromLong(result->start_line));
     PyDict_SetItemString(meta_dict, "original_text",
                          PyUnicode_FromString(result->original_text ? result->original_text : ""));
+    PyDict_SetItemString(meta_dict, "position_restoration_spaces", PyLong_FromLong(result->position_restoration_spaces));
 
     // Add BM25 indexes to metadata
     if (result->bm25_data_count > 0 && result->bm25_data) {
@@ -380,6 +385,7 @@ typedef struct {
     int* start_lines;
     int* start_positions;
     int* end_positions;
+    int* added_spaces;  // Track spaces added for position restoration per chunk
     size_t count;
     size_t capacity;
 } chunks_t;
@@ -407,6 +413,7 @@ static void free_chunks(chunks_t* chunks) {
     if (chunks->start_lines) free(chunks->start_lines);
     if (chunks->start_positions) free(chunks->start_positions);
     if (chunks->end_positions) free(chunks->end_positions);
+    if (chunks->added_spaces) free(chunks->added_spaces);
 }
 
 // Split text into units based on separator (similar to Python's str.split)
@@ -450,7 +457,6 @@ static text_units_t split_text_into_units(const char* text, const char* separato
             }
             units.units = new_units;
         }
-
         units.units[units.count].text = unit_text;
         units.units[units.count].start_pos = current_pos;
         units.units[units.count].length = strlen(unit_text);
@@ -519,8 +525,8 @@ static int get_bm25_token_end_pos(const char* text, BM25Index* idx) {
     // For now, we'll use a simple line/column based calculation
     int current_line = 0;
     int current_col = 0;
-    int token_start_line = idx->line - 1;  // Convert to 0-based
-    int token_start_col = idx->col - 1;    // Convert to 0-based
+    int token_start_line = idx->line;      // Already 0-based
+    int token_start_col = idx->col;        // Already 0-based
 
     // Scan through text to find the token end position
     for (int i = 0; text[i]; i++) {
@@ -586,8 +592,8 @@ static size_t extend_chunk_for_bm25_tokens(text_units_t* units, CDocument* cdoc,
     size_t extended_end_idx = original_end_idx;
 
     // Find the text position where the BM25 token ends
-    int token_end_line = overlapping_token->line - 1;  // 0-based
-    int token_start_col = overlapping_token->col - 1;  // 0-based
+    int token_end_line = overlapping_token->line;      // Already 0-based
+    int token_start_col = overlapping_token->col;      // Already 0-based
 
     // Extract token text to calculate end column
     int token_len = token_text ? strlen(token_text) : 0;
@@ -637,14 +643,20 @@ static chunks_t merge_units_to_chunks(text_units_t* units, int chunk_size, int c
     chunks.start_lines = calloc(chunks.capacity, sizeof(int));
     chunks.start_positions = calloc(chunks.capacity, sizeof(int));
     chunks.end_positions = calloc(chunks.capacity, sizeof(int));
+    chunks.added_spaces = calloc(chunks.capacity, sizeof(int));
 
-    if (!chunks.texts || !chunks.start_lines || !chunks.start_positions || !chunks.end_positions) {
+    if (!chunks.texts || !chunks.start_lines || !chunks.start_positions || !chunks.end_positions || !chunks.added_spaces) {
         free_chunks(&chunks);
         return chunks;
     }
 
     int step = chunk_size - chunk_overlap;
     if (step <= 0) step = chunk_size; // No overlap
+
+    // Track the previous chunk's end line and column for position restoration
+    int prev_end_line = -1;
+    int prev_end_col = -1;
+
 
     for (size_t idx = 0; idx < units->count; idx += step) {
         // Check if this would be the last chunk
@@ -660,16 +672,41 @@ static chunks_t merge_units_to_chunks(text_units_t* units, int chunk_size, int c
 
             // Calculate total length needed
             size_t total_length = 0;
+            if (strlen(units->units[idx].text) == 0) {
+                total_length ++;
+            }
             for (size_t i = idx; i < extended_end_idx; i++) {
                 total_length += strlen(units->units[i].text) + (i < extended_end_idx - 1 ? strlen(separator) : 0);
             }
 
-            // Allocate chunk text
-            char* chunk_text = malloc(total_length + 1);
+            // Calculate position restoration spaces needed
+            int spaces_to_add = 0;
+            if (prev_end_line != -1 && prev_end_col != -1 &&
+                units->units[idx].line == prev_end_line &&
+                units->units[idx].col > prev_end_col) {
+                // This chunk starts on the same line as the previous chunk ended
+                // Need to add spaces to restore original column position
+                spaces_to_add = units->units[idx].col;
+            }
+
+            // Allocate chunk text with extra space for position restoration
+            char* chunk_text = malloc(total_length + spaces_to_add + 1);
             if (!chunk_text) continue;
 
-            // Build chunk text
+            // Build chunk text with position restoration if needed
             chunk_text[0] = '\0';
+
+            // Add position restoration spaces if needed
+            if (spaces_to_add > 0) {
+                for (int i = 0; i < spaces_to_add; i++) {
+                    chunk_text[i] = ' ';
+                }
+                chunk_text[spaces_to_add] = '\0';
+                total_length --;
+            }
+            if (spaces_to_add == 0 && strlen(units->units[idx].text) == 0) {
+                strcat(chunk_text, separator);
+            }
             for (size_t i = idx; i < extended_end_idx; i++) {
                 strcat(chunk_text, units->units[i].text);
                 if (i < extended_end_idx - 1) {
@@ -688,8 +725,9 @@ static chunks_t merge_units_to_chunks(text_units_t* units, int chunk_size, int c
                 chunks.start_lines = realloc(chunks.start_lines, chunks.capacity * sizeof(int));
                 chunks.start_positions = realloc(chunks.start_positions, chunks.capacity * sizeof(int));
                 chunks.end_positions = realloc(chunks.end_positions, chunks.capacity * sizeof(int));
+                chunks.added_spaces = realloc(chunks.added_spaces, chunks.capacity * sizeof(int));
 
-                if (!chunks.texts || !chunks.start_lines || !chunks.start_positions || !chunks.end_positions) {
+                if (!chunks.texts || !chunks.start_lines || !chunks.start_positions || !chunks.end_positions || !chunks.added_spaces) {
                     free(chunk_text);
                     break;
                 }
@@ -699,7 +737,13 @@ static chunks_t merge_units_to_chunks(text_units_t* units, int chunk_size, int c
             chunks.start_lines[chunks.count] = units->units[idx].line;
             chunks.start_positions[chunks.count] = units->units[idx].start_pos;
             chunks.end_positions[chunks.count] = units->units[extended_end_idx - 1].start_pos + units->units[extended_end_idx - 1].length;
+            chunks.added_spaces[chunks.count] = spaces_to_add;
             chunks.count++;
+
+            // Update previous chunk end position for next iteration
+            text_unit_t* last_unit = &units->units[extended_end_idx - 1];
+            prev_end_line = last_unit->line;
+            prev_end_col = last_unit->col + last_unit->length;
 
             break; // This was the last chunk
         } else {
@@ -714,16 +758,42 @@ static chunks_t merge_units_to_chunks(text_units_t* units, int chunk_size, int c
 
             // Calculate total length needed
             size_t total_length = 0;
+            if (strlen(units->units[idx].text) == 0) {
+                total_length ++;
+            }
             for (size_t i = idx; i < extended_end_idx; i++) {
                 total_length += strlen(units->units[i].text) + (i < extended_end_idx - 1 ? strlen(separator) : 0);
             }
 
-            // Allocate chunk text
-            char* chunk_text = malloc(total_length + 1);
+            // Calculate position restoration spaces needed
+            int spaces_to_add = 0;
+            if (prev_end_line != -1 && prev_end_col != -1 &&
+                units->units[idx].line == prev_end_line &&
+                units->units[idx].col > prev_end_col) {
+                // This chunk starts on the same line as the previous chunk ended
+                // Need to add spaces to restore original column position
+                spaces_to_add = units->units[idx].col;
+            }
+
+            // Allocate chunk text with extra space for position restoration
+            char* chunk_text = malloc(total_length + spaces_to_add + 1);
             if (!chunk_text) continue;
 
-            // Build chunk text with separator (add separator to all units except the last one)
+            // Build chunk text with position restoration if needed
             chunk_text[0] = '\0';
+
+            // Add position restoration spaces if needed
+            if (spaces_to_add > 0) {
+                for (int i = 0; i < spaces_to_add; i++) {
+                    chunk_text[i] = ' ';
+                }
+                chunk_text[spaces_to_add] = '\0';
+                total_length --;
+            }
+
+            if (spaces_to_add == 0 && strlen(units->units[idx].text) == 0) {
+                strcat(chunk_text, separator);
+            }
             for (size_t i = idx; i < extended_end_idx; i++) {
                 strcat(chunk_text, units->units[i].text);
                 if (i < extended_end_idx - 1) {
@@ -742,8 +812,9 @@ static chunks_t merge_units_to_chunks(text_units_t* units, int chunk_size, int c
                 chunks.start_lines = realloc(chunks.start_lines, chunks.capacity * sizeof(int));
                 chunks.start_positions = realloc(chunks.start_positions, chunks.capacity * sizeof(int));
                 chunks.end_positions = realloc(chunks.end_positions, chunks.capacity * sizeof(int));
+                chunks.added_spaces = realloc(chunks.added_spaces, chunks.capacity * sizeof(int));
 
-                if (!chunks.texts || !chunks.start_lines || !chunks.start_positions || !chunks.end_positions) {
+                if (!chunks.texts || !chunks.start_lines || !chunks.start_positions || !chunks.end_positions || !chunks.added_spaces) {
                     free(chunk_text);
                     break;
                 }
@@ -753,7 +824,13 @@ static chunks_t merge_units_to_chunks(text_units_t* units, int chunk_size, int c
             chunks.start_lines[chunks.count] = units->units[idx].line;
             chunks.start_positions[chunks.count] = units->units[idx].start_pos;
             chunks.end_positions[chunks.count] = units->units[extended_end_idx - 1].start_pos + units->units[extended_end_idx - 1].length;
+            chunks.added_spaces[chunks.count] = spaces_to_add;
             chunks.count++;
+
+            // Update previous chunk end position for next iteration
+            text_unit_t* last_unit = &units->units[extended_end_idx - 1];
+            prev_end_line = last_unit->line;
+            prev_end_col = last_unit->col + last_unit->length;
         }
     }
 
@@ -789,8 +866,8 @@ static int find_overlapping_bm25_token(CDocument* cdoc, int end_line, int end_co
         }
         int token_len = token_text ? strlen(token_text) : 0;
 
-        int token_start_line = idx->line - 1;  // Convert to 0-based
-        int token_start_col = idx->col - 1;    // Convert to 0-based
+        int token_start_line = idx->line;      // Already 0-based
+        int token_start_col = idx->col;        // Already 0-based
         int token_end_col = token_start_col + token_len - 1;
 
         // Check if chunk end falls within this token
@@ -966,6 +1043,9 @@ static chunk_result_t* _process_document_impl(CDocument* cdoc, int chunk_size, i
         }
         debug_printf("================\n");
 
+        // Get position restoration spaces for this chunk
+        int position_spaces = chunks.added_spaces[i];
+
         // Fill in result data
         result->text = safe_strdup(line_numbered_text ? line_numbered_text : chunks.texts[i]);
         result->original_text = safe_strdup(chunks.texts[i]);
@@ -973,6 +1053,7 @@ static chunk_result_t* _process_document_impl(CDocument* cdoc, int chunk_size, i
         result->start_line = chunks.start_lines[i];
         result->chunk_idx = i;
         result->relevant_count = relevant_count;
+        result->position_restoration_spaces = position_spaces;
         result->doc_id = safe_strdup(cdoc->id);
         result->parent_doc_id = safe_strdup(cdoc->parent_doc_id);
 

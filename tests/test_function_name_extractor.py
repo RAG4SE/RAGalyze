@@ -9,7 +9,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from ragalyze.agent import FunctionNameExtractor
+from ragalyze.agent import FunctionNameExtractorFromCall
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -21,9 +21,9 @@ logger.setLevel(logging.INFO)
 
 
 def test_function_name_extractor():
-    """Test the FunctionNameExtractor with various function names from different programming languages."""
+    """Test the FunctionNameExtractorFromCall with various function names from different programming languages."""
 
-    extractor = FunctionNameExtractor(debug=True)
+    extractor = FunctionNameExtractorFromCall(debug=True)
 
     # Test cases: (function_name, expected_base_name, expected_generic_params)
     test_cases = [
@@ -54,7 +54,7 @@ def test_function_name_extractor():
     ]
 
     logger.info("=" * 80)
-    logger.info("Testing FunctionNameExtractor with Multi-Language Support")
+    logger.info("Testing FunctionNameExtractorFromCall with Multi-Language Support")
     logger.info("=" * 80)
 
     passed = 0
@@ -97,7 +97,7 @@ def test_function_name_extractor():
 
     # Summary
     logger.info("\n" + "=" * 80)
-    logger.info("FunctionNameExtractor Test Summary:")
+    logger.info("FunctionNameExtractorFromCall Test Summary:")
     logger.info("Total tests: %d", len(test_cases))
     logger.info("Passed: %d", passed)
     logger.info("Failed: %d", failed)
@@ -108,7 +108,7 @@ def test_function_name_extractor():
 
 def main():
     """Run all tests."""
-    logger.info("Starting FunctionNameExtractor tests...")
+    logger.info("Starting FunctionNameExtractorFromCall tests...")
 
     # Set up test configuration
     try:
@@ -127,7 +127,7 @@ def main():
     # Overall summary
     logger.info("\n" + "=" * 80)
     logger.info("Overall Test Summary:")
-    logger.info("FunctionNameExtractor tests: %s", "PASSED" if test_passed else "FAILED")
+    logger.info("FunctionNameExtractorFromCall tests: %s", "PASSED" if test_passed else "FAILED")
     logger.info("=" * 80)
 
     if test_passed:

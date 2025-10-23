@@ -44,7 +44,8 @@ class BM25Retriever:
             max_workers: Maximum number of worker threads (None for CPU count)
         """
         self.documents = documents
-        self.top_k = configs()["rag"]["retriever"]["bm25"]["top_k"]
+        # self.top_k = configs()["rag"]["retriever"]["bm25"]["top_k"]
+        self.top_k = len(documents)
         self.use_multithreading = use_multithreading
         self.max_workers = max_workers
         self.bm25 = None
@@ -424,7 +425,8 @@ class HybridRetriever:
         self.use_dual_vector = rag_config["embedder"]["sketch_filling"]
         self.fusion = configs()["rag"]["retriever"]["fusion"]
         self.bm25_weight = rag_config["retriever"]["bm25"]["weight"]
-        self.top_k = rag_config["retriever"]["bm25"]["top_k"]
+        # self.top_k = rag_config["retriever"]["bm25"]["top_k"]
+        self.top_k = len(documents)
         assert self.fusion in [
             "rrf",
             "normal_add",
@@ -621,7 +623,8 @@ class QueryDrivenRetriever(HybridRetriever):
             update_database: Function to update the database with new embedded documents
         """
         self.update_database = update_database
-        self.query_driven_top_k = configs()["rag"]["retriever"]["bm25"]["top_k"]
+        # self.query_driven_top_k = configs()["rag"]["retriever"]["bm25"]["top_k"]
+        self.query_driven_top_k = len(documents)
         logger.info(
             f"Query-driven retriever initialized with query_driven_top_k={self.query_driven_top_k}"
         )
@@ -650,7 +653,15 @@ class QueryDrivenRetriever(HybridRetriever):
             bm25_retriever.filter_and_score(bm25_keywords)
         )
         if len(query_related_doc_indices) == 0:
-            raise ValueError("No documents related to the query")
+            logger.warning("No documents related to the query")
+            return [
+                RetrieverOutput(
+                    doc_indices=[],
+                    doc_scores=[],
+                    query=f"BM25 keywords: {bm25_keywords}",
+                    documents=[],
+                )
+            ]
 
         filtered_docs = [self.documents[i] for i in query_related_doc_indices]
         doc_id_to_score = {

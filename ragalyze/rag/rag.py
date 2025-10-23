@@ -369,6 +369,7 @@ class RAG(adal.Component):
         # self.documents is a list of Document or DualVectorDocument
         self.documents, self.id2doc = self.db_manager.prepare_db()
         self.codePath2beginDocid = {}
+        self.filePath2PKGs = {}
         documents = self.documents if isinstance(self.documents[0], Document) else [doc.original_doc for doc in self.documents]
         for doc in documents:
             if doc.meta_data["file_path"] not in self.codePath2beginDocid:

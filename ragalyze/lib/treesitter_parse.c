@@ -256,7 +256,7 @@ static size_t* build_line_starts(const char* text, size_t length, size_t* out_co
     return starts;
 }
 
-// Convert a byte offset to 1-based line and column numbers using precomputed line starts
+// Convert a byte offset to 0-based line and column numbers using precomputed line starts
 static void offset_to_line_column(const size_t* line_starts,
                                   size_t line_starts_count,
                                   size_t offset,
@@ -296,11 +296,11 @@ static void offset_to_line_column(const size_t* line_starts,
     }
 
     if (line_out) {
-        *line_out = (unsigned int)(result_idx + 1);  // 1-based line number
+        *line_out = (unsigned int)(result_idx);  // 0-based line number
     }
     if (col_out) {
         size_t line_start = line_starts[result_idx];
-        *col_out = (unsigned int)(offset - line_start + 1);  // 1-based column number
+        *col_out = (unsigned int)(offset - line_start);  // 0-based column number
     }
 }
 
@@ -408,8 +408,8 @@ static char* get_node_text(TSNode node, const char* source_code) {
 
 static void get_node_position(TSNode node, unsigned int* line_num, unsigned int* col_num) {
     TSPoint start_point = ts_node_start_point(node);
-    *line_num = start_point.row + 1;  // Convert to 1-based line numbering
-    *col_num = start_point.column + 1;  // Convert to 1-based column numbering
+    *line_num = start_point.row;  // Convert to 0-based line numbering
+    *col_num = start_point.column;  // Convert to 0-based column numbering
 }
 
 static void traverse_tree(TSNode node, const char* source_code, ParseResults* results, const char* language_name);
@@ -1411,6 +1411,28 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             free(type_name);
             return;
         }
+
+        else if (strcmp(node_type, "preproc_include") == 0) {
+            debug_printf("DEBUG: Preproc include child nodes:\n");
+            debug_print_child(node, source_code);
+            TSNode path_node = ts_node_child_by_field_name(node, "path", 4);
+            ragalyze_assert(!ts_node_is_null(path_node), "No path field found", node_text, __FILE__, __LINE__);
+            char* path = get_node_text(path_node, source_code);
+            debug_printf("DEBUG: Found C++ preproc include: '%s'\n", path);
+            unsigned int line_num, col_num;
+            get_node_position(path_node, &line_num, &col_num);
+            add_node(results, "package", path, line_num, col_num);
+            free(path);
+            return;
+            // TSNode include_node = ts_node_child_by_field_name(node, "include", 4);
+            // char* include_name = get_node_text(include_node, source_code);
+            // debug_printf("DEBUG: Found C++ preproc include: '%s'\n", include_name);
+            // unsigned int line_num, col_num;
+            // get_node_position(include_node, &line_num, &col_num);
+            // add_node(results, "pkg", include_name, line_num, col_num);
+            // free(include_name);
+            // return;
+        }
     }
 
     else if (strcmp(language_name, "java") == 0) {
@@ -1444,6 +1466,20 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
             if (!ts_node_is_null(body_node)) {
                 traverse_tree(body_node, source_code, results, language_name);
             }
+            return;
+        }
+        else if (strcmp(node_type, "import_declaration") == 0) {
+            debug_printf("DEBUG: Import declaration child nodes:\n");
+            debug_print_child(node, source_code);
+
+            TSNode scoped_identifier_node = ts_node_child_by_type_name(node, "scoped_identifier");
+            ragalyze_assert(!ts_node_is_null(scoped_identifier_node), "No scoped_identifier field found", node_text, __FILE__, __LINE__);
+            char* pkg_name = get_node_text(scoped_identifier_node, source_code);
+            debug_printf("DEBUG: Found Java import declaration: '%s'\n", pkg_name);
+            unsigned int line_num, col_num;
+            get_node_position(scoped_identifier_node, &line_num, &col_num);
+            add_node(results, "package", pkg_name, line_num, col_num);
+            free(pkg_name);
             return;
         }
         else if (strcmp(node_type, "formal_parameter") == 0) {
@@ -1761,6 +1797,7 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
     }
     else if (strcmp(language_name, "solidity") == 0) {
         if (strcmp(node_type, "function_definition") == 0 || strcmp(node_type, "modifier_definition") == 0) {
+
             debug_printf("DEBUG: Solidity function definition child nodes:\n");
             debug_print_child(node, source_code);
 
@@ -1788,7 +1825,12 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 debug_printf("DEBUG: Found Solidity function definition: '%s'\n", func_name);
                 unsigned int line_num, col_num;
                 get_node_position(name_node, &line_num, &col_num);
-                add_node(results, "function_definition", func_name, line_num, col_num);
+                if (!ts_node_is_null(body_node)) {
+                    add_node(results, "function_definition", func_name, line_num, col_num);
+                }
+                else {
+                    add_node(results, "func_declaration", func_name, line_num, col_num);
+                }
                 free(func_name);
             }
 
@@ -2053,6 +2095,19 @@ static void traverse_tree(TSNode node, const char* source_code, ParseResults* re
                 free(var_name);
             }
             return;
+        }
+        else if (strcmp(node_type, "import_directive") == 0) {
+            debug_printf("DEBUG: Solidity state variable declaration child nodes:\n");
+            debug_print_child(node, source_code);
+            TSNode source_node = ts_node_child_by_field_name(node, "source", 6);
+            if (!ts_node_is_null(source_node)) {
+                char* source_name = get_node_text(source_node, source_code);
+                debug_printf("DEBUG: Found Solidity import source: '%s'\n", source_name);
+                unsigned int line_num, col_num;
+                get_node_position(source_node, &line_num, &col_num);
+                add_node(results, "package", source_name, line_num, col_num);
+                free(source_name);
+            }
         }
     }
 

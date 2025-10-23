@@ -43,7 +43,7 @@ def save_query_results(
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S.%f")[:-3]
     output_dir = Path("reply") / timestamp
     output_dir.mkdir(parents=True, exist_ok=True)
-
+    logger.info(f"RAG query results saved to {output_dir}")
     # Save response
     if result.get("response"):
         response_file = output_dir / "response.txt"
@@ -247,6 +247,16 @@ def build_context(
     def end_line_num(text):
         return text.split('\n')[-1].split(':', 1)[0].strip()
 
+    def remove_position_restoration_spaces(text, spaces_to_remove):
+        """Remove leading spaces that were added for position restoration"""
+        if spaces_to_remove <= 0:
+            return text
+
+        # Remove the specified number of leading spaces from the entire text
+        if text.startswith(' ' * spaces_to_remove):
+            return text[spaces_to_remove:]
+        return text
+
     new_doc = deepcopy(doc)
     cnt = 0
     this_doc = doc
@@ -256,7 +266,7 @@ def build_context(
         while doc.meta_data["prev_doc_id"] is not None and cnt < count:
             prev_doc = id2doc[doc.meta_data["prev_doc_id"]]
             if end_line_num(prev_doc.text) == start_line_num(new_doc.text):
-                new_doc.text = prev_doc.text + new_doc.text.split(':', 1)[1].strip()
+                new_doc.text = prev_doc.text + new_doc.text.split(': ', 1)[1].strip()
             else:
                 new_doc.text = prev_doc.text + new_doc.text
             new_doc.meta_data["original_text"] = prev_doc.meta_data["original_text"] + new_doc.meta_data["original_text"]
@@ -269,10 +279,17 @@ def build_context(
     if direction == "both" or direction == "next":
         while doc.meta_data["next_doc_id"] is not None and cnt < count:
             next_doc = id2doc[doc.meta_data["next_doc_id"]]
-            if end_line_num(new_doc.text) == start_line_num(next_doc.text):
-                new_doc.text = new_doc.text + next_doc.text.split(':', 1)[1].strip()
+
+            # Get position restoration spaces for the next doc
+            next_doc_spaces = next_doc.meta_data.get("position_restoration_spaces", 0)
+
+            # Remove position restoration spaces from next doc before concatenating
+            next_doc_text_processed = remove_position_restoration_spaces(next_doc.text, next_doc_spaces)
+
+            if end_line_num(new_doc.text) == start_line_num(next_doc_text_processed):
+                new_doc.text = new_doc.text + next_doc_text_processed.split(': ', 1)[1].strip()
             else:
-                new_doc.text = new_doc.text + next_doc.text
+                new_doc.text = new_doc.text + next_doc_text_processed
             new_doc.meta_data["original_text"] = new_doc.meta_data["original_text"] + next_doc.meta_data["original_text"]
             doc = next_doc
             cnt += 1

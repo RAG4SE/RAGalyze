@@ -1,13 +1,35 @@
 import json
+import pickle
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    Generator,
+)
 from copy import deepcopy
 from time import sleep
+import faiss
 from json_repair import repair_json
-from numpy import promote_types
+import hashlib
+import traceback
+
+from pathlib import Path
+
+from multilspy import SyncLanguageServer
+from multilspy.multilspy_config import MultilspyConfig
+from multilspy.multilspy_logger import MultilspyLogger
+
 
 from ragalyze.rag.rag import RAG, GeneratorWrapper
 from ragalyze.query import print_result, save_query_results, build_context
@@ -15,6 +37,8 @@ from ragalyze.configs import *
 from ragalyze.logger.logging_config import get_tqdm_compatible_logger
 from adalflow import Prompt
 from adalflow.core.types import Document
+from tqdm import tqdm
+import os
 
 logger = get_tqdm_compatible_logger(__name__)
 
@@ -201,27 +225,395 @@ class Parameter:
 
 
 @dataclass
-class FunctionCall:
-    function_name: str
-    full_name: Optional[str] = None
-    parameters: List[Parameter] = field(default_factory=list)
-    return_type: Optional[str] = None
-    call_site: Optional[CodeLocation] = None
-    is_virtual: bool = False
-    is_overloaded: bool = False
-    template_args: List[str] = field(default_factory=list)
-    context: Optional[str] = None
-    call_expr: Optional[str] = None
+class CallChainTree:
+    func_def: str
+    file_path: Optional[str] = None
+    line_number: Optional[int] = None
+    children: List["CallChainTree"] = field(default_factory=list)
+
+    def traverse_all_functions(self) -> Generator[str, None, None]:
+        yield self.func_def
+        for child in self.children:
+            yield from child.traverse_all_functions()
+
+    def traverse_with_depth(self) -> Generator[tuple[str, int], None, None]:
+        def _traverse(node: CallChainTree, depth: int):
+            yield (node.func_def, depth)
+            for child in node.children:
+                yield from _traverse(child, depth + 1)
+
+        yield from _traverse(self, 0)
+
+    def traverse_with_file_info(
+        self,
+    ) -> Generator[tuple[str, Optional[str], Optional[int]], None, None]:
+        """Traverse the tree and yield function definitions with file path and line number."""
+        yield (self.func_def, self.file_path, self.line_number)
+        for child in self.children:
+            yield from child.traverse_with_file_info()
+
+    def get_all_call_chains(self) -> List[List[str]]:
+        if not self.children:
+            return [[self.func_def]]
+
+        all_chains = []
+        for child in self.children:
+            child_chains = child.get_all_call_chains()
+            for chain in child_chains:
+                all_chains.append([self.func_def] + chain)
+        return all_chains
+
+    def get_all_call_chains_with_file_info(
+        self,
+    ) -> List[List[tuple[str, Optional[str], Optional[int]]]]:
+        """Get all call chains with file path and line number information."""
+        if not self.children:
+            return [[(self.func_def, self.file_path, self.line_number)]]
+
+        all_chains = []
+        for child in self.children:
+            child_chains = child.get_all_call_chains_with_file_info()
+            for chain in child_chains:
+                all_chains.append(
+                    [(self.func_def, self.file_path, self.line_number)] + chain
+                )
+        return all_chains
+
+    def print_call_chains(self, separator: str = "\n->\n") -> None:
+        chains_with_info = self.get_all_call_chains_with_file_info()
+        if not chains_with_info:
+            print("No call chains found.")
+            return
+
+        chains_with_info = [chain for chain in chains_with_info if len(chain) > 1]
+        print("=" * 25 + f"{len(chains_with_info)} call chains found" + "=" * 25)
+        for i, chain in enumerate(chains_with_info):
+            print(f"{'>'*15}Chain {i}{'<'*15}")
+            formatted_chain = []
+            for func_def, file_path, line_number in chain:
+                if file_path and line_number is not None:
+                    formatted_func = f"{func_def} ({file_path}:{line_number})"
+                elif file_path:
+                    formatted_func = f"{func_def} ({file_path})"
+                else:
+                    formatted_func = func_def
+                formatted_chain.append(formatted_func)
+            print(separator.join(formatted_chain))
+
+    def write2file_call_chains(self, file_path: str, separator: str = "\n->\n") -> None:
+        """Write all call chains to a file with file path and line number information.
+
+        Args:
+            file_path: Path to the file where the call chains will be written
+            separator: The separator to use between function names in the chain
+        """
+        chains_with_info = self.get_all_call_chains_with_file_info()
+        if not chains_with_info:
+            print("No call chains found.")
+            return
+        chains_with_info = [chain for chain in chains_with_info if len(chain) > 1]
+        with open(file_path, "w") as f:
+            f.write(
+                "=" * 25
+                + f"{len(chains_with_info)} call chains found"
+                + "=" * 25
+                + "\n"
+            )
+            for i, chain in enumerate(chains_with_info, 1):
+                f.write(f"{'>'*15}Chain {i}{'<'*15}\n")
+                formatted_chain = []
+                for func_def, file_path, line_number in chain:
+                    if file_path and line_number is not None:
+                        formatted_func = f"{func_def} ({file_path}:{line_number})"
+                    elif file_path:
+                        formatted_func = f"{func_def} ({file_path})"
+                    else:
+                        formatted_func = func_def
+                    formatted_chain.append(formatted_func)
+                f.write(separator.join(formatted_chain) + "\n")
+
+    def serialize(self, file_path: str) -> None:
+        """Serialize the CallChainTree to a pickle file.
+
+        Args:
+            file_path: Path to the file where the tree will be stored
+        """
+        try:
+            with open(file_path, "wb") as f:
+                pickle.dump(self, f)
+        except Exception as exc:
+            raise Exception(f"Failed to serialize CallChainTree to {file_path}: {exc}")
+
+    @classmethod
+    def deserialize(cls, file_path: str) -> "CallChainTree":
+        """Deserialize a CallChainTree from a pickle file.
+
+        Args:
+            file_path: Path to the file containing the serialized tree
+
+        Returns:
+            CallChainTree instance
+
+        Raises:
+            Exception: If deserialization fails
+        """
+        try:
+            with open(file_path, "rb") as f:
+                return pickle.load(f)
+        except Exception as exc:
+            raise Exception(
+                f"Failed to deserialize CallChainTree from {file_path}: {exc}"
+            )
+
+    def print_nocode_call_chains(self) -> None:
+        """Print all call chains in the format: file_path,line_number->file_path,line_number->..."""
+        call_chains = self.get_all_call_chains_with_file_info()
+        call_chains = [chain for chain in call_chains if len(chain) > 1]
+        for chain in call_chains:
+            formatted_chain = []
+            for func_def, file_path, line_number in chain:
+                if file_path and line_number is not None:
+                    formatted_chain.append(f"{file_path},{line_number}")
+                elif file_path:
+                    formatted_chain.append(f"{file_path}")
+                else:
+                    formatted_chain.append(func_def)
+            print("->".join(formatted_chain))
+
+    def write2file_no_code_call_chains(self, file_path: str) -> None:
+        """Write all call chains to a file in the format: file_path,line_number->file_path,line_number->...
+
+        Args:
+            file_path: Path to the output file
+        """
+        call_chains = self.get_all_call_chains_with_file_info()
+        with open(file_path, "w") as f:
+            for chain in call_chains:
+                formatted_chain = []
+                for func_def, file_path, line_number in chain:
+                    if file_path and line_number is not None:
+                        formatted_chain.append(f"{file_path},{line_number}")
+                    elif file_path:
+                        formatted_chain.append(f"{file_path}")
+                    else:
+                        formatted_chain.append(func_def)
+                f.write("->".join(formatted_chain) + "\n")
 
 
 @dataclass
-class CallChain:
-    entry_function: str
-    functions: List[FunctionCall] = field(default_factory=list)
-    context: Dict[str, Any] = field(default_factory=dict)
-    depth: int = 0
-    language: Optional[str] = None
-    file_path: Optional[str] = None
+class CallChainForest:
+    """A forest of CallChainTree nodes connected to a dummy root node.
+
+    The forest contains a dummy root node that connects to all the beginning nodes
+    of all the CallChainTree instances, creating a unified forest structure.
+    """
+
+    dummy_root: CallChainTree
+    trees: List[CallChainTree] = field(default_factory=list)
+
+    def __init__(self, trees: List[CallChainTree] = None):
+        """Initialize a CallChainForest with a dummy root node.
+
+        Args:
+            trees: List of CallChainTree instances to include in the forest
+        """
+        self.dummy_root = CallChainTree(
+            func_def="__DUMMY_ROOT__", file_path=None, line_number=None
+        )
+        self.trees = trees or []
+
+        # Connect all tree root nodes to the dummy root
+        for tree in self.trees:
+            self.dummy_root.children.append(tree)
+
+    def add_tree(self, tree: CallChainTree) -> None:
+        """Add a new tree to the forest.
+
+        Args:
+            tree: The CallChainTree to add to the forest
+        """
+        self.trees.append(tree)
+        self.dummy_root.children.append(tree)
+
+    def traverse_all_functions(self) -> Generator[str, None, None]:
+        """Traverse all functions in all trees of the forest.
+
+        Yields:
+            All function definitions in the forest
+        """
+        for tree in self.trees:
+            yield from tree.traverse_all_functions()
+
+    def traverse_with_depth(self) -> Generator[tuple[str, int], None, None]:
+        """Traverse all functions with their depth from the dummy root.
+
+        Yields:
+            Tuples of (function_definition, depth) where depth starts from 1
+            (0 is the dummy root)
+        """
+        # Start from dummy root (depth 0)
+        yield (self.dummy_root.func_def, 0)
+
+        # Traverse each tree with depth starting from 1
+        for tree in self.trees:
+            yield from tree.traverse_with_depth()
+
+    def get_all_call_chains(self) -> List[List[str]]:
+        """Get all call chains from all trees in the forest.
+
+        Returns:
+            List of all call chains from all trees
+        """
+        all_chains = []
+        for tree in self.trees:
+            all_chains.extend(tree.get_all_call_chains())
+        return all_chains
+
+    def get_all_call_chains_with_file_info(self) -> List[List[tuple[str, str, int]]]:
+        """Get all call chains with file info from all trees in the forest.
+
+        Returns:
+            List of all call chains with file info from all trees
+        """
+        all_chains = []
+        for tree in self.trees:
+            all_chains.extend(tree.get_all_call_chains_with_file_info())
+        return all_chains
+
+    def print_call_chains(self, separator: str = "\n->\n") -> None:
+        """Print all call chains from all trees in the forest.
+
+        Args:
+            separator: The separator to use between function names in the chain
+        """
+        chains_with_info = self.get_all_call_chains_with_file_info()
+        if not chains_with_info:
+            print("No call chains found in forest.")
+            return
+        chains_with_info = [chain for chain in chains_with_info if len(chain) > 1]
+        print(
+            "=" * 25 + f"{len(chains_with_info)} call chains found in forest" + "=" * 25
+        )
+        for i, chain in enumerate(chains_with_info, 0):
+            formatted_chain = []
+            # Skip the dummy chain (only contains one function)
+            for func_def, file_path_info, line_number in chain:
+                if file_path_info and line_number is not None:
+                    formatted_func = f"{func_def} ({file_path_info}:{line_number})"
+                elif file_path_info:
+                    formatted_func = f"{func_def} ({file_path_info})"
+                else:
+                    formatted_func = func_def
+                formatted_chain.append(formatted_func)
+            print(f"{'>'*15}Chain {i}{'<'*15}\n{separator.join(formatted_chain)}")
+
+    def write2file_call_chains(self, file_path: str, separator: str = "\n->\n") -> None:
+        """Write all call chains from all trees in the forest to a file.
+
+        Args:
+            file_path: Path to the file where the call chains will be written
+            separator: The separator to use between function names in the chain
+        """
+        if not self.trees:
+            print("No call chains found in forest.")
+            return
+
+        with open(file_path, "w") as f:
+            total_chains = 0
+            chain_id = 0
+            for _, tree in enumerate(self.trees):
+                # Write chains for this tree using the same format as CallChainTree.write2file_call_chains
+                chains_with_info = tree.get_all_call_chains_with_file_info()
+                chains_with_info = [
+                    chain for chain in chains_with_info if len(chain) > 1
+                ]
+                total_chains += len(chains_with_info)
+                if not chains_with_info:
+                    continue
+                for chain in chains_with_info:
+                    f.write(f"{'>'*15}Chain {chain_id}{'<'*15}\n")
+                    chain_id += 1
+                    formatted_chain = []
+                    # Skip the dummy chain (only contains one function)
+                    for func_def, file_path_info, line_number in chain:
+                        if file_path_info and line_number is not None:
+                            formatted_func = (
+                                f"{func_def} ({file_path_info}:{line_number})"
+                            )
+                        elif file_path_info:
+                            formatted_func = f"{func_def} ({file_path_info})"
+                        else:
+                            formatted_func = func_def
+                        formatted_chain.append(formatted_func)
+                    f.write(separator.join(formatted_chain) + "\n")
+
+            f.write(
+                "=" * 25
+                + f"Total: {total_chains} call chains found in forest"
+                + "=" * 25
+                + "\n"
+            )
+
+    def serialize(self, file_path: str) -> None:
+        """Serialize the CallChainForest to a pickle file.
+
+        Args:
+            file_path: Path to the file where the forest will be stored
+        """
+        try:
+            with open(file_path, "wb") as f:
+                pickle.dump(self, f)
+        except Exception as exc:
+            raise Exception(
+                f"Failed to serialize CallChainForest to {file_path}: {exc}"
+            )
+
+    @classmethod
+    def deserialize(cls, file_path: str) -> "CallChainForest":
+        """Deserialize a CallChainForest from a pickle file.
+
+        Args:
+            file_path: Path to the file containing the serialized forest
+
+        Returns:
+            CallChainForest instance
+
+        Raises:
+            Exception: If deserialization fails
+        """
+        try:
+            with open(file_path, "rb") as f:
+                return pickle.load(f)
+        except Exception as exc:
+            raise Exception(
+                f"Failed to deserialize CallChainForest from {file_path}: {exc}"
+            )
+
+    def print_nocode_call_chains(self) -> None:
+        """Print all call chains from all trees in the format: file_path,line_number->file_path,line_number->..."""
+        for tree in self.trees:
+            tree.print_nocode_call_chains()
+
+    def write2file_no_code_call_chains(self, file_path: str) -> None:
+        """Write all call chains from all trees to a file in the format: file_path,line_number->file_path,line_number->...
+
+        Args:
+            file_path: Path to the output file
+        """
+        with open(file_path, "w") as f:
+            for tree in self.trees:
+                call_chains = tree.get_all_call_chains_with_file_info()
+                call_chains = [chain for chain in call_chains if len(chain) > 1]
+                for chain in call_chains:
+                    formatted_chain = []
+                    for func_def, file_path, line_number in chain:
+                        if file_path and line_number is not None:
+                            formatted_chain.append(f"{file_path},{line_number}")
+                        elif file_path:
+                            formatted_chain.append(f"{file_path}")
+                        else:
+                            formatted_chain.append(func_def)
+                    f.write("->".join(formatted_chain) + "\n")
 
 
 def deduplicate_strings(items: Iterable[str]) -> List[str]:
@@ -236,6 +628,47 @@ def deduplicate_strings(items: Iterable[str]) -> List[str]:
         seen.add(normalized)
         unique.append(normalized)
     return unique
+
+
+def contain_line_number_prefixes(code: str) -> str:
+    """Remove leading line-number prefixes like ``12:`` when present on every non-empty line."""
+
+    if not code:
+        return code
+
+    pattern = re.compile(r"^\s*\d+:\s?")
+    lines = code.splitlines()
+
+    for line in lines:
+        if not line.strip():
+            continue
+        if not pattern.match(line):
+            return False
+
+    return True
+
+
+def strip_line_number_prefixes(code: str) -> str:
+    """Remove leading line-number prefixes like ``12:`` when present on every non-empty line."""
+
+    if not code:
+        return code
+
+    pattern = re.compile(r"^\s*\d+:\s?")
+    lines = code.splitlines()
+
+    has_numbered_lines = False
+    for line in lines:
+        if not line.strip():
+            continue
+        if not pattern.match(line):
+            return code
+        has_numbered_lines = True
+
+    if not has_numbered_lines:
+        return code
+
+    return "\n".join(pattern.sub("", line, count=1) for line in lines)
 
 
 def find_doc(file_path: str, line_number: int):
@@ -259,6 +692,133 @@ def find_doc(file_path: str, line_number: int):
         if doc == None:
             break
     return None
+
+
+def locate_element_in_line_numbered_code(
+    line_numbered_code: str, element: str
+) -> Tuple[Optional[int], Optional[str]]:
+    """
+    Locate the line number of the call_expr in the line_numbered_code.
+    """
+    if not contain_line_number_prefixes(line_numbered_code):
+        logger.error(
+            f"locate_element_in_line_numbered_code: Function definition does not contain line number prefixes: {line_numbered_code}"
+        )
+        raise
+    # The line number of each line is prefixed as i: statement
+    if not line_numbered_code or not element:
+        return ""
+    lines = line_numbered_code.splitlines()
+    # The line number of each line is prefixed as i: statement
+    for line in lines:
+        m = re.match(r"^\s*(\d+):\s*(.*)", line)
+        if m and element in m.group(2):
+            return int(m.group(1)), line
+    return None, None
+
+
+class LocateElementInLineNumberedCodeQuery:
+    """
+    Uses LLM to locate the line number of a specific element in line-numbered source code.
+    This class provides the same functionality as locate_element_in_line_numbered_code function
+    but uses LLM queries to make the decision.
+    """
+
+    prompt_template = Prompt(
+        PROMPT_TEMPLATE.call(
+            task_description=r"""
+You are given line-numbered source code where each line starts with a line number prefix like "123: ".
+Your task is to locate the line number where the target element appears.
+
+Line-numbered code:
+{{line_numbered_code}}
+
+Target element to locate: {{element}}
+            """,
+            instructions=r"""
+1. Look through the line-numbered code to find where the target element appears
+2. The matching should be flexible - ignore differences in spacing, parentheses, and minor formatting
+   Examples:
+   - Target "func (a)" matches "func(a)" or "func ( a )"
+   - Target "obj.method()" matches "obj . method ()" or "obj.method()"
+   - Target "call(x, y)" matches "call (x,y)" or "call(x, y )"
+3. Return the line number (the number before the colon) where the element is found
+4. If the element appears multiple times, return the first occurrence
+5. If the element cannot be found, return None
+6. Do not return line numbers for elements that appear only in comments or strings unless the target itself is a comment/string
+            """,
+            output_format=r"""Return strict JSON:
+{"line_number": line_number_or_null}
+If the element is not found, return:
+{"line_number": null}
+            """,
+        )
+    )
+
+    def __init__(self, debug: bool = False):
+        self.debug = debug
+
+    def __call__(self, line_numbered_code: str, element: str) -> Tuple[Optional[int], Optional[str]]:
+        """
+        Locate the line number of the element in the line-numbered code using LLM.
+
+        Args:
+            line_numbered_code (str): Source code with line number prefixes
+            element (str): The element to locate in the code
+
+        Returns:
+            Optional[int]: The line number where the element is found, or None if not found
+            Optional[str]: The code line without line number prefix on the specified line
+        """
+        with call_debug_scope(
+            self.__class__.__name__,
+            self.debug,
+            element=element,
+            code_length=len(line_numbered_code) if line_numbered_code else 0,
+        ):
+            if not contain_line_number_prefixes(line_numbered_code):
+                logger.error(
+                    f"LocateElementInLineNumberedCodeQuery: Function definition does not contain line number prefixes: {line_numbered_code}"
+                )
+                raise
+
+            if not line_numbered_code or not element:
+                return None, None
+
+            prompt = self.prompt_template.call(
+                line_numbered_code=line_numbered_code,
+                element=element,
+            )
+
+            set_global_config_value("generator.json_output", True)
+            generator = GeneratorWrapper()
+            reply = generator(input_str=prompt).data.strip()
+            set_global_config_value("generator.json_output", False)
+
+            if self.debug:
+                generator.save_result()
+
+            try:
+                data = json.loads(repair_json(reply))
+                line_number = data.get("line_number")
+                if line_number is None or line_number == "null":
+                    if self.debug:
+                        logger.info(f"Element '{element}' not found in code")
+                    return None, None
+                code_lines = line_numbered_code.split('\n')
+                line = None
+                for code_line in code_lines:
+                    if code_line.startswith(f'{line_number}: '):
+                        line = code_line.split(f'{line_number}: ')[1]
+                        break
+                return int(line_number), line
+            except (json.JSONDecodeError, ValueError, TypeError) as exc:
+                logger.error(
+                    f"LocateElementInLineNumberedCodeQuery: Failed to parse response: {exc}"
+                )
+                if self.debug:
+                    logger.error(f"Raw response: {reply}")
+                return None, None
 
 
 class FetchCallerHeaderPipeline:
@@ -892,7 +1452,7 @@ Otherwise, return json:
             function_name = f"{class_name}::operator()"
             call_operator_defs = FetchFunctionDefinitionFromNamePipeline(
                 debug=self.debug
-            )(function_name)
+            )(function_name, can_be_class_name=False)
             #! WARNING: only consider the first function definition found
             if len(call_operator_defs) > 0:
                 call_operator_def = call_operator_defs[0]
@@ -1126,6 +1686,9 @@ The function is written in {{language}}.
 {% endif %}
 
 Analyze the function to extract parameter types and return type.
+
+WARNING:
+`void` must not be ommitted in the return_types list.
             """,
             instructions=r"""
 Return strict JSON:
@@ -1319,9 +1882,43 @@ class FetchCallExpressionsQuery:
     prompt_template = Prompt(
         PROMPT_TEMPLATE.call(
             task_description=r"""
-Extract function call expressions from the code.
+Extract function calls from the code.
 Code:
 {{function_body}}
+
+IMPORTANT:
+- Extract direct function calls, not assignments or other operations.
+- Extract modifier invocation if the given function definition is in Solidity
+- Ignore function calls inside comments or strings.
+- Include the full function call expression, including arguments.
+- A chained function call (e.g., `a.b().c()`) should be included as a single call expression.
+
+Examples:
+- Modifier without arguments:
+  Code:
+  ```solidity
+  function func(address _to, uint _value, bytes _data) external m returns (bytes32 o_hash) {
+      return super.func(_to, _value, _data);
+  }
+  ```
+  Expected `call_exprs`:
+  [
+    "m",
+    "super.func(_to, _value, _data)"
+  ]
+
+- Modifier with arguments:
+  Code:
+  ```solidity
+  function withdraw(uint amount) external onlyAfter(unlockTime) {
+      owner.send(amount);
+  }
+  ```
+  Expected `call_exprs`:
+  [
+    "onlyAfter(unlockTime)",
+    "owner.send(amount)"
+  ]
             """,
             output_format=r"""Return strict JSON with this structure:
 {
@@ -1344,6 +1941,13 @@ Code:
             self.debug,
             length=len(function_body) if function_body else 0,
         ):
+
+            if not contain_line_number_prefixes(function_body):
+                logger.error(
+                    f"FetchCallExpressionsQuery: Function definition does not contain line number prefixes: {function_body}"
+                )
+                raise
+
             if not function_body.strip():
                 return []
 
@@ -1369,10 +1973,42 @@ Code:
 
             result: List[Dict[str, Any]] = []
             for call_expr in call_exprs:
+                line_number, code_line = locate_element_in_line_numbered_code(
+                    function_body, call_expr
+                )
+                if line_number is None:
+                    logger.warning(
+                        f"locate_element_in_line_numbered_code: Call expression {call_expr} not found in function body:\n{function_body}, query LocateElementInLineNumberedCodeQuery for more flexible match"
+                    )
+                    line_number, code_line = LocateElementInLineNumberedCodeQuery(
+                        debug=self.debug
+                    )(
+                        line_numbered_code=function_body,
+                        element=call_expr,
+                    )
+                    if line_number is None:
+                        logger.error(
+                            f"LocateElementInLineNumberedCodeQuery: Call expression {call_expr} not found in function body:\n{function_body}"
+                        )
+                        raise
+                    if code_line is None:
+                        logger.error(
+                            "Given that the line number is extracted, the corresponding line is not"
+                        )
+                        raise
+
+                code_line = strip_line_number_prefixes(code_line)
+                col_0_based = code_line.find(call_expr)
+                logger.info(f"Get 0-based column number ({col_0_based}): `{call_expr}` in `{code_line}`")
+                if col_0_based == -1:
+                    logger.error(f"The call expression {call_expr} cannot be found in the line {code_line}")
+                
                 result.append(
                     {
                         "call_expr": call_expr,
                         "function_body": function_body,
+                        "line_number": line_number,
+                        "column_number": col_0_based
                     }
                 )
             return result
@@ -1861,7 +2497,7 @@ Use this to determine which specific overload or template specialization is bein
                 reply = response["response"]
                 format_prompt = OUTPUT_FORMAT_TEMPLATE.call(
                     reply=f"Here is the reply:\n {reply}. ",
-                    info="valid function definitions containing both function header and body",
+                    info="valid function definitions",
                     output_format=r"""Response in json format such as
 {
     "function_definition": "[Function definition 1, Function definition 2, ...]",
@@ -1902,6 +2538,9 @@ Use this to determine which specific overload or template specialization is bein
         return function_definitions
 
 
+function_info_2_function_def: Dict[Tuple[str, str, int], str] = {}
+
+
 class FetchFunctionDefinitionFromNamePipeline:
     """
     Given a function name, return the complete function definition.
@@ -1914,13 +2553,16 @@ class FetchFunctionDefinitionFromNamePipeline:
 You are given code snippets between <START_OF_CONTEXT> and <END_OF_CONTEXT>.
 
 Your task is to find the **complete function definition** for the function named `{{function_name}}`.
-If the given code snippets contain line numbers, please include them in your response.
 
 {% if function_signature %}
 To help disambiguate overloaded functions, here is the expected function signature:
 {{function_signature}}
 Use this to determine which specific overload or template specialization is being referenced.
 {% endif %}
+
+WARNING:
+If the code snippet between <START_OF_CONTEXT> and <END_OF_CONTEXT> are prefixed with line numbers, keep them when returning function definitions.
+
 """,
             instructions=r"""
 1. Identify the **complete function definition** for the function named `{{function_name}}`.
@@ -1928,6 +2570,14 @@ Use this to determine which specific overload or template specialization is bein
 3. Ensure the definition includes the complete function header and body.
 4. For each candidate, verify it's a complete definition (not just a declaration).
 """,
+            output_format=r"""Return JSON
+{
+    "function_definitions": ["Line Numbered Function definition"],
+    "complete": ["yes|no"]
+}
+If the function definition is not complete, return "no" for the corresponding complete flag.
+Otherwise, return "yes" for the corresponding complete flag.
+            """,
         )
     )
 
@@ -1950,6 +2600,7 @@ Use this to determine which specific overload or template specialization is bein
             Selected function definition that matches the line number
         """
         try:
+            #!WARNING: the following prompt is uninformative
             # Build a prompt showing all function definitions with their line numbers
             prompt = f"""I need to find the function definition for '{function_name}' that is located at line {line_number}.
 
@@ -2016,6 +2667,7 @@ Please respond with just the candidate number (1, 2, 3, etc.) that corresponds t
         function_signature: str = "",
         file_path: Optional[str] = None,
         line_number: Optional[int] = None,
+        can_be_class_name: bool = True,
     ) -> List[str]:
         """
         Args:
@@ -2028,18 +2680,39 @@ Please respond with just the candidate number (1, 2, 3, etc.) that corresponds t
             List[str]: List of complete function definitions found.
         """
         with call_debug_scope(
-            self.__class__.__name__, self.debug, function=function_name
+            self.__class__.__name__,
+            self.debug,
+            function=function_name,
+            file_path=file_path,
+            line_number=line_number,
         ):
+            if (
+                file_path
+                and line_number
+                and (function_name, file_path, line_number)
+                in function_info_2_function_def
+            ):
+                logger.info(
+                    f"Fetch {function_name} definition in {file_path} at line {line_number} from cache"
+                )
+                return [
+                    function_info_2_function_def[
+                        (function_name, file_path, line_number)
+                    ]
+                ]
+
             prompt = self.prompt_template.call(
                 function_name=function_name,
                 function_signature=function_signature,
             )
             bm25_keywords = [f"[FUNCDEF]{function_name}"]
             faiss_query = ""
+            # set_global_config_value("generator.json_output", True)
+            # generator = GeneratorWrapper()
+            # set_global_config_value("generator.json_output", False)
             set_global_config_value("generator.json_output", True)
-            generator = GeneratorWrapper()
-            set_global_config_value("generator.json_output", False)
             rag = RAG()
+            set_global_config_value("generator.json_output", False)
             retrieved_docs = rag.retrieve(
                 bm25_keywords="[TOKEN_SPLIT]".join(bm25_keywords),
                 faiss_query=faiss_query,
@@ -2059,35 +2732,43 @@ Please respond with just the candidate number (1, 2, 3, etc.) that corresponds t
                         file_path,
                         function_name,
                     )
-
             if not retrieved_docs:
                 # the function call may be a constructor or a call operator
-                logger.warning(
-                    f"No documents found for {function_name} definition, {function_name} may be a class name"
-                )
-                # step 1: fetch class definition
-                class_definition = FetchClassPipeline(debug=self.debug)(function_name)
-                if not class_definition:
-                    logger.warning(f"Cannot find class definition for {function_name}")
-                    return []
-                # step 2: fetch call operator definition
-                call_operator_definition = FindCallOperatorQuery(debug=self.debug)(
-                    class_definition, function_name
-                )
-                constructor_definition = FetchConstructorQuery(debug=self.debug)(
-                    class_definition, function_name
-                )
-                if not constructor_definition and not call_operator_definition:
+                if can_be_class_name:
                     logger.warning(
-                        f"Cannot find constructor definition for {function_name}"
+                        f"No documents found for {function_name} definition, {function_name} may be a class name"
                     )
-                    return []
-                function_definitions = []
-                if constructor_definition:
-                    function_definitions.append(constructor_definition)
-                if call_operator_definition:
-                    function_definitions.append(call_operator_definition)
-                return function_definitions
+                    # step 1: fetch class definition
+                    class_definition = FetchClassPipeline(debug=self.debug)(
+                        function_name
+                    )
+                    if not class_definition:
+                        logger.warning(
+                            f"Cannot find class definition for {function_name}"
+                        )
+                        return []
+                    # step 2: fetch call operator definition
+                    call_operator_definition = FindCallOperatorQuery(debug=self.debug)(
+                        class_definition, function_name
+                    )
+                    constructor_definition = FetchConstructorQuery(debug=self.debug)(
+                        class_definition, function_name
+                    )
+                    if not constructor_definition and not call_operator_definition:
+                        logger.warning(
+                            f"Cannot find constructor definition for {function_name}"
+                        )
+                        return []
+                    function_definitions = []
+                    if constructor_definition:
+                        function_definitions.append(constructor_definition)
+                    if call_operator_definition:
+                        function_definitions.append(call_operator_definition)
+                    if line_number and file_path:
+                        function_info_2_function_def[
+                            (function_name, file_path, line_number)
+                        ] = function_definitions[0]
+                    return function_definitions
 
             function_definitions = []
 
@@ -2107,22 +2788,22 @@ Please respond with just the candidate number (1, 2, 3, etc.) that corresponds t
                         save_query_results(response, bm25_keywords, faiss_query, prompt)
 
                     reply = response["response"]
-                    format_prompt = OUTPUT_FORMAT_TEMPLATE.call(
-                        reply=f"Here is the reply:\n {reply}. ",
-                        info="valid function definitions containing both function header and body",
-                        output_format=r"""Response in json format such as
-{
-    "function_definitions": ["Function definition 1", "Function definition 2", ...],
-    "complete": ["yes|no for Function definition 1", "yes|no for Function definition 2", ...]
-}
-If the given function definitions contain line numbers, please include them in your response.
-""",
-                    )
-                    reply = generator(input_str=format_prompt).data.strip()
-                    if self.debug:
-                        generator.save_result()
+                    #                     format_prompt = OUTPUT_FORMAT_TEMPLATE.call(
+                    #                         reply=f"Here is the reply:\n {reply}. ",
+                    #                         info="valid function definitions containing both function header and body",
+                    #                         output_format=r"""Response in json format such as
+                    # {
+                    #     "function_definitions": ["Function definition 1", "Function definition 2", ...],
+                    #     "complete": ["yes|no for Function definition 1", "yes|no for Function definition 2", ...]
+                    # }
+                    # If the given function definitions contain line numbers, please include them in your response.
+                    # """,
+                    #                     )
+                    #                     reply = generator(input_str=format_prompt).data.strip()
+                    #                     if self.debug:
+                    #                         generator.save_result()
 
-                    if reply == "None":
+                    if reply == "None" or reply == None:
                         logger.warning(f"Cannot find definition for {function_name}")
                         break
 
@@ -2173,12 +2854,21 @@ If the given function definitions contain line numbers, please include them in y
                 selected_definition = self._select_definition_by_line_number(
                     function_name, line_number, function_definitions
                 )
-                return (
+                result = (
                     [selected_definition]
                     if selected_definition
                     else function_definitions
                 )
+                if line_number and file_path:
+                    function_info_2_function_def[
+                        (function_name, file_path, line_number)
+                    ] = result[0]
+                return result
             else:
+                if line_number and file_path:
+                    function_info_2_function_def[
+                        (function_name, file_path, line_number)
+                    ] = function_definitions[0]
                 return function_definitions
 
 
@@ -2744,7 +3434,7 @@ Note: Handle different language syntax:
                 return []
 
 
-class FunctionNameExtractor:
+class FunctionNameExtractorFromCall:
     """Extracts base function names and type arguments from function calls using LLM across multiple programming languages."""
 
     prompt_template = Prompt(
@@ -2752,7 +3442,7 @@ class FunctionNameExtractor:
             task_description=r"""
 Extract the base function name and type arguments from the following function call:
 
-Function call: {{function_name}}
+Function call: {{function_call}}
 
 Your task is to:
 1. Extract the base function name (without type arguments)
@@ -2775,14 +3465,14 @@ Always return valid JSON with both fields present.""",
 
     def __init__(self, debug: bool = False):
         """
-        Initialize the FunctionNameExtractor.
+        Initialize the FunctionNameExtractorFromCall.
 
         Args:
             debug: Enable debug logging
         """
         self.debug = debug
 
-    def __call__(self, function_name: str) -> tuple[str, list[str]]:
+    def __call__(self, function_call: str) -> tuple[str, list[str]]:
         """
         Extract the base function name and type arguments from a function call string.
 
@@ -2792,28 +3482,25 @@ Always return valid JSON with both fields present.""",
         - TypeScript: func<string, number>(args)
 
         Args:
-            function_name: The function name that may contain type arguments
+            function_call: The function call that may contain type arguments
 
         Returns:
             A tuple of (base_function_name, type_arguments)
         """
-        if not function_name or ("<" not in function_name and ">" not in function_name):
-            return function_name, []
 
         with call_debug_scope(
-            self.__class__.__name__, self.debug, function_name=function_name
+            self.__class__.__name__, self.debug, function_call=function_call
         ):
-            prompt = self.prompt_template.call(function_name=function_name)
+            prompt = self.prompt_template.call(function_call=function_call)
             set_global_config_value("generator.json_output", True)
             generator = GeneratorWrapper()
             reply = generator(input_str=prompt).data.strip()
             if self.debug:
                 generator.save_result()
             set_global_config_value("generator.json_output", False)
-
             try:
                 data = json.loads(repair_json(reply))
-                base_name = data.get("base_function_name", function_name)
+                base_name = data.get("base_function_name", function_call)
                 type_args = data.get("type_arguments", [])
 
                 # Clean up the type arguments
@@ -2821,15 +3508,14 @@ Always return valid JSON with both fields present.""",
 
                 if self.debug:
                     logger.info(
-                        f"Extracted function name '{base_name}' with type arguments: {type_args}"
+                        f"Extracted function name '{base_name}' with type arguments: {type_args} from {function_call}"
                     )
-
                 return base_name, type_args
             except Exception as e:
                 if self.debug:
                     logger.error(f"Error parsing function name extraction result: {e}")
                 # Fallback: return original function name if parsing fails
-                return function_name, []
+                return function_call, []
 
     def _clean_type_name(self, type_name: str) -> str:
         """
@@ -2850,6 +3536,92 @@ Always return valid JSON with both fields present.""",
         while type_name.endswith(("&", "*", "?")):
             type_name = type_name[:-1].strip()
         return type_name.strip()
+
+
+class FunctionNameExtractorFromDef:
+    """Extracts function names from function definitions using LLM across multiple programming languages."""
+
+    prompt_template = Prompt(
+        PROMPT_TEMPLATE.call(
+            task_description=r"""
+Extract the function name from the following function definition:
+
+Function definition: {{function_definition}}
+
+Your task is to extract only the function name (without class names, namespaces, or return types).
+
+Handle different language formats, for instance:
+- C++: std::string MyClass::calculate(int value, const std::string& name) const -> "calculate"
+- Java: public List<String> processData(String input, int count) throws IOException -> "processData"
+- Python: def calculate_total(items: List[int], discount: float = 0.1) -> float: -> "calculate_total"
+- TypeScript: function processData<T>(data: T[], callback: (item: T) => boolean): T[] -> "processData"
+- JavaScript: function calculateSum(a, b) { return a + b; } -> "calculateSum"
+- Go: func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) -> "handleRequest"
+- Rust: impl MyStruct { fn process_data(&self, data: &[u8]) -> Result<(), Error> } -> "process_data"
+
+            """,
+            output_format=r"""Return strict JSON:
+{
+    "function_name": "extracted_function_name"
+}
+
+Always return valid JSON with the function_name field present.""",
+        )
+    )
+
+    def __init__(self, debug: bool = False):
+        """
+        Initialize the FunctionNameExtractorFromDef.
+
+        Args:
+            debug: Enable debug logging
+        """
+        self.debug = debug
+
+    def __call__(self, function_definition: str) -> str:
+        """
+        Extract the function name from a function definition string.
+
+        Handles various formats across multiple programming languages:
+        - C++: return_type ClassName::function_name(params) qualifiers
+        - Java: access_modifier return_type function_name(params) throws exceptions
+        - Python: def function_name(params: type_annotation) -> return_type:
+        - TypeScript: function function_name(params: type_annotation): return_type
+        - JavaScript: function function_name(params) { ... }
+        - Go: func (receiver) function_name(params) return_type
+        - Rust: fn function_name(params) -> return_type
+
+        Args:
+            function_definition: The function definition string to parse
+
+        Returns:
+            The extracted function name
+        """
+        if not function_definition:
+            return ""
+
+        with call_debug_scope(
+            self.__class__.__name__, self.debug, function_definition=function_definition
+        ):
+            prompt = self.prompt_template.call(function_definition=function_definition)
+            set_global_config_value("generator.json_output", True)
+            generator = GeneratorWrapper()
+            reply = generator(input_str=prompt).data.strip()
+            if self.debug:
+                generator.save_result()
+            set_global_config_value("generator.json_output", False)
+            try:
+                data = json.loads(repair_json(reply))
+                function_name = data.get("function_name", "")
+
+                if self.debug:
+                    logger.info(f"Extracted function name: '{function_name}'")
+                return function_name
+            except Exception as e:
+                if self.debug:
+                    logger.error(f"Error parsing function name extraction result: {e}")
+                # Fallback: return empty string if parsing fails
+                return ""
 
 
 class IsChainedCallQuery:
@@ -3055,35 +3827,70 @@ If no assignment is found, return
                 return None
 
 
-class VarTypeInferenceQuery:
+#!WARNING: VarTypeInferencePipeline has a weakness:
+# If a var declared in a python package imported by short name where some names are ommited by __init__.py, VarTypeInferencePipeline is oblivious to the __init__.py
+class VarTypeInferencePipeline:
     """Resolves the type of variables considering both static and dynamic types."""
 
-    prompt_template = Prompt(
+    # This prompt should be used when the variable is in the same file as the expression
+    same_file_prompt_template = Prompt(
         PROMPT_TEMPLATE.call(
             task_description=r"""
-Your task is to analyze the given code context and find the static type declaration for the specified variable.
+Given the code context below, locate the declaration of the variable `{{variable_name}}` that is actually visible to the expression `{{expression}}` and report its **static** type.
 
 Context:
 {{context}}
 
-Target Variable: {{variable_name}}
+Instructions:
+1. Scan the context for every declaration of `{{variable_name}}`.
+2. Pick the declaration that is **in scope** for `{{expression}}` (respect shadowing, blocks, imports, namespaces, etc.).
+3. If no in-scope declaration exists, the static type is None.
+4. If the declaration exists, the **static type** is implied by the type annotation or the literal value itself. For instance,
+   - `int x = 5;` → `"int"`
+   - `auto x = 5;` (C++) → `"int"`
+   - `var x = 5;` (Java/JS) → `"int"`
+   - `const x = 5;` / `let x = 5;` → infer from initializer
 
-Please find the variable declaration and determine its static type:
-- For explicit declarations like "int x = 5;", the static type is "int"
-- For "auto x = 5;" (C++), infer the type from the initial expression as "int"
-- For "var x = 5;" (Java/JavaScript), infer the type from the initial expression as appropriate
-- For "const x = 5;" or "let x = 5;", infer the type from the initial expression
-- If no declaration is found, static_type should be None
-
-Return only the static type information.
+WARNING:
+Multiple variables may share the same name; only the declaration that **actually reaches** the expression counts.
             """,
             output_format=r"""Return strict JSON:
 {
-    "static_type": "declared_type"
+    "static_type": "declared_type",
+    "decl": (declaration_expr, line_number)
 }
 If you cannot decide the static type, return
 {
-    "static_type": None
+    "static_type": None,
+    "decl": None
+}
+""",
+        )
+    )
+
+    # This prompt should be used when the variable is in a different file from the expression and there exists only one variable decl.
+    single_var_diff_file_prompt_template = Prompt(
+        PROMPT_TEMPLATE.call(
+            task_description=r"""
+Given the code context below, locate the declaration of the variable `{{variable_name}}` and report its **static** type.
+Context:
+{{context}}
+
+The **static type** is implied by the type annotation or the literal value itself. For instance,
+   - `int x = 5;` → `"int"`
+   - `auto x = 5;` (C++) → `"int"`
+   - `var x = 5;` (Java/JS) → `"int"`
+   - `const x = 5;` / `let x = 5;` → infer from initializer
+            """,
+            output_format=r"""Return strict JSON:
+{
+    "static_type": "declared_type",
+    "decl": (declaration_expr, line_number)
+}
+If you cannot decide the static type, return
+{
+    "static_type": None,
+    "decl": None
 }
 """,
         )
@@ -3103,6 +3910,32 @@ If you cannot decide the static type, return
     def set_expression_type_inference_query(self, expression_type_inference_query):
         """Set the ExpressionTypeInferenceQuery to resolve circular dependency."""
         self.expression_type_inference_query = expression_type_inference_query
+
+    def _parse_response(self, response: str) -> Optional[Dict[str, Any]]:
+        """Parse the JSON response from the agent.
+
+        Args:
+            response: The raw response string from the agent
+
+        Returns:
+            A dictionary containing the parsed static type and declaration, or None if parsing fails
+        """
+        try:
+            data = json.loads(repair_json(response))
+            static_type = data.get("static_type")
+            decl = data.get("decl")
+            if decl:
+                declaration, line_num = decl
+            else:
+                declaration, line_num = None, None
+            if static_type == "None":
+                static_type = None
+            if static_type == "None":
+                static_type = None
+        except Exception as exc:
+            static_type = None
+            declaration, line_num = None, None
+        return static_type, declaration, line_num
 
     def __call__(
         self,
@@ -3144,13 +3977,16 @@ If you cannot decide the static type, return
                 doc = rag.id2doc[doc.meta_data["next_doc_id"]]
                 if doc == None:
                     break
-            language = self.doc.meta_data["programming_language"]
 
             if not self.doc:
                 raise ValueError(
                     f"Could not find the document for line number {line_number} in file {file_path}"
                 )
-            #!WARNING: The following logic is built on the assumption that the var decl is in the same file of the current call
+            language = self.doc.meta_data["programming_language"]
+            # The following logic is built on the assumption that the var decl is in the same file of the current call
+            logger.info(
+                f"VarTypeInferencePipeline: Searching for var decl in file {file_path}, which is the file that contains the expression {expression}"
+            )
             response = None
             count = 3
             while count <= COUNT_UPPER_LIMIT:
@@ -3161,9 +3997,10 @@ If you cannot decide the static type, return
                     count=count,
                 )
 
-                #! Following the above warning, the `file_path` should be changed in the future
-                prompt = self.prompt_template.call(
-                    context=context, variable_name=variable_name
+                prompt = self.same_file_prompt_template.call(
+                    context=context.text,
+                    variable_name=variable_name,
+                    expression=expression,
                 )
                 set_global_config_value("generator.json_output", True)
                 generator = GeneratorWrapper()
@@ -3179,7 +4016,12 @@ If you cannot decide the static type, return
                     count += 3
                     sleep(0.5)
 
-            if not response:
+            static_type, declaration, line_num = self._parse_response(response)
+
+            if not static_type:
+                logger.info(
+                    f"Cannot find the static type for '{variable_name}' in the file of {expression}, check other files"
+                )
                 # the var decl is not in the current file (where the var is used in the expression)
                 retrieved_docs = rag.retrieve(
                     bm25_keywords=f"[VARDECL]{variable_name}",
@@ -3187,21 +4029,122 @@ If you cannot decide the static type, return
                 )[0].documents
 
                 if not retrieved_docs:
+                    logger.warning(
+                        f"VarTypeInferencePipeline: No document found for '{variable_name}', seems that the var decl is not in the current repo"
+                    )
                     return None
 
-            try:
-                data = json.loads(repair_json(response))
-                static_type = data.get("static_type")
-                logger.info(
-                    f"VarTypeInferenceQuery: Static type for '{variable_name}': {static_type}"
-                )
-                if static_type == "None":
-                    static_type = None
-            except Exception as exc:
-                logger.error(
-                    f"VarTypeInferenceQuery: JSON parse failed for '{variable_name}': {exc}"
-                )
-                static_type = None
+                if len(retrieved_docs) == 1:
+                    logger.info(
+                        f"There is exactly one declaration of '{variable_name}' in the other file {retrieved_docs[0].meta_data['file_path']}"
+                    )
+                    # There is only one document that contains the var decl, the doc is the one containing the decl!
+                    prompt = self.single_var_diff_file_prompt_template.call(
+                        context=retrieved_docs[0].text,
+                        variable_name=variable_name,
+                        expression=expression,
+                    )
+                    set_global_config_value("generator.json_output", True)
+                    generator = GeneratorWrapper()
+                    response = generator(input_str=prompt).data.strip()
+                    if self.debug:
+                        generator.save_result()
+                    set_global_config_value("generator.json_output", False)
+                    static_type, declaration, line_num = self._parse_response(response)
+                    if not static_type:
+                        logger.warning(
+                            f"VarTypeInferencePipeline: No static type found for '{variable_name}' in the other file"
+                        )
+                        return None
+                else:
+                    # There are more than one var decl in other files
+                    logger.info(
+                        f"There are {len(retrieved_docs)} declarations of '{variable_name}' in other files"
+                    )
+                    context, _ = build_context(
+                        self.doc, rag.id2doc, direction="previous", count=250
+                    )
+
+                    variable_decl_context = ""
+                    for doc in retrieved_docs:
+                        variable_decl_context += (
+                            f"File: {doc.meta_data['file_path']}\n{doc.text}\n\n"
+                        )
+
+                    find_var_decl_from_other_files_prompt = f"""
+## Task
+Find the declaration and static type of the variable `{variable_name}` that is used in the expression `{expression}`.
+
+## Analysis Steps
+1. **Identify Relevant Imports**: From the CONTEXT section, find all import/include statements that could make `{variable_name}` accessible in the current scope.
+
+2. **Locate Variable Declarations**: In the CODE SNIPPETS section, find all declarations/definitions of `{variable_name}`. They are declaration candidates for `{variable_name}`.
+
+3. **Determine the Correct Declaration**: Based on the import/include relationships, identify which specific declaration of `{variable_name}` is actually used in the expression.
+
+## Input Data
+
+### CONTEXT (Current file with imports and expression)
+<CONTEXT START>
+{context.text}
+<CONTEXT END>
+
+### CODE SNIPPETS (Other files with potential declarations)
+<CODE SNIPPETS START>
+{variable_decl_context}
+<CODE SNIPPETS END>
+
+## Output Format
+Return strict JSON with the following structure:
+```json
+{{
+    "reasoning": "Step-by-step reasoning process to find the correct declaration",
+    "static_type": "The complete static type of the variable (e.g., 'int', 'std::string', 'MyClass*')",
+    "declaration": "The full declaration/definition line of the variable",
+    "file_name": "The filename where the declaration is found",
+    "line_num": "The line number of the declaration (as string)"
+}}
+```
+
+## Failure Case
+If no declaration/definition of `{variable_name}` is found in the provided code snippets, return:
+```json
+{{
+    "reasoning": None,
+    "static_type": None,
+    "declaration": None,
+    "file_name": None,
+    "line_num": None
+}}
+```
+
+## Important Notes
+- Consider language-specific import/include semantics (e.g., `#include` in C++, `import` in Python/Java)
+- Pay attention to namespace qualifiers and module paths
+- If multiple declarations exist, choose the one that matches the import/include scope
+- Include complete type information including qualifiers (const, static, etc.) and pointer/reference symbols
+                    """
+                    set_global_config_value("generator.json_output", True)
+                    generator = GeneratorWrapper()
+                    response = generator(
+                        input_str=find_var_decl_from_other_files_prompt
+                    ).data.strip()
+                    if self.debug:
+                        generator.save_result()
+                    set_global_config_value("generator.json_output", False)
+                    try:
+                        data = json.loads(repair_json(response))
+                        static_type = data.get("static_type")
+                        logger.info(
+                            f"VarTypeInferencePipeline: Static type for '{variable_name}': {static_type}"
+                        )
+                        if static_type == "None":
+                            static_type = None
+                    except Exception as exc:
+                        logger.error(
+                            f"VarTypeInferencePipeline: JSON parse failed for '{variable_name}': {exc}"
+                        )
+                        static_type = None
             if static_type and not self.query_dynamic_type:
                 return static_type
             # Step 2: Find latest assignment using AssignmentQuery
@@ -3217,12 +4160,12 @@ If you cannot decide the static type, return
                         assignment_expr, file_path, line_number, language
                     )
                     logger.info(
-                        f"VarTypeInferenceQuery: Dynamic type for '{variable_name}': {dynamic_type}"
+                        f"VarTypeInferencePipeline: Dynamic type for '{variable_name}': {dynamic_type}"
                     )
                 except Exception as exc:
                     if self.debug:
                         logger.debug(
-                            f"VarTypeInferenceQuery: Could not infer dynamic type for '{variable_name}': {exc}"
+                            f"VarTypeInferencePipeline: Could not infer dynamic type for '{variable_name}': {exc}"
                         )
                     dynamic_type = None
             # Step 4: Apply rules for final runtime type
@@ -3235,7 +4178,7 @@ If you cannot decide the static type, return
                 final_type = dynamic_type
             if self.debug:
                 logger.debug(
-                    f"VarTypeInferenceQuery: {variable_name} -> static={static_type}, dynamic={dynamic_type}, final={final_type}"
+                    f"VarTypeInferencePipeline: {variable_name} -> static={static_type}, dynamic={dynamic_type}, final={final_type}"
                 )
             return final_type
 
@@ -3506,7 +4449,7 @@ class ExpressionTypeInferenceQuery:
         self.callee_definition_fetch = FetchCalleeInfoPipeline(debug=debug)
         # Set up circular dependency
         self.callee_definition_fetch.set_expression_type_inference_query(self)
-        self.var_type_inference_query = VarTypeInferenceQuery(
+        self.var_type_inference_query = VarTypeInferencePipeline(
             debug=debug,
             expression_type_inference_query=self,
             query_dynamic_type=query_dynamic_type,
@@ -3552,8 +4495,10 @@ class ExpressionTypeInferenceQuery:
                         types.append(self.literal_type_inference_query(segment[0]))
                     elif segment[1] == "function_call":
                         # expression: str, file_path: str, line_number: int
-                        func_type, func_def = self.callee_definition_fetch(
-                            segment[0], file_path, line_number
+                        function_name, func_type, func_def = (
+                            self.callee_definition_fetch(
+                                segment[0], file_path, line_number
+                            )
                         )
                         if func_type is None:
                             types.append(None)
@@ -3824,37 +4769,93 @@ If the return type cannot be determined with reasonable confidence, return "unkn
                 )
 
 
+entry_function_2_call_chain: Dict[str, CallChainTree] = {}
+function_2_hash: Dict[str, str] = {}
+
+
+def get_function_hash(func_def: str) -> str:
+    """Get the hash of a function definition."""
+    if func_def in function_2_hash:
+        return function_2_hash[func_def]
+    function_2_hash[func_def] = hashlib.md5(func_def.encode()).hexdigest()
+    return function_2_hash[func_def]
+
+
+class FunctionCallExtractorFromEntryFuncsPipeline:
+    """
+    Pipeline to extract all call chains given a bunch of entry functions.
+    """
+
+    def __init__(self, max_depth: int = 1000, debug: bool = False):
+        """Initialize the pipeline with depth limit and debug logging."""
+        self.max_depth = max_depth
+        self.debug = debug
+
+    def __call__(
+        self, entry_function_infos: List[Tuple[str, str, int]], use_lsp: bool = True
+    ) -> CallChainForest:
+        """
+        Extract all call chains starting from the given entry functions.
+
+        Args:
+            entry_function_infos: List of entry function info to start extraction from
+             Each entry function info is a tuple of (function_name, file_path, line_number)
+
+        Returns:
+            CallChainForest containing all call chains extracted from the entry functions
+        """
+        call_chain_trees = []
+        for entry_function_name, file_path, line_number in tqdm(
+            entry_function_infos, desc="Extracting call chains"
+        ):
+            if not use_lsp:
+                call_chain_tree = FunctionCallExtractorFromEntryFuncPipeline(
+                    max_depth=self.max_depth, debug=self.debug
+                )(
+                    entry_function_name=entry_function_name,
+                    file_path=file_path,
+                    line_number=line_number,
+                )
+            else:
+                call_chain_tree = FunctionCallExtractorFromEntryFuncWithLSPPipeline(
+                    max_depth=self.max_depth, debug=self.debug
+                )(
+                    entry_function_name=entry_function_name,
+                    file_path=file_path,
+                    line_number=line_number,
+                )
+            if call_chain_tree:
+                call_chain_trees.append(call_chain_tree)
+        return CallChainForest(trees=call_chain_trees)
+
+
 class FunctionCallExtractorFromEntryFuncPipeline:
     """
     Pipeline to extract function call chains from an entry function.
 
-    Follows the 6-step process:
+    Follows a simplified 4-step process:
     1. Use FetchFunctionDefinitionFromNamePipeline to fetch the definition of the entry function
     2. Use FetchCallExpressionsQuery to extract function calls from the entry function
-    3. For each function call expression, use FetchFunctionDefinitionFromNamePipeline to fetch the definition of the called function
+    3. For each function call expression, use FetchCalleeInfoPipeline to get callee information
     4. Store the current function call globally as entry_function -> called_function1 -> called_function2 -> ...
     5. Recursively go to step 1 to extract function call chains starting from each called function
     6. Handle recursive calls properly
     """
 
-    def __init__(self, max_depth: int = 10, debug: bool = False):
+    def __init__(self, max_depth: int = 1000, debug: bool = False):
         """Initialize the pipeline with depth limit and debug logging."""
         self.max_depth = max_depth
         self.debug = debug
-        self.call_chains = []
-        self.visited_functions = set()
+        self.visited_func_hashes: Set[str] = set()  # To avoid infinite recursion
         self.fetch_function_def_pipeline = FetchFunctionDefinitionFromNamePipeline(
             debug=debug
         )
         self.fetch_call_expressions_query = FetchCallExpressionsQuery(debug=debug)
-        self.function_name_extractor = FunctionNameExtractor(debug=debug)
+        self.fetch_callee_info_pipeline = FetchCalleeInfoPipeline(debug=debug)
 
     def __call__(
-        self,
-        entry_function_name: str,
-        file_path: str,
-        line_number: Optional[int] = None,
-    ) -> List[CallChain]:
+        self, entry_function_name: str, file_path: str, line_number: int
+    ) -> CallChainTree:
         """
         Extract function call chains starting from the entry function.
 
@@ -3864,11 +4865,10 @@ class FunctionCallExtractorFromEntryFuncPipeline:
             line_number: Optional line number to precisely locate the entry function's header
 
         Returns:
-            List of call chains starting from the entry function
+            CallChainTree starting from the entry function
         """
         try:
             self.call_chains = []
-            self.visited_functions = set()
 
             if self.debug:
                 logger.info(
@@ -3884,196 +4884,457 @@ class FunctionCallExtractorFromEntryFuncPipeline:
                     logger.warning(
                         f"Could not find definition for entry function: {entry_function_name}"
                     )
-                return []
+                return None
+
+            if len(entry_defs) > 1:
+                if self.debug:
+                    logger.warning(
+                        f"Multiple definitions found for entry function: {entry_function_name}"
+                    )
+                return None
+
+            entry_def = entry_defs[0]
 
             # Start recursive extraction
-            self._extract_call_chain_recursive(
-                function_name=entry_function_name,
+            return self._extract_call_chain_recursive(
+                func_def=entry_def,
                 file_path=file_path,
-                current_chain=[entry_function_name],
+                current_chain=[entry_def],
                 depth=0,
+                line_number=line_number,
             )
-
-            if self.debug:
-                logger.info(f"Extracted {len(self.call_chains)} call chains")
-
-            return self.call_chains
 
         except Exception as exc:
             if self.debug:
                 logger.error(
                     f"Error in FunctionCallExtractorFromEntryFuncPipeline: {exc}"
                 )
-            return []
+            return None
 
     def _extract_call_chain_recursive(
         self,
-        function_name: str,
+        func_def: str,
         file_path: str,
         current_chain: List[str],
         depth: int,
-        line_number: Optional[int] = None,
-    ) -> None:
+        line_number: int,
+    ) -> CallChainTree:
         """
         Recursively extract function call chains.
 
         Args:
-            function_name: Current function to analyze
+            func_def: Current function definition to analyze
             file_path: Path to file containing the function
             current_chain: Current call chain being built
             depth: Current recursion depth
             line_number: Optional line number to precisely locate the function's header
         """
+        lined_num_func_def = func_def
+        if not contain_line_number_prefixes(lined_num_func_def):
+            logger.error(
+                f"FunctionCallExtractorFromEntryFuncPipeline: Function definition does not contain line number prefixes: {lined_num_func_def}"
+            )
+            raise
+
+        func_def = strip_line_number_prefixes(func_def)
+
+        if get_function_hash(func_def) in self.visited_func_hashes:
+            if self.debug:
+                logger.info(f"Detected recursive call to:\n{func_def}")
+            return CallChainTree(
+                func_def=func_def,
+                file_path=file_path,
+                line_number=line_number,
+                children=[],
+            )
+
+        if get_function_hash(func_def) in entry_function_2_call_chain:
+            if self.debug:
+                logger.info(f"Detected cached func def:\n{func_def}")
+            return entry_function_2_call_chain[get_function_hash(func_def)]
+
+        self.visited_func_hashes.add(get_function_hash(func_def))
+
         try:
             # Check recursion limits
             if depth >= self.max_depth:
                 if self.debug:
                     logger.warning(
-                        f"Max depth {self.max_depth} reached at {function_name}"
+                        f"Max depth {self.max_depth} reached at {file_path}::{line_number}\n{func_def}"
                     )
-                return
+                return CallChainTree(
+                    func_def=func_def,
+                    file_path=file_path,
+                    line_number=line_number,
+                    children=[],
+                )
 
-            # Check for recursive calls
-            function_key = f"{function_name}:{file_path}"
-            if function_key in self.visited_functions:
-                if self.debug:
-                    logger.info(f"Detected recursive call to {function_name}")
-                return
-
-            self.visited_functions.add(function_key)
-
-            if self.debug:
-                logger.info(f"Analyzing function: {function_name} at depth {depth}")
-
-            # Step 1: Fetch function definition
-            function_defs = self.fetch_function_def_pipeline(
-                function_name, file_path=file_path, line_number=line_number
-            )
-            if not function_defs:
-                if self.debug:
-                    logger.warning(
-                        f"Could not find definition for function: {function_name}"
-                    )
-                return
-
-            # Take the first function definition
-            function_def = function_defs[0]
-
-            # Step 2: Extract call expressions from the function
-            call_expressions = self.fetch_call_expressions_query(
-                function_def.source_code
-            )
+            # Extract call expressions from the function
+            call_expressions = self.fetch_call_expressions_query(lined_num_func_def)
             if not call_expressions:
-                if self.debug:
-                    logger.info(
-                        f"No call expressions found in function: {function_name}"
-                    )
                 # Store the current chain as a complete call chain
-                self._store_call_chain(current_chain.copy())
-                return
-
-            if self.debug:
-                logger.info(
-                    f"Found {len(call_expressions)} call expressions in {function_name}"
+                return CallChainTree(
+                    func_def=func_def,
+                    file_path=file_path,
+                    line_number=line_number,
+                    children=[],
                 )
 
             # Step 3: For each call expression, extract function name and fetch definition
-            for call_expr in call_expressions:
-                # Use FunctionNameExtractor to extract function name from call expression
-                function_names = self.function_name_extractor(call_expr)
-
-                if function_names and len(function_names) > 0:
-                    # Take the first function name found
-                    called_function_name = function_names[0]
-
-                    if self.debug:
-                        logger.info(
-                            f"Extracted function name: {called_function_name} from call: {call_expr}"
-                        )
-
-                    # Step 4: Store the current function call globally
-                    new_chain = current_chain.copy() + [called_function_name]
-
-                    # Step 5: Recursively process the called function
-                    # Try to find the called function in the same file first
-                    called_defs = self.fetch_function_def_pipeline(
-                        called_function_name, file_path=file_path
-                    )
-
-                    if called_defs:
-                        # Found in same file, continue recursion
-                        self._extract_call_chain_recursive(
-                            function_name=called_function_name,
-                            file_path=file_path,
-                            current_chain=new_chain,
-                            depth=depth + 1,
-                            line_number=line_number,
-                        )
-                    else:
-                        # Could not find called function definition, store current chain
-                        if self.debug:
-                            logger.info(
-                                f"Could not find definition for called function: {called_function_name}"
-                            )
-                        self._store_call_chain(new_chain)
-                else:
+            call_chain_trees = []
+            for call_expr_obj in call_expressions:
+                call_expr = call_expr_obj["call_expr"]
+                callee_body = call_expr_obj["function_body"]
+                call_expr_line_number = call_expr_obj["line_number"]
+                call_function_name, callee_def = self.fetch_callee_info_pipeline(
+                    call_expr, file_path, call_expr_line_number
+                )
+                if not callee_def:
                     if self.debug:
                         logger.warning(
-                            f"Could not extract function name from call expression: {call_expr}"
+                            f"Could not resolve callee definition for call: {call_expr}"
                         )
+                    continue
+                new_chain = current_chain.copy() + [callee_def]
+                callee_def_line_number, code_line = locate_element_in_line_numbered_code(
+                    callee_def, call_function_name
+                )
+                child_call_chain_tree = self._extract_call_chain_recursive(
+                    func_def=callee_def,
+                    file_path=file_path,
+                    current_chain=new_chain,
+                    depth=depth + 1,
+                    line_number=callee_def_line_number,
+                )
+                if child_call_chain_tree == None:
+                    print(
+                        f"callee_def: {callee_def}, file_path: {file_path}, line_number: {callee_def_line_number}"
+                    )
+                    raise ValueError(
+                        f"Could not resolve callee definition for call: {call_expr}"
+                    )
+                call_chain_trees.append(child_call_chain_tree)
 
-            # If no valid function calls found, store the current chain
-            if not any(
-                function_names
-                for function_names in [
-                    self.function_name_extractor(call_expr)
-                    for call_expr in call_expressions
-                ]
-            ):
-                self._store_call_chain(current_chain.copy())
+            call_chain_tree = CallChainTree(
+                func_def=func_def,
+                file_path=file_path,
+                line_number=line_number,
+                children=call_chain_trees,
+            )
+            entry_function_2_call_chain[get_function_hash(func_def)] = call_chain_tree
+
+            return call_chain_tree
+
+        except Exception as exc:
+            if self.debug:
+                logger.error(f"Error in _extract_call_chain_recursive: {exc}")
+            traceback.print_exc()
+
+
+class FunctionCallExtractorFromEntryFuncWithLSPPipeline:
+    """
+    Pipeline to extract function call chains from an entry function using LSP.
+
+    Follows a simplified 4-step process:
+    1. Use FetchFunctionDefinitionFromNamePipeline to fetch the definition of the entry function
+    2. Use FetchCallExpressionsQuery to extract function calls from the entry function
+    3. For each function call expression, use LSP request_definition to get callee information
+    4. Store the current function call globally as entry_function -> called_function1 -> called_function2 -> ...
+    5. Recursively go to step 1 to extract function call chains starting from each called function
+    6. Handle recursive calls properly
+    """
+
+    def __init__(self, max_depth: int = 1000, debug: bool = False, repository_root: str = None):
+        """Initialize the pipeline with depth limit, debug logging, and LSP server."""
+        self.max_depth = max_depth
+        self.debug = debug
+        self.repository_root = repository_root or configs()["repo_path"]
+        self.visited_func_hashes: Set[str] = set()  # To avoid infinite recursion
+        self.fetch_function_def_pipeline = FetchFunctionDefinitionFromNamePipeline(
+            debug=debug
+        )
+        self.extract_function_name_from_def = FunctionNameExtractorFromDef(debug=debug)
+        self.extract_function_name_from_call = FunctionNameExtractorFromCall(debug=debug)
+        self.fetch_call_expressions_query = FetchCallExpressionsQuery(debug=debug)
+        # Initialize LSP server
+        self.logger = MultilspyLogger(True)
+        self.lsp_cache = {}  # Cache for LSP language servers per language
+        self.language = None
+
+    def _get_language_server(self) -> SyncLanguageServer:
+        """Get or create an LSP server for the given file's language."""
+
+        # Map to multilspy language names
+        language_mapping = {
+            "python": "python",
+            "java": "java",
+            "javascript": "javascript",
+            "typescript": "typescript",
+            "c": "c",
+            "cpp": "cpp",
+            "go": "go",
+            "rust": "rust",
+            "solidity": "solidity"
+        }
+
+        lsp_language = language_mapping[self.language]
+        if lsp_language not in self.lsp_cache:
+            config = MultilspyConfig.from_dict({"code_language": lsp_language})
+            lsp = SyncLanguageServer.create(config, self.logger, self.repository_root)
+            self.lsp_cache[lsp_language] = lsp
+
+        return self.lsp_cache[lsp_language]
+
+    def _extract_function_name_from_call(self, call_expr: str) -> str:
+        """Extract the function name from a call expression."""
+        # Simple extraction - get the last part before '('
+        # For more complex cases like obj.method(), this might need enhancement
+        call_expr = call_expr.strip()
+        if '(' in call_expr:
+            func_part = call_expr.split('(')[0].strip()
+            # Get the last part after any dots or arrows
+            func_name = func_part.split('.')[-1].split('->')[-1].split('::')[-1]
+            return func_name
+        return call_expr
+
+    def _request_definition_positions_with_lsp(self, file_path: str, line_number: int, col_number: int) -> List[Tuple[str, int, int]]:
+        """
+        Use LSP to get callee information instead of FetchCalleeInfoPipeline.
+
+        Returns:
+            A list of (relative file path, 0-based line number, 0-based column number)
+            Each represents the position of the start of a definition candidate
+        """
+        logger.info(f"Query LSP with file_path={file_path}, line_number={line_number}, col_number={col_number}")
+        # Get LSP server for this file
+        lsp = self._get_language_server()
+        
+        with lsp.start_server():
+            results = lsp.request_definition(file_path, line_number, col_number)
+            logger.info(results)
+            #!WARNING: no handling for more-than-one-candidate issue
+            positions = [(result["relativePath"], result["range"]["start"]["line"], result["range"]["start"]["character"]) for result in results] # positions are 0-based
+        return positions  
+
+    def _get_callee_info_with_lsp(self, callee_name: str, file_path: str, line_number: int, col_number: int) -> Optional[str]:
+        """
+        Use LSP to get callee information instead of FetchCalleeInfoPipeline.
+
+        Returns:
+            callee_definition
+        """
+        callee_def_positions = self._request_definition_positions_with_lsp(file_path, line_number, col_number)
+        logger.info(f"Fetch callee info of {callee_name} with LSP")
+        try:
+            callee_defs = [self.fetch_function_def_pipeline(callee_name, file_path=callee_def_position[0], line_number=callee_def_position[1])[0] for callee_def_position in callee_def_positions]
+            #! WARNING: if there are more than one candidate, return the first one only
+            return callee_defs[0]
+        except Exception as exc:
+            if self.debug:
+                logger.error(
+                    f"Error in _get_callee_info_with_lsp: {exc}"
+                )
+            return None
+        
+    def __call__(
+        self, entry_function_name: str, file_path: str, line_number: int
+    ) -> CallChainTree:
+        """
+        Extract function call chains starting from the entry function.
+
+        Args:
+            entry_function_name: The name of the entry function
+            file_path: The path to the file that contains the entry function
+            line_number: Optional line number to precisely locate the entry function's header
+
+        Returns:
+            CallChainTree starting from the entry function
+        """
+        try:
+            
+            rag = RAG()
+            rag.get_docs()
+            doc = rag.id2doc[rag.codePath2beginDocid[file_path]]
+            the_doc = None
+            while True:
+                if (
+                    doc.meta_data["start_line"] <= line_number
+                    and doc.meta_data["end_line"] >= line_number
+                ):
+                    the_doc = doc
+                    break
+                if doc.meta_data["next_doc_id"] == None:
+                    break
+                doc = rag.id2doc[doc.meta_data["next_doc_id"]]
+                if doc == None:
+                    break
+
+            if not the_doc:
+                raise ValueError(
+                    f"Could not find the document for line number {line_number} in file {file_path}"
+                )
+            self.language = the_doc.meta_data["programming_language"]
+            
+            self.call_chains = []
+
+            if self.debug:
+                logger.info(
+                    f"Starting function call extraction from: {entry_function_name} in {file_path}"
+                )
+
+            # Step 1: Fetch the definition of the entry function
+            entry_defs = self.fetch_function_def_pipeline(
+                entry_function_name, file_path=file_path, line_number=line_number
+            )
+            if not entry_defs:
+                if self.debug:
+                    logger.warning(
+                        f"Could not find definition for entry function: {entry_function_name}"
+                    )
+                return None
+
+            if len(entry_defs) > 1:
+                if self.debug:
+                    logger.warning(
+                        f"Multiple definitions found for entry function: {entry_function_name}"
+                    )
+                return None
+
+            entry_def = entry_defs[0]
+
+            # Start recursive extraction
+            return self._extract_call_chain_recursive(
+                func_def=entry_def,
+                file_path=file_path,
+                current_chain=[entry_def],
+                depth=0,
+                line_number=line_number,
+            )
 
         except Exception as exc:
             if self.debug:
                 logger.error(
-                    f"Error in _extract_call_chain_recursive for {function_name}: {exc}"
+                    f"Error in FunctionCallExtractorFromEntryFuncPipeline: {exc}"
+                )
+            return None
+
+    def _extract_call_chain_recursive(
+        self,
+        func_def: str,
+        file_path: str,
+        current_chain: List[str],
+        depth: int,
+        line_number: int,
+    ) -> CallChainTree:
+        """
+        Recursively extract function call chains.
+
+        Args:
+            func_def: Current function definition to analyze
+            file_path: Path to file containing the function
+            current_chain: Current call chain being built
+            depth: Current recursion depth
+            line_number: Optional line number to precisely locate the function's header
+        """
+        lined_num_func_def = func_def
+        if not contain_line_number_prefixes(lined_num_func_def):
+            logger.error(
+                f"FunctionCallExtractorFromEntryFuncPipeline: Function definition does not contain line number prefixes: {lined_num_func_def}"
+            )
+            raise
+
+        func_def = strip_line_number_prefixes(func_def)
+
+        if get_function_hash(func_def) in self.visited_func_hashes:
+            if self.debug:
+                logger.info(f"Detected recursive call to:\n{func_def}")
+            return CallChainTree(
+                func_def=func_def,
+                file_path=file_path,
+                line_number=line_number,
+                children=[],
+            )
+
+        if get_function_hash(func_def) in entry_function_2_call_chain:
+            if self.debug:
+                logger.info(f"Detected cached func def:\n{func_def}")
+            return entry_function_2_call_chain[get_function_hash(func_def)]
+
+        self.visited_func_hashes.add(get_function_hash(func_def))
+
+        try:
+            # Check recursion limits
+            if depth >= self.max_depth:
+                if self.debug:
+                    logger.warning(
+                        f"Max depth {self.max_depth} reached at {file_path}::{line_number}\n{func_def}"
+                    )
+                return CallChainTree(
+                    func_def=func_def,
+                    file_path=file_path,
+                    line_number=line_number,
+                    children=[],
                 )
 
-    def _store_call_chain(self, chain: List[str]) -> None:
-        """Store a call chain if it's valid and not already stored."""
-        try:
-            if len(chain) >= 2:  # Only store chains with at least one function call
-                # Check if this chain already exists
-                chain_str = " -> ".join(chain)
-                if not any(
-                    " -> ".join(c.functions) == chain_str for c in self.call_chains
-                ):
-                    call_chain = CallChain(functions=chain)
-                    self.call_chains.append(call_chain)
+            # Extract call expressions from the function
+            call_expressions = self.fetch_call_expressions_query(lined_num_func_def)
+            if not call_expressions:
+                # Store the current chain as a complete call chain
+                return CallChainTree(
+                    func_def=func_def,
+                    file_path=file_path,
+                    line_number=line_number,
+                    children=[],
+                )
+
+            # Step 3: For each call expression, extract function name and fetch definition
+            call_chain_trees = []
+            for call_expr_obj in call_expressions:
+                call_expr = call_expr_obj["call_expr"]
+                callee_name = self.extract_function_name_from_call(call_expr)[0]
+                call_expr_line_number = call_expr_obj["line_number"]
+                call_expr_col_number = call_expr_obj["column_number"]
+                callee_def = self._get_callee_info_with_lsp(
+                    callee_name, file_path, call_expr_line_number, call_expr_col_number
+                )
+                if not callee_def:
                     if self.debug:
-                        logger.info(f"Stored call chain: {chain_str}")
+                        logger.warning(
+                            f"Could not resolve callee definition for call: {call_expr}"
+                        )
+                    continue
+                new_chain = current_chain.copy() + [callee_def]
+                callee_def_line_number, code_line = locate_element_in_line_numbered_code(
+                    callee_def, callee_name
+                )
+                code_line = strip_line_number_prefixes(code_line)
+                child_call_chain_tree = self._extract_call_chain_recursive(
+                    func_def=callee_def,
+                    file_path=file_path,
+                    current_chain=new_chain,
+                    depth=depth + 1,
+                    line_number=callee_def_line_number,
+                )
+                if child_call_chain_tree == None:
+                    raise ValueError(
+                        f"Could not resolve callee definition for call: {call_expr}"
+                    )
+                call_chain_trees.append(child_call_chain_tree)
+
+            call_chain_tree = CallChainTree(
+                func_def=func_def,
+                file_path=file_path,
+                line_number=line_number,
+                children=call_chain_trees,
+            )
+            entry_function_2_call_chain[get_function_hash(func_def)] = call_chain_tree
+
+            return call_chain_tree
 
         except Exception as exc:
             if self.debug:
-                logger.error(f"Error storing call chain: {exc}")
-
-    def print_call_chains(self) -> None:
-        """Print all extracted call chains in a readable format."""
-        try:
-            if not self.call_chains:
-                print("No call chains found.")
-                return
-
-            print(f"\nFound {len(self.call_chains)} function call chain(s):")
-            print("=" * 60)
-
-            for i, call_chain in enumerate(self.call_chains, 1):
-                chain_str = " -> ".join(call_chain.functions)
-                print(f"Chain {i}: {chain_str}")
-
-            print("=" * 60)
-
-        except Exception as exc:
-            print(f"Error printing call chains: {exc}")
+                logger.error(f"Error in _extract_call_chain_recursive: {exc}")
+            traceback.print_exc()
 
 
 class FetchCalleeInfoPipeline:
@@ -4112,14 +5373,14 @@ class FetchCalleeInfoPipeline:
         self.extract_function_template_parameters_query = (
             ExtractFunctionTemplateParametersQuery(debug=debug)
         )
-        self.function_name_extractor = FunctionNameExtractor(debug=debug)
+        self.function_name_extractor = FunctionNameExtractorFromCall(debug=debug)
         self.extract_type_parameter_query = ExtractTypeParameterQuery(debug=debug)
         self.type_parameter_substitution_query = TypeParameterSubstitutionQuery(
             debug=debug
         )
 
-        # Initialize VarTypeInferenceQuery without circular dependency initially
-        self.var_type_inference_query = VarTypeInferenceQuery(
+        # Initialize VarTypeInferencePipeline without circular dependency initially
+        self.var_type_inference_query = VarTypeInferencePipeline(
             debug=debug, query_dynamic_type=dynamic_type_inference
         )
 
@@ -4137,7 +5398,7 @@ class FetchCalleeInfoPipeline:
     def set_expression_type_inference_query(self, expression_type_inference_query):
         """Set the ExpressionTypeInferenceQuery to resolve circular dependency."""
         self._expression_type_inference_query = expression_type_inference_query
-        # Update the VarTypeInferenceQuery with the expression type inference query
+        # Update the VarTypeInferencePipeline with the expression type inference query
         self.var_type_inference_query.set_expression_type_inference_query(
             expression_type_inference_query
         )
@@ -4354,7 +5615,7 @@ Based on the above code snippet, infer which code snippet is the one that contai
 
     def __call__(
         self, expression: str, file_path: str, line_number: int, language: str = ""
-    ) -> Tuple[str, str]:
+    ) -> Tuple[str, str, int]:
         """
         Analyze a chained call expression and return the final class name.
 
@@ -4365,7 +5626,8 @@ Based on the above code snippet, infer which code snippet is the one that contai
             language: The programming language of the expression
 
         Returns:
-            The type of the final element in the expression chain
+            If the callee is a chained function call, return the (type of the final element in the expression chain, the function definition of the final element, the 0-based line number of function header).
+            Otherwise, return the (return type of the callee, its function definition, the 0-based line number of the function header)
         """
         if line_number == None:
             self.doc = None
@@ -4385,12 +5647,11 @@ Based on the above code snippet, infer which code snippet is the one that contai
             if doc == None:
                 break
 
-        language = self.doc.meta_data["programming_language"]
-
         if not self.doc:
             raise ValueError(
                 f"Could not find the document for line number {line_number} in file {file_path}"
             )
+        language = self.doc.meta_data["programming_language"]
 
         if not self._expression_type_inference_query:
             self.set_expression_type_inference_query(
@@ -4404,9 +5665,9 @@ Based on the above code snippet, infer which code snippet is the one that contai
             components = self._parse_chained_expression(expression)
             if not components:
                 logger.warning(f"Could not parse chained expression: {expression}")
-                return None
+                return None, None, None
 
-            if len(components) > 1:  # components may contain namespace, class, member
+            if len(components) > 1:  # components start with a class instance
                 # Get the initial class name from the outermost instance
                 initial_instance = components[0]["name"]
                 initial_instance_type = self.var_type_inference_query(
@@ -4421,7 +5682,7 @@ Based on the above code snippet, infer which code snippet is the one that contai
                     logger.warning(
                         f"Could not resolve initial instance type: {initial_instance_type}"
                     )
-                    return None
+                    return None, None, None
 
                 # Process all components except the initial instance
                 for component in components[1:-1]:
@@ -4433,50 +5694,59 @@ Based on the above code snippet, infer which code snippet is the one that contai
                         logger.warning(
                             f"Could not resolve component: {component} from class {prev_class_name}"
                         )
-                        return None
+                        return None, None, None
 
                     current_class_name = self._clean_type_name(current_class_name)
 
                 current_class_name = current_class_name.strip()
                 # Get the function body
-                return_type, function_body = self._resolve_member_function_call(
-                    components[-1], current_class_name
+                base_function_name, return_type, function_body = (
+                    self._resolve_member_function_call(
+                        components[-1], current_class_name
+                    )
                 )
 
             else:
-                return_type, function_body = self._resolve_nonmember_function_call(
-                    components[-1], file_path=file_path, line_number=line_number
+                base_function_name, return_type, function_body = (
+                    self._resolve_nonmember_function_call(
+                        components[-1]["name"],
+                    )
                 )
 
-            return return_type, function_body
+            return base_function_name, return_type, function_body
 
     def _resolve_nonmember_function_call(
-        self, func_name: str, file_path: str, line_number: int
-    ) -> Tuple[str, str]:
+        self, func_call_expr: str
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
         Resolve a non-member function call.
 
         Args:
-            func_name: The name of the function to resolve
-            file_path: The path to the file containing the function call
-            line_number: The line number of the function call in the file
+            func_call_expr: The function call expression (e.g., "my_function()")
 
         Returns:
-            A tuple containing the return type and function body
+            A tuple containing the function name, return type, and function body
         """
         # Extract function name and type arguments
-        base_function_name, function_type_args = self.function_name_extractor(func_name)
-
+        base_function_name, function_type_args = self.function_name_extractor(
+            func_call_expr
+        )
         if self.debug and function_type_args:
             logger.info(
-                f"Extracted function type arguments: {function_type_args} from {component['name']}"
+                f"Extracted function type arguments: {function_type_args} from {func_call_expr}"
             )
-
-        function_def = self.fetch_function_definition_by_name(
+        function_defs = self.fetch_function_definition_by_name(
             function_name=base_function_name,
-            file_path=file_path,
-            line_number=line_number,
         )
+
+        if not function_defs:
+            logger.warning(
+                f"Could not find function definition for {base_function_name}"
+            )
+            return None, None, None
+
+        #!WARNING: cannot handle the case where there are multiple function definitions for the same function name
+        function_def = function_defs[0]
 
         #! WARNING: cannot handle the following case:
         """
@@ -4586,8 +5856,10 @@ Based on the above code snippet, infer which code snippet is the one that contai
                                         f"Inferred concrete type '{inferred_type}' from compound return type '{return_type}' for {base_function_name}"
                                     )
                                 return_type = inferred_type
+        else:
+            return_type = None
 
-        return return_type, function_def
+        return base_function_name, return_type, function_def
 
     def _parse_chained_expression(self, expression: str) -> List[Dict[str, Any]]:
         """
@@ -4751,7 +6023,7 @@ Based on the above code snippet, infer which code snippet is the one that contai
 
     def _resolve_member_function_call(
         self, component: Dict[str, Any], current_class_name: str
-    ) -> Tuple[Optional[str], str]:
+    ) -> Tuple[str, Optional[str], str]:
         """
         Resolve a function call component to get its return type.
 
@@ -4760,6 +6032,7 @@ Based on the above code snippet, infer which code snippet is the one that contai
             current_class_name: The current class name
 
         Returns:
+            The function name
             The return type, or None if resolution fails
             The function body
         """
@@ -4795,6 +6068,7 @@ Based on the above code snippet, infer which code snippet is the one that contai
             )
             # Try to handle built-in functions using LLM inference
             return (
+                "",
                 self.builtin_function_query(
                     function_name=component["name"],
                     class_name=current_class_name,
@@ -4841,6 +6115,7 @@ Based on the above code snippet, infer which code snippet is the one that contai
                     )
                     # Try to handle built-in functions using LLM inference
                     return (
+                        base_function_name,
                         self.builtin_function_query(
                             function_name=base_function_name,
                             class_name=current_class_name,
@@ -4979,10 +6254,11 @@ Based on the above code snippet, infer which code snippet is the one that contai
                         )
                         return_type = inferred_type
 
-            return return_type, member_definition
+            return base_function_name, return_type, member_definition
 
         # If traditional analysis fails, try built-in function inference
         return (
+            base_function_name,
             self.builtin_function_query(
                 function_name=component["name"],
                 class_name=current_class_name,
@@ -5220,3 +6496,36 @@ Examples:
                     "confidence": "low",
                     "reasoning": "Failed to parse LLM response",
                 }
+
+
+class FindAllFuncHeaderPipeline:
+    """
+    Find all function headers in a code snippet.
+    """
+
+    def __init__(self, debug: bool = False):
+        self.debug = debug
+
+    def __call__(self) -> List[Tuple[str, str, int]]:
+        """
+        Find all function headers in a code snippet.
+
+        Returns:
+            List of tuples containing function name, file path, and 0-based line number
+        """
+
+        rag = RAG()
+        rag.get_docs()
+        results = []
+        for doc in rag.documents:
+            if "bm25_indexes" not in doc.meta_data:
+                continue
+            file_path = doc.meta_data["file_path"]
+            bm25_indexes = doc.meta_data["bm25_indexes"]
+            for bm25_index, line_number0based, _ in bm25_indexes:
+                if "[FUNCDEF]" in bm25_index:
+                    results.append(
+                        (bm25_index[9:].strip(), file_path, line_number0based)
+                    )
+
+        return results

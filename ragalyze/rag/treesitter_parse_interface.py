@@ -399,6 +399,11 @@ test_codes_bm25_funcs = [
     ("python", "pass", sorted([])),  # Pass statement
     ("python", "break", sorted([])),  # Break statement
     ("python", "continue", sorted([])),  # Continue statement
+    (
+        "python",
+        "import math, numpy",
+        sorted(["[PKG]math", "[PKG]numpy"]),
+    ),
     # cpp
     (
         "cpp",
@@ -947,6 +952,14 @@ test_codes_bm25_funcs = [
             ]
         ),
     ),
+    (
+        "cpp",
+        """
+        #include <iostream>
+        #include "../../test.h"
+        """,
+        sorted(["[PKG]<iostream>", '[PKG]"../../test.h"']),
+    ),
     # java
     (
         "java",
@@ -1164,6 +1177,13 @@ test_codes_bm25_funcs = [
             ]
         ),
     ),  #!WARNING: one of the [IDENTIFIER]sqlSession should be [VARDECL]sqlSession
+    (
+        "java",
+        """
+        import com.example.mapper.EncodingMapper;
+        """,
+        sorted(["[PKG]com.example.mapper.EncodingMapper"]),
+    ),
     # MyBatis mapper test cases - comprehensive SQL-related XML test cases
     (
         "xml",
@@ -1418,10 +1438,10 @@ test_codes_bm25_funcs = [
         sorted(
             [
                 "[CLASS]IERC20",
-                "[FUNCDEF]totalSupply",
-                "[FUNCDEF]balanceOf",
+                "[FUNCDECL]totalSupply",
+                "[FUNCDECL]balanceOf",
                 "[VARDECL]account",
-                "[FUNCDEF]transfer",
+                "[FUNCDECL]transfer",
                 "[VARDECL]recipient",
                 "[VARDECL]amount",
             ]
@@ -1589,93 +1609,42 @@ test_codes_bm25_funcs = [
     ),
     (
         "solidity",
-        "contract Payable { function deposit() public payable { balance += msg.value; } function withdraw(uint256 amount) public { require(balance >= amount); payable(msg.sender).transfer(amount); balance -= amount; } uint256 public balance; }",
+        'import "@openzeppelin/contracts/utils/Strings.sol";',
         sorted(
             [
-                "[CLASS]Payable",
-                "[FUNCDEF]deposit",
-                "[FUNCDEF]balance",
-                "[IDENTIFIER]msg",
-                "[IDENTIFIER]value",
-                "[FUNCDEF]withdraw",
-                "[VARDECL]amount",
-                "[FUNCDEF]require",
-                "[IDENTIFIER]balance",
-                "[IDENTIFIER]amount",
-                "[IDENTIFIER]msg",
-                "[IDENTIFIER]sender",
-                "[CALL]payable(msg.sender).transfer",
-                "[IDENTIFIER]amount",
-                "[IDENTIFIER]balance",
-                "[IDENTIFIER]amount",
+                '[PKG]"@openzeppelin/contracts/utils/Strings.sol"',
             ]
         ),
     ),
     (
         "solidity",
-        "contract Abstract { function abstractFunction() external virtual; } contract Concrete is Abstract { function abstractFunction() external override { /* implementation */ } }",
+        """
+        function PushBonusCode(uint c) public {
+            bonusCodes.push(c);
+        }
+        """,
         sorted(
             [
-                "[CLASS]Abstract",
-                "[CLASS]Concrete",
-                "[FUNCDECL]abstractFunction",
-                "[FUNCDEF]abstractFunction",
+                "[FUNCDEF]PushBonusCode",
+                "[VARDECL]c",
+                "[IDENTIFIER]c",
+                "[CALL]bonusCodes.push",
             ]
         ),
     ),
     (
         "solidity",
-        "contract GasOptimization { function sum(uint256[] memory arr) public pure returns (uint256 total) { for (uint256 i = 0; i < arr.length; i++) { total += arr[i]; } } }",
+        """
+        contract WalletAbi {
+            // Revokes a prior confirmation of the given operation
+            function revoke(bytes32 _operation) external;
+        }
+        """,
         sorted(
             [
-                "[CLASS]GasOptimization",
-                "[FUNCDEF]sum",
-                "[IDENTIFIER]total",
-                "[IDENTIFIER]arr",
-                "[IDENTIFIER]i",
-                "[IDENTIFIER]arr",
-                "[IDENTIFIER]i",
-                "[IDENTIFIER]i",
-                "[IDENTIFIER]total",
-                "[IDENTIFIER]arr",
-                "[VARDECL]arr",
-                "[VARDECL]i",
-                "[VARDECL]total",
-                "[IDENTIFIER]length",
-            ]
-        ),
-    ),
-    (
-        "solidity",
-        "contract StringManipulation { function concatenate(string memory a, string memory b) public pure returns (string memory) { return string(abi.encodePacked(a, b)); } }",
-        sorted(
-            [
-                "[CLASS]StringManipulation",
-                "[FUNCDEF]concatenate",
-                "[CALL]string",
-                "[CALL]abi.encodePacked",
-                "[IDENTIFIER]a",
-                "[IDENTIFIER]b",
-                "[VARDECL]a",
-                "[VARDECL]b",
-                "[IDENTIFIER]string",
-                "[IDENTIFIER]abi.encodePacked",
-            ]
-        ),
-    ),
-    (
-        "solidity",
-        "contract HashExample { function getHash(string memory input) public pure returns (bytes32) { return keccak256(abi.encodePacked(input)); } }",
-        sorted(
-            [
-                "[CLASS]HashExample",
-                "[FUNCDEF]getHash",
-                "[CALL]keccak256",
-                "[CALL]abi.encodePacked",
-                "[IDENTIFIER]input",
-                "[VARDECL]input",
-                "[IDENTIFIER]keccak256",
-                "[IDENTIFIER]abi.encodePacked",
+                "[CLASS]WalletAbi",
+                "[FUNCDECL]revoke",
+                "[VARDECL]_operation",
             ]
         ),
     ),

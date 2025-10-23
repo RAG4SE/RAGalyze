@@ -22,3 +22,9 @@ tree-sitter-lib/
 pcre2-lib/
 prompt_str.txt
 a.out
+.aider*
+call_chain_forest.pkl
+call_chains_no_code.txt
+call_chains.txt
+test.py
+test2.py
