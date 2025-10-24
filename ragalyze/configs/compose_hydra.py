@@ -56,8 +56,11 @@ def set_global_config_value(key: str, value):
         current = current[k]
     
     # Set the final value
-    current[keys[-1]] = value
-    logger.debug(f"Set config {key} = {value}")
+    if key == 'generator.json_output' and value == True and configs()["generator"]["provider"] == 'lingxi':
+        pass
+    else:
+        current[keys[-1]] = value
+        logger.debug(f"Set config {key} = {value}")
     load_generator_config(global_configs)
     load_rag_config(global_configs)
 
