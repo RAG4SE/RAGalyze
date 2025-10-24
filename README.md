@@ -22,7 +22,7 @@ well-tested under Python 3.11
 git clone git@github.com:RAG4SE/RAGalyze.git
 cd RAGalyze
 pip install -r requirements.txt
-python python setup.py build_ext --inplace
+python setup.py build_ext --inplace
 pip install -e .
 ```
 

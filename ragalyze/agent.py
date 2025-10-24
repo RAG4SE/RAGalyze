@@ -719,16 +719,17 @@ def locate_element_in_line_numbered_code(
 
 class LocateElementInLineNumberedCodeQuery:
     """
-    Uses LLM to locate the line number of a specific element in line-numbered source code.
+    Uses LLM to locate the line number of a specific element in line-numbered source code
+    and extract the actual element as it appears in the code.
     This class provides the same functionality as locate_element_in_line_numbered_code function
-    but uses LLM queries to make the decision.
+    but uses LLM queries to make the decision and returns the actual element with exact formatting.
     """
 
     prompt_template = Prompt(
         PROMPT_TEMPLATE.call(
             task_description=r"""
 You are given line-numbered source code where each line starts with a line number prefix like "123: ".
-Your task is to locate the line number where the target element appears.
+Your task is to locate the line number where the target element appears and extract the actual element as it appears in that line.
 
 Line-numbered code:
 {{line_numbered_code}}
@@ -739,18 +740,19 @@ Target element to locate: {{element}}
 1. Look through the line-numbered code to find where the target element appears
 2. The matching should be flexible - ignore differences in spacing, parentheses, and minor formatting
    Examples:
-   - Target "func (a)" matches "func(a)" or "func ( a )"
-   - Target "obj.method()" matches "obj . method ()" or "obj.method()"
-   - Target "call(x, y)" matches "call (x,y)" or "call(x, y )"
-3. Return the line number (the number before the colon) where the element is found
-4. If the element appears multiple times, return the first occurrence
-5. If the element cannot be found, return None
-6. Do not return line numbers for elements that appear only in comments or strings unless the target itself is a comment/string
+   - Target "func (a)" matches "func(a)" or "func ( a )" - return the exact text "func(a)" or "func ( a )" as it appears
+   - Target "obj.method()" matches "obj . method ()" or "obj.method()" - return the exact text as it appears
+   - Target "call(x, y)" matches "call (x,y)" or "call(x, y )" - return the exact text as it appears
+3. Once you find the matching line, extract the actual element exactly as it appears in the code (preserving the exact spacing and formatting)
+4. Return both the line number and the actual element found
+5. If the element appears multiple times, return the first occurrence
+6. If the element cannot be found, return None for both values
+7. Do not return line numbers for elements that appear only in comments or strings unless the target itself is a comment/string
             """,
             output_format=r"""Return strict JSON:
-{"line_number": line_number_or_null}
+{"line_number": line_number_or_null, "actual_element": actual_element_or_null}
 If the element is not found, return:
-{"line_number": null}
+{"line_number": null, "actual_element": null}
             """,
         )
     )
@@ -758,7 +760,7 @@ If the element is not found, return:
     def __init__(self, debug: bool = False):
         self.debug = debug
 
-    def __call__(self, line_numbered_code: str, element: str) -> Tuple[Optional[int], Optional[str]]:
+    def __call__(self, line_numbered_code: str, element: str) -> Tuple[Optional[int], Optional[str], Optional[str]]:
         """
         Locate the line number of the element in the line-numbered code using LLM.
 
@@ -768,7 +770,7 @@ If the element is not found, return:
 
         Returns:
             Optional[int]: The line number where the element is found, or None if not found
-            Optional[str]: The code line without line number prefix on the specified line
+            Optional[str]: The actual element as it appears in the code (with exact spacing and formatting), or None if not found
         """
         with call_debug_scope(
             self.__class__.__name__,
@@ -783,7 +785,7 @@ If the element is not found, return:
                 raise
 
             if not line_numbered_code or not element:
-                return None, None
+                return None, None, None
 
             prompt = self.prompt_template.call(
                 line_numbered_code=line_numbered_code,
@@ -801,24 +803,25 @@ If the element is not found, return:
             try:
                 data = json.loads(repair_json(reply))
                 line_number = data.get("line_number")
+                actual_element = data.get("actual_element")
                 if line_number is None or line_number == "null":
                     if self.debug:
                         logger.info(f"Element '{element}' not found in code")
-                    return None, None
+                    return None, None, None
                 code_lines = line_numbered_code.split('\n')
                 line = None
                 for code_line in code_lines:
                     if code_line.startswith(f'{line_number}: '):
                         line = code_line.split(f'{line_number}: ')[1]
                         break
-                return int(line_number), line
+                return int(line_number), line, actual_element
             except (json.JSONDecodeError, ValueError, TypeError) as exc:
                 logger.error(
                     f"LocateElementInLineNumberedCodeQuery: Failed to parse response: {exc}"
                 )
                 if self.debug:
                     logger.error(f"Raw response: {reply}")
-                return None, None
+                return None, None, None
 
 
 class FetchCallerHeaderPipeline:
@@ -1980,7 +1983,7 @@ Examples:
                     logger.warning(
                         f"locate_element_in_line_numbered_code: Call expression {call_expr} not found in function body:\n{function_body}, query LocateElementInLineNumberedCodeQuery for more flexible match"
                     )
-                    line_number, code_line = LocateElementInLineNumberedCodeQuery(
+                    line_number, code_line, real_call_expr = LocateElementInLineNumberedCodeQuery(
                         debug=self.debug
                     )(
                         line_numbered_code=function_body,
@@ -1996,6 +1999,7 @@ Examples:
                             "Given that the line number is extracted, the corresponding line is not"
                         )
                         raise
+                    call_expr = real_call_expr
 
                 code_line = strip_line_number_prefixes(code_line)
                 col_0_based = code_line.find(call_expr)

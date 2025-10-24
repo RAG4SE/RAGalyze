@@ -22,7 +22,7 @@ RAGalyze 是一个基于 RAG（检索增强生成）的代码仓库分析与问�
 git clone git@github.com:RAG4SE/RAGalyze.git
 cd RAGalyze
 pip install -r requirements.txt
-python python setup.py build_ext --inplace
+python setup.py build_ext --inplace
 pip install -e .
 ```
 

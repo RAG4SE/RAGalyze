@@ -15,8 +15,8 @@ set_global_config_value("rag.recreate_db", True)
 set_global_config_value("generator.provider", "lingxi")
 # set_global_config_value("generator.model", "qwen3-coder-480b-a35b-instruct")
 # set_global_config_value("generator.model", "qwen3-next-80b-a3b-instruct")
-# 别用qwen，lingxi上的qwen不支持强制json输出，会报错，ling是可以的
 set_global_config_value("generator.model", "ling-1t")
+set_global_config_value("generator.model", "deepseek-v3.2-exp")
 
 set_global_config_value("rag.retriever.bm25.top_k", 100)
 
