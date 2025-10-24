@@ -14,16 +14,15 @@ set_global_config_value("generator.provider", "lingxi")
 set_global_config_value("generator.model", "qwen3-coder-480b-a35b-instruct")
 set_global_config_value("generator.model", "qwen3-next-80b-a3b-instruct")
 
-set_global_config_value("rag.retriever.bm25.top_k", 25)
+set_global_config_value("rag.retriever.bm25.top_k", 100)
 
 
-agent = FetchCallerHeaderPipeline(debug=True)
-
-print(
-    agent(
-        callee_name="builtin",
-        # callee_body="""
-        # BuiltinFunctionForEVM const& EVMDialect::builtin(BuiltinHandle const& _handle) const
-        # """,
-    )
-)
+r = FindAllFuncHeaderPipeline(debug=True)
+all_func_infos = r()
+print(all_func_infos)
+r = FunctionCallExtractorFromEntryFuncsPipeline(debug=True)
+call_chain_forest = r(all_func_infos)
+call_chain_forest.serialize("call_chain_forest.pkl")
+call_chain_forest.write2file_call_chains("call_chains.txt")
+call_chain_forest.write2file_no_code_call_chains("call_chains_no_code.txt")
+call_chain_forest.print_call_chains()

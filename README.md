@@ -1,4 +1,4 @@
-# RAGalyze
+# RAGalyze ([中文 README](README_zh.md))
 
 Repository Analysis and Query Toolchain with RAG (Retrieval-Augmented Generation) capabilities.
 
@@ -10,44 +10,36 @@ Repository Analysis and Query Toolchain with RAG (Retrieval-Augmented Generation
 - **Configurable**: Flexible configuration system using Hydra
 - **Advanced Retrieval**: Supports dual-vector embedding (code + semantic interpretation) and hybrid search (BM25 + FAISS) for enhanced precision
 - **Performance Optimized**: C extension for BM25 tokenization to bypass Python GIL limitations
+- **Language-Aware Analysis**: Integrates a fork of [multilspy](https://github.com/RAG4SE/multilspy) to provide language-server powered reasoning across repositories
 
 ## Installation
 
 well-tested under Python 3.11
-
-### From PyPI
-
-```bash
-pip install RAGalyze
-```
 
 ### From Source
 
 ```bash
 git clone git@github.com:RAG4SE/RAGalyze.git
 cd RAGalyze
-# Support PEP 660
-pip install --upgrade pip "setuptools>=64.0.0" wheel
+pip install -r requirements.txt
+python python setup.py build_ext --inplace
 pip install -e .
 ```
 
-#### Building with C Extension (Optional but Recommended)
+## Before Start
 
-For better performance, RAGalyze includes a C extension for BM25 tokenization. To build with the C extension:
+### Prerequisite 0: Install the multilspy Fork
+
+RAGalyze depends on a forked version of `multilspy` for language-server powered analysis. Install it before running the advanced workflows:
 
 ```bash
-# Install in development mode with dev dependencies
-pip install -e .[dev]
-
-# Or use the provided Makefile
-make build
+git clone https://github.com/RAG4SE/multilspy.git
+cd multilspy
+pip install -r requirements.txt
+pip install .
 ```
 
-The C extension will automatically be used if available, providing significant performance improvements for BM25 indexing.
-
-## A Quick Start
-
-### Set up API keys of LLM providers
+### Prerequisite 1: Set up API keys of LLM providers
 
 RAGalyze requires API keys from LLM providers to function properly. The tool has been thoroughly tested with the following model configurations:
 
@@ -74,112 +66,104 @@ You can refer to the following coarse-grained table to get the corresponding API
 | **Dashscope (Qwen)** | `DASHSCOPE_API_KEY`, `DASHSCOPE_WORKSPACE_ID` (optional) | [Get API Key and WorkSpace](https://bailian.console.aliyun.com/?spm=a2c4g.11186623.0.0.6ebe48238qeoit&tab=api#/api)  |
 | **SiliconFlow** | `SILICONFLOW_API_KEY` | [Get API Key](https://cloud.siliconflow.cn/i/api-keys) |
 
-### As a Command-Line Tool
+## Quick Start
 
-After installation, you can use the `ragalyze` command to query about a local codebase:
+### Analyze function call chains from the function entry with the agent
 
-```bash
-ragalyze repo_path=/path/to/repository question="What does this project do?"
-```
-
-**Important Note**: If your question contains commas, please escape them with a backslash before the comma. Otherwise, hydra will crash this execution due to its quirk.
-
-Or, you can only embed the codebase with the following command:
-
-```bash
-ragalyze repo_path=/path/to/repository
-```
-
-**Important Note**: If you want to exclude additional folders from the embedding process, avoid specifying them directly like `repo.file_filters.extra_excluded_patterns=["reply/"]`. 
-Shell quoting may cause Hydra to not recognize this pattern correctly. Instead, use the following format:
-
-```bash
-ragalyze repo_path=/path/to/repository question="What does this project do?" 'repo.file_filters.extra_excluded_patterns=[pattern1, pattern2]'
-```
-
-### As a Python Library
+One of the main functions of `RAGalyze` is extracting function call chains.
+Below is an example of how to extract all function call chains starting from the entry function.
 
 ```python
 from ragalyze import *
+from ragalyze.configs import *
+from ragalyze.agent import *
+from ragalyze.rag import retriever
+from pathlib import Path
+import os
+import traceback
 
-repo_path = "/path/to/repository"
-question = \
-"""
-Your question here.
-"""
+set_global_config_value("repo_path", "<The path to the repo you want to analyze>")
+set_global_config_value("repo.file_filters.extra_excluded_patterns", ["*txt"]) # You don't care for text files in this repo
+set_global_config_value("rag.recreate_db", True) # RAGalyze can cache, recreate_db means ignore the cache, rebuild the database and fill in the cache. This only happens when you want to debug or the repo has been updated.
+set_global_config_value("generator.provider", "dashscope") # The LLM provider
+set_global_config_value("generator.model", "qwen3-next-80b-a3b-instruct")
 
-# Load default config
-set_global_configs(load_default_config())
-# Basic usage
-result = query_repository(
-    repo_path=repo_path,
-    question=question
-)
+# For other settings you can tune, refer to .yaml files in configs/ folder. 
+# Tune the settings using set_global_config_value function with respect to hydra grammar.
 
-print_result(result)
-save_query_results(result, repo_path, question)
+r = FindAllFuncHeaderPipeline(debug=True)
+all_func_infos = r() # Find all functions in the repo, this only happens when there is no entry function or every function can be entry function.
+r = FunctionCallExtractorFromEntryFuncsPipeline(debug=True) # Treat each collected function as the entry, and collect call chains starting from it.
+call_chain_forest = r(all_func_infos)
+call_chain_forest.serialize("call_chain_forest.pkl") # cache the result
+call_chain_forest.write2file_call_chains("call_chains.txt")
+call_chain_forest.write2file_no_code_call_chains("call_chains_no_code.txt")
+call_chain_forest.print_call_chains()
+
+r = FunctionCallExtractorFromEntryFuncWithLSPPipeline(debug=True) 
+call_chain_tree = r('initWallet', 'parity_wallet_bug_1.sol', 222) # Different from the above exaple, this example shows how to extract function call chains starting from the specified function
+call_chain_tree.print_nocode_call_chains()
+
 ```
 
-Beyond default config, you can customize the config, such as generator model, embedding mode, etc.
+Swap out the `repo_path` and generator settings for your project before running the script.
+
+<!-- ### Query the repo like deepwiki
+
+RAGalyze can perform like deepwiki: you use natural languages to query about the repo to catch its functions.
 
 ```python
-from ragalyze import *
+from ragalyze.rag.rag import RAG
+from ragalyze.configs import *
+from ragalyze.query import build_context, save_query_results
 
-repo_path = "/path/to/repository"
-question = \
-"""
-Your question here.
-"""
-# Load default DictConfig
-dict_config = load_default_config()
-# Add custom config
-# Use qwen-plus instead of the default qwen-coder to reply
-dict_config.generator.model = "qwen-plus"
-# Disable the use of bm25
-dict_config.rag.hybrid.enabled = False
-# Disable semantic interpretation in dual-vector embedding, only embed code snippets
-dict_config.rag.embedder.sketch_filling = False
-# Modify the global dict-type configs
-set_global_configs(dict_config)
+import json
 
-result = query_repository(
-    repo_path=repo_path,
-    question=question,
-)
+set_global_config_value("repo_path", "<The path to the repo you want to analyze>")
+set_global_config_value("rag.recreate_db", True)
 
-print_result(result)
-save_query_results(result, repo_path, question)
+set_global_config_value("generator.provider", "dashscope")
+set_global_config_value("generator.model", "qwen3-next-80b-a3b-instruct")
+set_global_config_value("generator.json_output", True)
+rag = RAG(embed=True)
+retrieved_docs = rag.retrieve(bm25_keywords="a", faiss_query="the definition of a")[
+    0
+].documents
+
+contexts = []
+
+for count in [5, 10, 15]:
+    for doc in retrieved_docs:
+        # build_context can combine adjacent code chunks to enrich the context
+        context, _ = build_context(
+            retrieved_doc=doc,
+            id2doc=rag.id2doc,
+            direction="both",
+            count=count,
+        )
+        contexts.append(context)
+
+    prompt = "Tell me the file structure of the repo"
+    result = rag.query(prompt, contexts)
+    save_query_results(
+        result=result,
+        bm25_keywords="<YOUR BM25 Keywords>", # If you want to query about 
+        faiss_query="the definition of a",
+        question=prompt,
+    )
+    data = json.loads(result["response"])
+    if data.get("definition") is None:
+        print("definition is none")
+        continue
+    if data.get("is_complete") == "No":
+        print(f"is not complete")
+        continue
+    print(data["definition"])
+    break
 ```
 
-Similar to the second use of `ragalyze` command, you can also use ragalyze library to only embed to codebase
+Customize the retrieval keywords, FAISS query, and prompt structure to match your task. Updating the generator or embedding provider only requires changing the configuration calls at the top of the script. -->
 
-```python
-from ragalyze import *
-
-repo_path = "/path/to/repository"
-
-analyze_repository(repo_path=repo_path)
-
-```
-
-## Build System
-
-### setup.py
-
-```bash
-python setup.py build_ext --inplace
-pip install -e .
-```
-
-### Performance
-
-RAGalyze includes a C extension for BM25 tokenization that can significantly improve performance by bypassing Python's GIL (Global Interpreter Lock) limitations. When available, the C extension is automatically used, providing up to 2-3x speedup in BM25 indexing operations.
-
-To verify the C extension is working:
-
-```bash
-python ragalyze/rag/test_bm25_cpp_extension.py
-```
 
 ## Acknowledgements
 
